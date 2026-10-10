@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#e30613">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
+  <title>Confirmar Citas · Acceso de equipo</title>
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div class="brand-mark" aria-hidden="true">V</div>
+      <div><p class="eyebrow">VERISURE · NUEVO ENTORNO</p><h1>Confirmar Citas</h1></div>
+      <button id="signOut" class="button quiet hidden" type="button">Cerrar sesión</button>
+    </header>
+    <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+    <section id="configWarning" class="panel hidden">
+      <h2>Falta configurar la conexión</h2>
+      <p>La dirección pública del proyecto está preparada. Añade la clave publicable en <code>config.js</code> antes de probar el acceso.</p>
+    </section>
+    <section id="authDisabled" class="panel narrow">
+      <span class="pill pending">Versión de pruebas</span>
+      <h2>Acceso desactivado</h2>
+      <p>El inicio de sesión se habilitará después de validar las funciones de autenticación con cuentas sintéticas.</p>
+    </section>
+    <section id="authPanel" class="panel narrow hidden">
+      <h2>Iniciar sesión</h2>
+      <form id="loginForm">
+        <label for="employeeId">Matrícula</label>
+        <input id="employeeId" name="employee_id" autocomplete="username" inputmode="text" required maxlength="32">
+        <label for="password">Contraseña</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+        <button class="button primary full" type="submit">Entrar</button>
+      </form>
+      <p class="fine">El alta está restringida a Administradores y Masters autorizados. Si pierdes el acceso, solicita un restablecimiento a tu responsable.</p>
+    </section>
+    <section id="activationPanel" class="panel narrow hidden">
+      <span class="pill pending">Activación pendiente</span>
+      <h2>Cambia tu contraseña inicial</h2>
+      <p>La cuenta seguirá bloqueada hasta que elijas una contraseña personal. Este paso no comprueba que seas titular de la matrícula.</p>
+      <form id="activationForm">
+        <label for="activationEmployeeId">Matrícula</label>
+        <input id="activationEmployeeId" autocomplete="username" required maxlength="32">
+        <label for="activationPassword">Nueva contraseña personal</label>
+        <input id="activationPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="128">
+        <label for="activationPassword2">Repite la contraseña</label>
+        <input id="activationPassword2" type="password" autocomplete="new-password" required minlength="12" maxlength="128">
+        <button class="button primary full" type="submit">Guardar contraseña y continuar</button>
+      </form>
+    </section>
+    <section id="workspace" class="hidden">
+      <section class="panel welcome">
+        <div><span id="rolePill" class="pill"></span><h2 id="welcomeName"></h2><p id="roleDescription"></p></div>
+        <button id="securityToggle" class="button secondary" type="button">Ajustes · Seguridad</button>
+      </section>
+      <section id="securityPanel" class="panel hidden">
+        <h2>Cambiar contraseña</h2>
+        <p>Confirma tu contraseña actual para volver a autenticarte. La matrícula, el rol y el equipo no se editan desde aquí.</p>
+        <form id="changePasswordForm" class="grid-form">
+          <label>Matrícula<input id="changeEmployeeId" autocomplete="username" required maxlength="32"></label>
+          <label>Contraseña actual<input id="currentPassword" type="password" autocomplete="current-password" required maxlength="256"></label>
+          <label>Nueva contraseña<input id="newPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label>
+          <label>Repite la contraseña<input id="newPassword2" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label>
+          <button class="button primary" type="submit">Actualizar contraseña</button>
+        </form>
+      </section>
+      <section id="adminPanel" class="panel hidden">
+        <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div></div>
+        <div class="admin-grid">
+          <section class="subpanel">
+            <h3>Crear equipo</h3>
+            <form id="teamForm"><label for="teamName">Nombre del equipo</label><input id="teamName" required maxlength="120"><button class="button primary" type="submit">Crear equipo</button></form>
+          </section>
+          <section class="subpanel">
+            <h3>Crear cuenta</h3>
+            <form id="accountForm">
+              <label for="newDisplayName">Nombre</label><input id="newDisplayName" required maxlength="120">
+              <label for="newEmployeeId">Matrícula</label><input id="newEmployeeId" required maxlength="32">
+              <label for="newRole">Rol</label><select id="newRole"><option value="technician">Técnico</option><option value="master">Master</option></select>
+              <fieldset id="teamChoices"><legend>Equipos</legend><div class="muted">Cargando equipos…</div></fieldset>
+              <button class="button primary" type="submit">Crear cuenta</button>
+            </form>
+            <p class="fine">La contraseña inicial es la matrícula normalizada (mayúsculas, sin espacios ni guiones). Entrégala personalmente. Quien conozca la matrícula puede tomar el control antes de que su titular la cambie; el cambio obligatorio no verifica identidad.</p>
+          </section>
+          <section class="subpanel">
+            <h3>Retención central</h3>
+            <form id="retentionForm"><label for="retentionDays">Días naturales (Europe/Madrid)</label><select id="retentionDays"><option value="3">3 días</option><option value="7">7 días</option><option value="15">15 días</option><option value="30">30 días</option></select><button class="button secondary" type="submit">Guardar configuración</button></form>
+          </section>
+        </div>
+        <h3 class="list-title">Equipos</h3><div id="adminTeams" class="account-list"></div>
+        <h3 class="list-title">Cuentas del módulo</h3><div id="adminAccounts" class="account-list"></div>
+      </section>
+      <section id="masterPanel" class="panel hidden">
+        <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Técnicos</h2>
+        <p>Solo se muestran cuentas asignadas a tus equipos. No aparecen cuentas Administrador ni datos de contacto de los clientes.</p>
+        <div id="masterTeams" class="team-chips"></div>
+        <section class="subpanel master-invite">
+          <h3>Crear técnico</h3>
+          <form id="masterAccountForm">
+            <label for="masterDisplayName">Nombre</label><input id="masterDisplayName" required maxlength="120">
+            <label for="masterEmployeeId">Matrícula</label><input id="masterEmployeeId" required maxlength="32">
+            <label for="masterTeamSelect">Equipo</label><select id="masterTeamSelect" required></select>
+            <button class="button primary" type="submit">Crear cuenta</button>
+          </form>
+          <p class="fine">La contraseña inicial es la matrícula normalizada (mayúsculas, sin espacios ni guiones). Entrégala personalmente. Quien conozca la matrícula puede tomar el control antes de que su titular la cambie.</p>
+        </section>
+        <div id="masterAccounts" class="account-list"></div>
+      </section>
+      <section id="technicianPanel" class="panel hidden">
+        <p class="eyebrow">CUENTA TÉCNICO</p><h2>Acceso verificado</h2>
+        <p>La autenticación y los ajustes de seguridad están activos. La agenda multiusuario se conectará en la siguiente fase.</p>
+      </section>
+      <section id="masterOwnPanel" class="panel hidden">
+        <p class="eyebrow">CUENTA MASTER</p><h2>Tus instalaciones</h2>
+        <p>La agenda propia y la sincronización se conectarán en la siguiente fase.</p>
+      </section>
+    </section>
+    <footer>Entorno de desarrollo · No usar para datos reales</footer>
+  </main>
+  <script src="./config.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
+
