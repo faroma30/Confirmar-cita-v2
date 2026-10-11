@@ -1,6 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
+import { buildWhatsAppIntent, derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 
 const $ = (id) => document.getElementById(id);
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
@@ -139,6 +140,7 @@ async function routeSession() {
     changeLogin.readOnly = false;
     changeLoginLabel.firstChild.textContent = "Matrícula";
   }
+  if ($("presentationName")) $("presentationName").value = activeProfile.presentation_name ?? derivePresentationName(activeProfile.display_name);
   const rolePill = $("rolePill");
   rolePill.textContent = activeProfile.role === "admin" ? "Administrador" : activeProfile.role === "master" ? "Master" : "Técnico";
   rolePill.className = `pill ${activeProfile.role}`;
@@ -349,26 +351,9 @@ function humanStatus(status) {
   return ({ pending: "Pendiente", confirmed: "Confirmada", cancelled: "Cancelada" })[status] ?? "Pendiente";
 }
 
-function appointmentTemplateValues(row, reason = "") {
-  return {
-    TECNICO: activeProfile?.display_name ?? "el técnico",
-    POBLACION: row.population ?? "",
-    HORA: row.scheduled_time ?? "",
-    DIRECCION: [row.full_address, row.postal_code].filter(Boolean).join(" "),
-    TELEFONO: row.phone ?? "",
-    PROSPECTO: row.prospect_ref ?? "Sin prospecto",
-    MTO: row.prospect_ref ?? "Sin prospecto",
-    TIPO: row.installation_type || "Instalación",
-    MOTIVO: reason,
-  };
-}
-
-function fillAppointmentTemplate(template, row, reason = "") {
-  let result = String(template ?? "");
-  for (const [key, value] of Object.entries(appointmentTemplateValues(row, reason))) {
-    result = result.replaceAll(`{${key}}`, value || "");
-  }
-  return result;
+function appointmentMessage(template, row, reason = "") {
+  const presentationName = activeProfile?.presentation_name || derivePresentationName(activeProfile?.display_name);
+  return fillAppointmentTemplate(template, row, presentationName, reason);
 }
 
 function renderAppointmentCard(row) {
@@ -445,10 +430,9 @@ async function openAppointmentWhatsApp(row, customMessage = "") {
   row.contacted_at = data;
   renderAppointments();
   const template = appointmentPreferences.installation_template || DEFAULT_INSTALLATION_TEMPLATE;
-  const message = customMessage || fillAppointmentTemplate(template, row);
+  const message = customMessage || appointmentMessage(template, row);
   const phone = normalizePhoneForWhatsApp(row.phone);
-  const intent = `intent://send?phone=${phone}&text=${encodeURIComponent(message)}#Intent;scheme=whatsapp;package=com.whatsapp;end`;
-  window.location.assign(intent);
+  window.location.assign(buildWhatsAppIntent(phone, message));
 }
 
 function callAppointment(row) {
@@ -466,7 +450,7 @@ function openAppointmentMaps(row) {
 
 function reviewWhatsApp(row) {
   const template = appointmentPreferences.installation_template || DEFAULT_INSTALLATION_TEMPLATE;
-  const message = window.prompt("Revisa o modifica el mensaje de WhatsApp", fillAppointmentTemplate(template, row));
+  const message = window.prompt("Revisa o modifica el mensaje de WhatsApp", appointmentMessage(template, row));
   if (message !== null) void openAppointmentWhatsApp(row, message);
 }
 
@@ -516,8 +500,8 @@ async function changeAppointmentStatus(row, status) {
 
 function buildCancellationEmail(row, reason) {
   const template = appointmentPreferences.cancellation_template || DEFAULT_CANCELLATION_TEMPLATE;
-  const subject = fillAppointmentTemplate(appointmentPreferences.cancellation_email_subject || "Cliente cancela - Prospecto {PROSPECTO}", row, reason);
-  const body = fillAppointmentTemplate(template, row, reason);
+  const subject = fillAppointmentTemplate(appointmentPreferences.cancellation_email_subject || "Cliente cancela - Prospecto {PROSPECTO}", row, activeProfile?.display_name, reason);
+  const body = fillAppointmentTemplate(template, row, activeProfile?.display_name, reason);
   const to = appointmentPreferences.cancellation_email_to || "";
   if (!to) return "";
   const cc = appointmentPreferences.cancellation_email_cc || "";
@@ -628,6 +612,20 @@ async function saveAppointmentPreferences(event) {
   if (error) { appointmentNotice("No se pudieron guardar los ajustes.", "error"); return; }
   await loadAppointmentPreferences();
   appointmentNotice("Ajustes personales guardados.", "success");
+}
+
+async function savePresentationName(event) {
+  event.preventDefault();
+  const presentationName = $("presentationName").value.trim();
+  if (!presentationName || presentationName.length > 120) {
+    appointmentNotice("Escribe un nombre de presentación de 1 a 120 caracteres.", "error");
+    return;
+  }
+  const { error } = await supabase.rpc("cc_set_my_presentation_name", { p_presentation_name: presentationName });
+  if (error) { appointmentNotice("No se pudo guardar el nombre para los mensajes.", "error"); return; }
+  activeProfile.presentation_name = presentationName;
+  $("presentationName").value = presentationName;
+  appointmentNotice("Nombre para los mensajes actualizado.", "success");
 }
 
 async function invokeAdmin(body) {
@@ -851,6 +849,7 @@ async function createAccount(formData, role, teamIds) {
   const payload = {
     employee_id: formData.employee_id,
     display_name: formData.display_name,
+    presentation_name: formData.presentation_name,
     role,
     team_ids: teamIds,
   };
@@ -953,6 +952,19 @@ function bindEvents() {
   $("processOracle").addEventListener("click", () => void processOracleText());
   $("preferencesToggle").addEventListener("click", () => setVisible("appointmentPreferences", $("appointmentPreferences").classList.contains("hidden")));
   $("appointmentPreferences").addEventListener("submit", saveAppointmentPreferences);
+  $("presentationNameForm").addEventListener("submit", savePresentationName);
+  for (const [fullNameId, presentationNameId] of [["newDisplayName", "newPresentationName"], ["masterDisplayName", "masterPresentationName"]]) {
+    const fullName = $(fullNameId);
+    const presentationName = $(presentationNameId);
+    let previousAutomatic = "";
+    fullName.addEventListener("input", () => {
+      const current = presentationName.value.trim();
+      if (!current || current === previousAutomatic) {
+        previousAutomatic = derivePresentationName(fullName.value);
+        presentationName.value = previousAutomatic;
+      }
+    });
+  }
   $("masterAppointmentDate").value = appointmentDate;
   $("masterAppointmentDate").addEventListener("change", () => void loadMasterAppointments());
   $("loadMasterAppointments").addEventListener("click", () => void loadMasterAppointments());
@@ -970,6 +982,7 @@ function bindEvents() {
     event.preventDefault();
     const formData = {
       display_name: $("newDisplayName").value,
+      presentation_name: $("newPresentationName").value,
       employee_id: $("newEmployeeId").value,
     };
     const teamIds = [...document.querySelectorAll('#teamChoices input[name="teamIds"]:checked')].map((input) => input.value);
@@ -1000,6 +1013,7 @@ function bindEvents() {
     try {
       const result = await createAccount({
         display_name: $("masterDisplayName").value,
+        presentation_name: $("masterPresentationName").value,
         employee_id: $("masterEmployeeId").value,
       }, "technician", [teamId]);
       form.reset();
@@ -1040,3 +1054,4 @@ async function start() {
 }
 
 start().catch(() => notify("No se pudo iniciar la aplicación.", "error"));
+

@@ -7,8 +7,8 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3al1">
-  <link rel="stylesheet" href="./agenda.css?v=3al1">
+  <link rel="stylesheet" href="./app.css?v=3am1">
+  <link rel="stylesheet" href="./agenda.css?v=3am1">
 </head>
 <body>
   <main class="shell">
@@ -78,7 +78,8 @@
           <section class="subpanel">
             <h3>Crear cuenta</h3>
             <form id="accountForm">
-              <label for="newDisplayName">Nombre</label><input id="newDisplayName" required maxlength="120">
+              <label for="newDisplayName">Nombre completo del perfil</label><input id="newDisplayName" required maxlength="120">
+              <label for="newPresentationName">Nombre en mensajes</label><input id="newPresentationName" required maxlength="120">
               <label for="newEmployeeId">Matrícula</label><input id="newEmployeeId" required minlength="6" maxlength="32">
               <label for="newRole">Rol</label><select id="newRole"><option value="technician">Técnico</option><option value="master">Master</option></select>
               <fieldset id="teamChoices"><legend>Equipos</legend><div class="muted">Cargando equipos…</div></fieldset>
@@ -132,6 +133,11 @@
             <div class="grid-form"><label>Para<input id="cancelEmailTo" type="email" maxlength="320"></label><label>CC<input id="cancelEmailCc" maxlength="1000"></label><label>Asunto<input id="cancelEmailSubject" maxlength="500"></label></div>
             <button class="button primary" type="submit">Guardar ajustes</button>
           </form>
+          <form id="presentationNameForm" class="presentation-name-form">
+            <label for="presentationName">Nombre que aparecerá en los mensajes de WhatsApp</label>
+            <input id="presentationName" required maxlength="120" autocomplete="given-name">
+            <button class="button secondary" type="submit">Guardar nombre</button>
+          </form>
         </section>
       </section>
       <section id="masterPanel" class="panel hidden">
@@ -143,7 +149,8 @@
         <section class="subpanel master-invite">
           <h3>Crear técnico</h3>
           <form id="masterAccountForm">
-            <label for="masterDisplayName">Nombre</label><input id="masterDisplayName" required maxlength="120">
+            <label for="masterDisplayName">Nombre completo del perfil</label><input id="masterDisplayName" required maxlength="120">
+            <label for="masterPresentationName">Nombre en mensajes</label><input id="masterPresentationName" required maxlength="120">
             <label for="masterEmployeeId">Matrícula</label><input id="masterEmployeeId" required minlength="6" maxlength="32">
             <label for="masterTeamSelect">Equipo</label><select id="masterTeamSelect" required></select>
             <button class="button primary" type="submit">Crear cuenta</button>
@@ -155,7 +162,8 @@
     </section>
     <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3al1"></script>
-  <script type="module" src="./app.js?v=3al1"></script>
+  <script src="./config.js?v=3am1"></script>
+  <script type="module" src="./app.js?v=3am1"></script>
 </body>
 </html>
+
