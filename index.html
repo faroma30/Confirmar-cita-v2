@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3as1">
+  <meta name="app-build" content="3at1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3as1">
-  <link rel="stylesheet" href="./agenda.css?v=3as1">
+  <link rel="stylesheet" href="./app.css?v=3at1">
+  <link rel="stylesheet" href="./agenda.css?v=3at1">
 </head>
 <body>
   <main class="shell">
     <header class="header hero">
       <div class="hero-inner">
-        <img class="brand-logo" src="./verisure-logo.png?v=3as1" alt="Verisure" width="210" height="74">
+        <img class="brand-logo" src="./verisure-logo.png?v=3at1" alt="Verisure" width="210" height="74">
         <h1>Confirmar Citas</h1>
       </div>
       <div class="hero-actions">
@@ -73,6 +73,16 @@
       <section id="workspaceWelcome" class="panel welcome">
         <div><span id="rolePill" class="pill"></span><h2 id="welcomeName"></h2><p id="roleDescription"></p></div>
       </section>
+      <section id="workspaceLoading" class="panel narrow hidden" role="status" aria-live="polite">
+        <span class="pill pending">Acceso verificado</span>
+        <p id="workspaceLoadingMessage">Estamos preparando tu espacio.</p>
+        <button id="workspaceLoadingRetry" class="button secondary hidden" type="button">Volver a intentar</button>
+      </section>
+      <section id="adminPanelLoading" class="panel narrow hidden" role="status" aria-live="polite">
+        <span class="pill admin">Administrador</span>
+        <h2>Gestión del sistema</h2>
+        <p>Cargando el panel de administración…</p>
+      </section>
       <section id="adminPanel" class="panel hidden">
         <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div></div>
         <div class="admin-grid">
@@ -108,6 +118,7 @@
       </nav>
       <section id="appointmentsPanel" class="panel hidden">
         <div class="agenda-heading"><div><p class="eyebrow">AGENDA PERSONAL</p><h2>Confirmar Citas</h2></div></div>
+        <div id="appointmentsLoading" class="notice" role="status" aria-live="polite">Cargando tus citas…</div>
         <div class="agenda-controls">
           <label id="appointmentTeamLabel" for="appointmentTeam">Equipo de importación</label>
           <select id="appointmentTeam"></select>
@@ -167,6 +178,7 @@
         <div id="masterTeams" class="team-chips"></div>
         <div class="agenda-controls"><label for="masterTechnicianSelect">Técnico</label><select id="masterTechnicianSelect"></select><button id="refreshMasterRoute" class="button secondary" type="button">Actualizar ruta</button></div>
         <div id="masterDateNav" class="datechips" aria-label="Fecha de las rutas"></div>
+        <div id="masterAppointmentsLoading" class="notice hidden" role="status" aria-live="polite">Cargando las citas del equipo…</div>
         <div id="masterAppointmentList" class="appointment-list"></div>
       </section>
       <section id="masterTechniciansPanel" class="panel hidden">
@@ -206,9 +218,9 @@
       </dialog>
     </section>
   </main>
-  <script src="./config.js?v=3as1"></script>
-  <script src="./startup-status.js?v=3as1"></script>
-  <script type="module" src="./app.js?v=3as1"></script>
+  <script src="./config.js?v=3at1"></script>
+  <script src="./startup-status.js?v=3at1"></script>
+  <script type="module" src="./app.js?v=3at1"></script>
 </body>
 </html>
 
