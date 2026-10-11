@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3aq2">
+  <meta name="app-build" content="3ar1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3aq2">
-  <link rel="stylesheet" href="./agenda.css?v=3aq2">
+  <link rel="stylesheet" href="./app.css?v=3ar1">
+  <link rel="stylesheet" href="./agenda.css?v=3ar1">
 </head>
 <body>
   <main class="shell">
     <header class="header hero">
       <div class="hero-inner">
-        <img class="brand-logo" src="./verisure-logo.png?v=3aq2" alt="Verisure" width="210" height="74">
+        <img class="brand-logo" src="./verisure-logo.png?v=3ar1" alt="Verisure" width="210" height="74">
         <h1>Confirmar Citas</h1>
       </div>
       <div class="hero-actions">
@@ -48,7 +48,7 @@
       <h2>Iniciar sesión</h2>
       <form id="loginForm">
         <label for="employeeId">Matrícula</label>
-        <input id="employeeId" name="login_id" autocomplete="username" inputmode="text" required minlength="4" maxlength="32">
+        <input id="employeeId" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" required minlength="4" maxlength="32">
         <label for="password">Contraseña</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
         <button class="button primary full" type="submit">Entrar</button>
@@ -126,7 +126,6 @@
           <textarea id="oracleText" rows="8" maxlength="500000" placeholder="Pega aquí el texto de Oracle"></textarea>
           <div class="agenda-import"><button id="pasteOracle" class="button secondary" type="button">Pegar del portapapeles</button><button id="processOracle" class="button primary" type="button">Procesar instalaciones</button></div>
         </section>
-        <p class="fine">Solo se importan instalaciones. Teléfonos, direcciones y notas se guardan de forma privada para tu cuenta y no aparecen en la supervisión Master.</p>
         <div id="appointmentNotice" class="notice hidden" role="status"></div>
         <div id="appointmentFilters" class="appointment-filters"></div>
         <div id="appointmentIgnored" class="muted agenda-ignored"></div>
@@ -206,11 +205,10 @@
         </form>
       </dialog>
     </section>
-    <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3aq2"></script>
-  <script src="./startup-status.js?v=3aq2"></script>
-  <script type="module" src="./app.js?v=3aq2"></script>
+  <script src="./config.js?v=3ar1"></script>
+  <script src="./startup-status.js?v=3ar1"></script>
+  <script type="module" src="./app.js?v=3ar1"></script>
 </body>
 </html>
 
