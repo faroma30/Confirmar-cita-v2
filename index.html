@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3ar2">
+  <meta name="app-build" content="3as1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3ar2">
-  <link rel="stylesheet" href="./agenda.css?v=3ar2">
+  <link rel="stylesheet" href="./app.css?v=3as1">
+  <link rel="stylesheet" href="./agenda.css?v=3as1">
 </head>
 <body>
   <main class="shell">
@@ -65,7 +65,7 @@
       </form>
     </section>
     <section id="workspace" class="hidden">
-      <section class="panel welcome">
+      <section id="workspaceWelcome" class="panel welcome">
         <div><span id="rolePill" class="pill"></span><h2 id="welcomeName"></h2><p id="roleDescription"></p></div>
       </section>
       <section id="adminPanel" class="panel hidden">
@@ -127,8 +127,8 @@
         <div id="appointmentIgnored" class="muted agenda-ignored"></div>
         <div id="appointmentList" class="appointment-list"></div>
       </section>
-      <section id="personalSettingsPanel" class="panel hidden" aria-labelledby="settingsTitle">
-          <div class="section-heading"><h2 id="settingsTitle">Ajustes</h2><button id="settingsClose" class="button quiet" type="button">Cerrar</button></div>
+      <section id="personalSettingsPanel" class="panel settings-screen hidden" aria-labelledby="settingsTitle">
+          <div class="settings-screen-header"><button id="settingsClose" class="button quiet settings-back" type="button">← Volver</button><h2 id="settingsTitle" tabindex="-1">Ajustes</h2></div>
           <div id="agendaSettingsGroup">
           <form id="presentationNameForm" class="presentation-name-form">
             <label for="presentationName">Nombre que aparecerá en los mensajes de WhatsApp</label>
@@ -205,8 +205,9 @@
     </section>
     <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3ar2"></script>
-  <script src="./startup-status.js?v=3ar2"></script>
-  <script type="module" src="./app.js?v=3ar2"></script>
+  <script src="./config.js?v=3as1"></script>
+  <script src="./startup-status.js?v=3as1"></script>
+  <script type="module" src="./app.js?v=3as1"></script>
 </body>
 </html>
+

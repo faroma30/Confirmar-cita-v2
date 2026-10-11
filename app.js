@@ -1,10 +1,12 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
+import { createSettingsNavigation } from "./settings-navigation.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
 
 const $ = (id) => document.getElementById(id);
+const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminPanel", "masterViewTabs", "appointmentsPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel"];
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
 const configured = typeof config.url === "string"
   && config.url.startsWith("https://")
@@ -32,13 +34,24 @@ let appointmentPreferences = {};
 let importChangesBySource = new Map();
 let undoTimer = null;
 let sharedTextConsumed = false;
-const APP_BUILD = "3ar2";
+const APP_BUILD = "3as1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
 const DEFAULT_INSTALLATION_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la alarma de Verisure* para hacer la instalación de la alarma.\n\nMañana estaré en *{POBLACION}* a las *{HORA}*.\n\n📍 Dirección: *{DIRECCION}*\n\nPor favor, comprueba que la dirección es correcta.\n\nImportante que tenga el *DNI* (físico) y el *número de cuenta*.\n\nRecuerda que el inmueble debe tener:\n- Luz\n- No estar en obras\n- Internet (si se quiere instalar la cámara de vídeo)\n\nTe avisaré cuando esté de camino. Cualquier cosa, házmela saber.\n\n*Si necesitas CANCELAR la instalación avísame antes de las 00:00 de hoy para evitar penalizaciones.*`;
 const DEFAULT_MAINTENANCE_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la alarma de Verisure* para hacer el mantenimiento de la alarma.\n\nMañana estaré en *{POBLACION}* a las *{HORA}*.\n\n📍 Dirección: *{DIRECCION}*\n\nPor favor, comprueba que la dirección es correcta.\n\n*Si necesitas CANCELAR el mantenimiento avísame antes de las 00:00 de hoy para evitar penalizaciones.*`;
 const DEFAULT_CANCELLATION_TEMPLATE = `Buenos días,\n\nEl cliente correspondiente al prospecto {MTO} solicita cancelar la cita prevista a las {HORA}.\n\nTipo de intervención: {TIPO}\nPoblación: {POBLACION}\nTeléfono: {TELEFONO}\nDirección: {DIRECCION}\n\nMotivo indicado por el cliente: {MOTIVO}\n\nUn saludo,\n{TECNICO}`;
+
+const settingsNavigation = createSettingsNavigation({
+  getElement: $,
+  viewIds: SETTINGS_VIEW_IDS,
+  settingsId: "personalSettingsPanel",
+  titleId: "settingsTitle",
+  window,
+  history,
+  location,
+  document,
+});
 
 function addLocalDays(date, days) {
   return dateOffset(date, days);
@@ -100,6 +113,7 @@ async function fetchOwnProfile() {
 
 async function routeSession() {
   clearNotice();
+  settingsNavigation.abandon();
   hideWorkspacePanels();
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) {
@@ -1227,14 +1241,9 @@ function bindEvents() {
       notify("Contraseña actualizada. Inicia sesión de nuevo.", "success");
     }
   });
-  const toggleSettings = () => {
-    const opening = $("personalSettingsPanel").classList.contains("hidden");
-    setVisible("personalSettingsPanel", opening);
-    if (opening) $("personalSettingsPanel").scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  $("settingsToggle").addEventListener("click", toggleSettings);
-  $("adminSettingsToggle").addEventListener("click", toggleSettings);
-  $("settingsClose").addEventListener("click", () => setVisible("personalSettingsPanel", false));
+  $("settingsToggle").addEventListener("click", settingsNavigation.open);
+  $("adminSettingsToggle").addEventListener("click", settingsNavigation.open);
+  $("settingsClose").addEventListener("click", settingsNavigation.close);
   $("signOut").addEventListener("click", async () => {
     hideWorkspacePanels();
     setVisible("startupStatus", true);
@@ -1442,3 +1451,4 @@ start().catch(() => {
     console.error("[Confirmar Citas] Error de inicialización (CC_INIT_FAILED)");
   }
 });
+
