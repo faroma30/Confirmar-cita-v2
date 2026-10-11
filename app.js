@@ -25,9 +25,13 @@ function setVisible(id, visible) { $(id).classList.toggle("hidden", !visible); }
 function normalizeEmployeeId(value) {
   return String(value ?? "").normalize("NFKC").trim().toUpperCase().replace(/[\s-]/g, "");
 }
+function normalizeLoginId(value) {
+  const normalized = String(value ?? "").normalize("NFKC").trim().toUpperCase().replace(/[\s-]/g, "");
+  return normalized === "ADMIN" ? "ADMIN" : normalizeEmployeeId(normalized);
+}
 function passwordOkay(password, employeeId) {
-  return password.length >= 12 && password.length <= 128
-    && password !== employeeId && password.toUpperCase() !== normalizeEmployeeId(employeeId);
+  return password.length >= 6 && password.length <= 128
+    && normalizeLoginId(password) !== normalizeLoginId(employeeId);
 }
 
 function createSupabaseClient() {
@@ -39,7 +43,6 @@ function createSupabaseClient() {
       autoRefreshToken: true,
       detectSessionInUrl: true,
     },
-    db: { schema: "confirmar_citas" },
   });
 }
 
@@ -50,10 +53,7 @@ function hideWorkspacePanels() {
 }
 
 async function fetchOwnProfile() {
-  const { data, error } = await supabase.schema("confirmar_citas")
-    .from("my_profile")
-    .select("user_id,display_name,role,status,must_change_password,activation_verified_at")
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("cc_my_profile");
   if (error) throw error;
   return data;
 }
@@ -92,6 +92,11 @@ async function routeSession() {
     setVisible("signOut", true);
     return;
   }
+  if (!activeProfile.activation_verified_at) {
+    notify("La cuenta aún no está habilitada para este módulo. Contacta con el administrador.", "error");
+    setVisible("signOut", true);
+    return;
+  }
   if (activeProfile.status !== "active") {
     notify("La cuenta está desactivada. Contacta con el administrador.", "error");
     setVisible("signOut", true);
@@ -100,6 +105,17 @@ async function routeSession() {
   setVisible("workspace", true);
   setVisible("signOut", true);
   $("welcomeName").textContent = activeProfile.display_name;
+  const changeLogin = $("changeEmployeeId");
+  const changeLoginLabel = changeLogin.closest("label");
+  if (activeProfile.role === "admin") {
+    changeLogin.value = "admin";
+    changeLogin.readOnly = true;
+    changeLoginLabel.firstChild.textContent = "Usuario";
+  } else {
+    changeLogin.value = "";
+    changeLogin.readOnly = false;
+    changeLoginLabel.firstChild.textContent = "Matrícula";
+  }
   const rolePill = $("rolePill");
   rolePill.textContent = activeProfile.role === "admin" ? "Administrador" : activeProfile.role === "master" ? "Master" : "Técnico";
   rolePill.className = `pill ${activeProfile.role}`;
@@ -181,17 +197,15 @@ async function resetAccountPassword(userId, displayName) {
 
 async function loadAdminPanel() {
   const [teamsResult, accountsResult, settingsResult] = await Promise.all([
-    supabase.schema("confirmar_citas").from("teams").select("id,name,active").order("name"),
-    supabase.schema("confirmar_citas").from("admin_user_directory")
-      .select("user_id,display_name,role,status,must_change_password,activation_verified_at,teams")
-      .order("display_name"),
-    supabase.schema("confirmar_citas").from("admin_global_settings").select("retention_days").maybeSingle(),
+    supabase.rpc("cc_admin_team_list"),
+    supabase.rpc("cc_admin_user_directory"),
+    supabase.rpc("cc_admin_global_settings"),
   ]);
   if (teamsResult.error || accountsResult.error || settingsResult.error) {
     notify("No se pudo cargar la información administrativa.", "error");
     return;
   }
-  teamsForActor = teamsResult.data ?? [];
+  teamsForActor = Array.isArray(teamsResult.data) ? teamsResult.data : [];
   const teamList = $("adminTeams");
   teamList.replaceChildren();
   for (const team of teamsForActor) {
@@ -199,11 +213,25 @@ async function loadAdminPanel() {
     teamList.append(makeAccountCard(
       { display_name: team.name, role: "team", status: active ? "Activo" : "Inactivo" },
       [],
-      [{
-        label: active ? "Desactivar equipo" : "Activar equipo",
-        run: () => invokeAdmin({ action: "set_team_status", team_id: team.id, active: !active })
-          .then(loadAdminPanel).catch(() => notify("No se pudo cambiar el estado del equipo.", "error")),
-      }],
+      [
+        {
+          label: "Editar nombre",
+          run: async () => {
+            const name = window.prompt("Nombre del equipo", team.name);
+            if (name === null || !name.trim() || name.trim() === team.name) return;
+            try {
+              await invokeAdmin({ action: "rename_team", team_id: team.id, name: name.trim() });
+              notify("Nombre del equipo actualizado.", "success");
+              await loadAdminPanel();
+            } catch { notify("No se pudo cambiar el nombre del equipo.", "error"); }
+          },
+        },
+        {
+          label: active ? "Desactivar equipo" : "Activar equipo",
+          run: () => invokeAdmin({ action: "set_team_status", team_id: team.id, active: !active })
+            .then(loadAdminPanel).catch(() => notify("No se pudo cambiar el estado del equipo.", "error")),
+        },
+      ],
     ));
   }
   if (!teamsForActor.length) teamList.textContent = "Aún no hay equipos.";
@@ -222,11 +250,13 @@ async function loadAdminPanel() {
     choiceList.append(empty);
   }
   choices.append(choiceList);
-  if (settingsResult.data) $("retentionDays").value = String(settingsResult.data.retention_days);
+  if (settingsResult.data?.retention_days != null) {
+    $("retentionDays").value = String(settingsResult.data.retention_days);
+  }
 
   const target = $("adminAccounts");
   target.replaceChildren();
-  const accounts = accountsResult.data ?? [];
+  const accounts = Array.isArray(accountsResult.data) ? accountsResult.data : [];
   for (const profile of accounts) {
     const memberships = Array.isArray(profile.teams) ? profile.teams : [];
     const names = memberships.map((membership) => `${membership.team_name} (${membership.membership_status})`);
@@ -286,7 +316,7 @@ async function setAdminAccountStatus(userId, status) {
 }
 
 async function setAdminTechnicianTeam(teamId, technicianId, active) {
-  const { error } = await supabase.schema("confirmar_citas").rpc("manage_technician_membership", {
+  const { error } = await supabase.rpc("cc_manage_technician_membership", {
     p_team_id: teamId, p_technician_id: technicianId, p_active: active,
   });
   if (error) notify("No se pudo cambiar la asignación del técnico.", "error");
@@ -298,16 +328,14 @@ async function setAdminTechnicianTeam(teamId, technicianId, active) {
 
 async function loadMasterPanel() {
   const [teamsResult, accountsResult] = await Promise.all([
-    supabase.schema("confirmar_citas").from("teams").select("id,name").eq("active", true).order("name"),
-    supabase.schema("confirmar_citas").from("master_team_accounts")
-      .select("team_id,technician_id,display_name,account_status,must_change_password,membership_status,created_at")
-      .order("display_name"),
+    supabase.rpc("cc_master_team_list"),
+    supabase.rpc("cc_master_team_accounts"),
   ]);
   if (teamsResult.error || accountsResult.error) {
     notify("No se pudo cargar la información de tu equipo.", "error");
     return;
   }
-  teamsForActor = teamsResult.data ?? [];
+  teamsForActor = Array.isArray(teamsResult.data) ? teamsResult.data : [];
   const chips = $("masterTeams");
   chips.replaceChildren();
   for (const team of teamsForActor) {
@@ -327,7 +355,7 @@ async function loadMasterPanel() {
   const accountTarget = $("masterAccounts");
   accountTarget.replaceChildren();
   const teamNames = new Map(teamsForActor.map((team) => [team.id, team.name]));
-  for (const profile of accountsResult.data ?? []) {
+  for (const profile of (Array.isArray(accountsResult.data) ? accountsResult.data : [])) {
     const teamName = teamNames.get(profile.team_id) ?? "Equipo";
     const actions = [];
     if (profile.account_status !== "disabled") {
@@ -356,7 +384,7 @@ async function loadMasterPanel() {
 }
 
 async function setMasterMembership(teamId, technicianId, active) {
-  const { error } = await supabase.schema("confirmar_citas").rpc("manage_technician_membership", {
+  const { error } = await supabase.rpc("cc_manage_technician_membership", {
     p_team_id: teamId, p_technician_id: technicianId, p_active: active,
   });
   if (error) notify("No se pudo cambiar el acceso del técnico al equipo.", "error");
@@ -385,7 +413,7 @@ function bindEvents() {
     const employeeId = $("employeeId").value;
     const password = $("password").value;
     const { data, error } = await supabase.functions.invoke("login-by-matricula", {
-      body: { employee_id: employeeId, password },
+      body: { login_id: employeeId, password },
     });
     $("password").value = "";
     if (error || data?.error || !data?.session) {
@@ -400,7 +428,7 @@ function bindEvents() {
     const employeeId = $("activationEmployeeId").value;
     const password = $("activationPassword").value;
     if (password !== $("activationPassword2").value || !passwordOkay(password, employeeId)) {
-      notify("Usa una contraseña personal de al menos 12 caracteres, distinta de la matrícula, y repítela correctamente.", "error");
+      notify("Usa una contraseña personal de al menos 6 caracteres, distinta del usuario, y repítela correctamente.", "error");
       return;
     }
     const { data, error } = await supabase.functions.invoke("complete-account-activation", {
@@ -419,16 +447,16 @@ function bindEvents() {
   });
   $("changePasswordForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const employeeId = $("changeEmployeeId").value;
+    const employeeId = activeProfile?.role === "admin" ? "admin" : $("changeEmployeeId").value;
     const currentPassword = $("currentPassword").value;
     const newPassword = $("newPassword").value;
     if (newPassword !== $("newPassword2").value || !passwordOkay(newPassword, employeeId)) {
-      notify("La contraseña nueva debe tener al menos 12 caracteres, ser distinta de la matrícula y coincidir en ambos campos.", "error");
+      notify("La contraseña nueva debe tener al menos 6 caracteres, ser distinta del usuario y coincidir en ambos campos.", "error");
       return;
     }
     const { data, error: updateError } = await supabase.functions.invoke("account-password", {
       body: {
-        mode: "change", employee_id: employeeId,
+        mode: "change", login_id: activeProfile?.role === "admin" ? "admin" : employeeId,
         current_password: currentPassword, new_password: newPassword,
       },
     });
@@ -521,4 +549,3 @@ async function start() {
 }
 
 start().catch(() => notify("No se pudo iniciar la aplicación.", "error"));
-
