@@ -1,7 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3au1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3au2";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
@@ -43,7 +43,7 @@ let masterSelectedTechnicianId = "";
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3au1";
+const APP_BUILD = "3au2";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -484,7 +484,18 @@ function makeMasterTechnicianCard(profile, teamName, actions = []) {
   employeeId.textContent = `Matrícula: ${profile.employee_id || "—"}`;
   const team = document.createElement("p");
   team.textContent = `Equipo: ${teamName}`;
-  details.append(name, employeeId, team);
+  const status = document.createElement("p");
+  status.className = profile.account_status === "Activo" ? "account-status active"
+    : profile.account_status === "Desactivado en este equipo" || profile.account_status === "Cuenta desactivada por Administración"
+      ? "account-status disabled" : "account-status pending";
+  status.textContent = `Estado: ${profile.account_status || "Desconocido"}`;
+  details.append(name, employeeId, team, status);
+  if (!profile.employee_id) {
+    const hint = document.createElement("p");
+    hint.className = "muted";
+    hint.textContent = "La matrícula requiere regularización por Administración.";
+    details.append(hint);
+  }
   card.append(details);
   if (actions.length) {
     const menu = document.createElement("details");
@@ -1175,7 +1186,7 @@ async function resetAccountPassword(userId, displayName) {
   if (error || data?.error || !data?.temporary_password) throw new Error("reset failed");
   const password = data.temporary_password;
   data.temporary_password = "";
-  window.alert(`Contraseña temporal para ${displayName}: ${password}\n\nEntrégala personalmente. La persona deberá cambiarla al iniciar sesión.`);
+  window.alert(`Contraseña inicial para ${displayName}: ${password}\n\nSe ha restablecido a la matrícula normalizada. Entrégala personalmente. La persona deberá cambiarla antes de acceder a sus citas.`);
 }
 
 async function loadAdminPanel() {
@@ -1244,6 +1255,20 @@ async function loadAdminPanel() {
     const memberships = Array.isArray(profile.teams) ? profile.teams : [];
     const names = memberships.map((membership) => `${membership.team_name} (${membership.membership_status})`);
     const actions = [];
+    if (profile.role === "technician" && !profile.employee_id_display) {
+      actions.push({
+        label: "Regularizar matrícula",
+        run: async () => {
+          const employeeId = window.prompt(`Introduce la matrícula oficial de ${profile.display_name}. No se puede recuperar desde su hash.`);
+          if (employeeId === null || !employeeId.trim()) return;
+          try {
+            await invokeAdmin({ action: "regularize_technician_identifier", target_id: profile.user_id, employee_id: employeeId });
+            notify("Matrícula regularizada.", "success");
+            await loadAdminPanel();
+          } catch { notify("No se pudo regularizar la matrícula. Comprueba que coincide con la cuenta.", "error"); }
+        },
+      });
+    }
     if (profile.role !== "admin") {
       const isDisabled = profile.status === "disabled";
       const canReactivate = isDisabled && !profile.must_change_password && Boolean(profile.activation_verified_at);
@@ -1283,7 +1308,7 @@ async function loadAdminPanel() {
         });
       }
     }
-    target.append(makeAccountCard(profile, names, actions));
+    target.append(makeAccountCard({ ...profile, employee_id: profile.employee_id_display }, names, actions));
   }
   if (!accounts.length) target.textContent = "Aún no hay cuentas de equipo.";
   return true;
@@ -1363,13 +1388,19 @@ async function loadMasterPanel() {
   for (const profile of (Array.isArray(accountsResult.data) ? accountsResult.data : [])) {
     const teamName = teamNames.get(profile.team_id) ?? "Equipo";
     const actions = [];
-    if (profile.account_status !== "disabled") {
-      const active = profile.membership_status === "active";
+    const membershipActive = profile.membership_status === "active";
+    const accountDisabled = profile.account_status === "disabled";
+    const effectiveStatus = accountDisabled
+      ? "Cuenta desactivada por Administración"
+      : membershipActive
+        ? (profile.must_change_password ? "Pendiente de cambio de contraseña" : "Activo")
+        : "Desactivado en este equipo";
+    if (!accountDisabled) {
       actions.push({
-        label: active ? "Desactivar en el equipo" : "Activar en el equipo",
-        run: () => setMasterMembership(profile.team_id, profile.technician_id, !active),
+        label: membershipActive ? "Desactivar en el equipo" : "Activar en el equipo",
+        run: () => setMasterMembership(profile.team_id, profile.technician_id, !membershipActive),
       });
-      if (profile.membership_status === "active") {
+      if (membershipActive && profile.employee_id_display) {
         actions.push({
           label: "Restablecer contraseña",
           run: () => resetAccountPassword(profile.technician_id, profile.display_name)
@@ -1382,6 +1413,7 @@ async function loadMasterPanel() {
       display_name: profile.display_name,
       role: "technician",
       employee_id: profile.employee_id_display,
+      account_status: effectiveStatus,
     }, teamName, actions));
   }
   if (!accountTarget.childElementCount) accountTarget.textContent = "No hay técnicos asignados todavía.";
