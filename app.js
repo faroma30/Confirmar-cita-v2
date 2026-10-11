@@ -1,7 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ap1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3aq1";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
@@ -40,7 +40,7 @@ let initializedWorkspaceRole = null;
 let masterSelectedTechnicianId = "";
 let selectedMasterView = "appointments";
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3ap1";
+const APP_BUILD = "3aq1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -104,6 +104,7 @@ function hideWorkspacePanels() {
   ["authPanel", "authDisabled", "activationPanel", "workspace", "adminPanel", "masterPanel",
     "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel"].forEach((id) => setVisible(id, false));
   setVisible("signOut", false);
+  setVisible("settingsToggle", false);
 }
 
 function finishStartup() {
@@ -206,6 +207,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   }
   setVisible("workspace", true);
   setVisible("signOut", true);
+  setVisible("settingsToggle", ["admin", "master", "technician"].includes(activeProfile.role));
   $("welcomeName").textContent = activeProfile.display_name;
   const changeLogin = $("changeEmployeeId");
   const changeLoginLabel = changeLogin.closest("label");
@@ -1361,7 +1363,6 @@ function bindEvents() {
     }
   });
   $("settingsToggle").addEventListener("click", settingsNavigation.open);
-  $("adminSettingsToggle").addEventListener("click", settingsNavigation.open);
   $("settingsClose").addEventListener("click", settingsNavigation.close);
   $("signOut").addEventListener("click", async () => {
     hideWorkspacePanels();
@@ -1591,3 +1592,4 @@ start().catch(() => {
     console.error("[Confirmar Citas] Error de inicialización (CC_INIT_FAILED)");
   }
 });
+
