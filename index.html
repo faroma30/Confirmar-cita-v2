@@ -4,19 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3ap1">
+  <meta name="app-build" content="3aq1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3ap1">
-  <link rel="stylesheet" href="./agenda.css?v=3ap1">
+  <link rel="stylesheet" href="./app.css?v=3aq1">
+  <link rel="stylesheet" href="./agenda.css?v=3aq1">
 </head>
 <body>
   <main class="shell">
-    <header class="header">
-      <img class="brand-logo" src="./verisure-logo.png?v=3ap1" alt="Verisure" width="64" height="46">
-      <div><p class="eyebrow">VERISURE · NUEVO ENTORNO</p><h1>Confirmar Citas</h1></div>
-      <button id="signOut" class="button quiet hidden" type="button">Cerrar sesión</button>
+    <header class="header hero">
+      <div class="hero-inner">
+        <img class="brand-logo" src="./verisure-logo.png?v=3aq1" alt="Verisure" width="210" height="74">
+        <h1>Confirmar Citas</h1>
+      </div>
+      <div class="hero-actions">
+        <button id="settingsToggle" class="gear hidden" type="button" aria-label="Ajustes" title="Ajustes">⚙️</button>
+        <button id="signOut" class="hero-sign-out hidden" type="button">Cerrar sesión</button>
+      </div>
     </header>
     <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
     <section id="startupStatus" class="panel narrow" role="status" aria-live="polite">
@@ -69,7 +74,7 @@
         <div><span id="rolePill" class="pill"></span><h2 id="welcomeName"></h2><p id="roleDescription"></p></div>
       </section>
       <section id="adminPanel" class="panel hidden">
-        <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div><button id="adminSettingsToggle" class="icon-button" type="button" aria-label="Ajustes avanzados" title="Ajustes avanzados">⚙</button></div>
+        <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div></div>
         <div class="admin-grid">
           <section class="subpanel">
             <h3>Crear equipo</h3>
@@ -102,7 +107,7 @@
         <button class="button secondary" id="masterCreateTab" type="button">Crear técnico</button>
       </nav>
       <section id="appointmentsPanel" class="panel hidden">
-        <div class="agenda-heading"><div><p class="eyebrow">AGENDA PERSONAL</p><h2>Confirmar Citas</h2></div><button id="settingsToggle" class="icon-button" type="button" aria-label="Ajustes" title="Ajustes">⚙</button></div>
+        <div class="agenda-heading"><div><p class="eyebrow">AGENDA PERSONAL</p><h2>Confirmar Citas</h2></div></div>
         <div class="agenda-controls">
           <label id="appointmentTeamLabel" for="appointmentTeam">Equipo de importación</label>
           <select id="appointmentTeam"></select>
@@ -203,8 +208,9 @@
     </section>
     <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3ap1"></script>
-  <script src="./startup-status.js?v=3ap1"></script>
-  <script type="module" src="./app.js?v=3ap1"></script>
+  <script src="./config.js?v=3aq1"></script>
+  <script src="./startup-status.js?v=3aq1"></script>
+  <script type="module" src="./app.js?v=3aq1"></script>
 </body>
 </html>
+
