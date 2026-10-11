@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
+  <meta name="app-build" content="3ap1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3am1">
-  <link rel="stylesheet" href="./agenda.css?v=3am1">
+  <link rel="stylesheet" href="./app.css?v=3ap1">
+  <link rel="stylesheet" href="./agenda.css?v=3ap1">
 </head>
 <body>
   <main class="shell">
@@ -108,31 +109,40 @@
           <select id="appointmentTeam"></select>
           <button id="reloadAppointments" class="button secondary" type="button">Actualizar agenda</button>
         </div>
+        <div id="appointmentDateTitle" class="daytitle"></div>
+        <div id="agendaDateNav" class="datechips" aria-label="Agendas guardadas"></div>
         <div class="agenda-stats" id="appointmentStats"></div>
         <div class="agenda-import">
           <button id="importClipboard" class="button primary" type="button">📋 Importar desde Oracle</button>
           <button id="manualToggle" class="button secondary" type="button">Pegar texto manualmente</button>
+          <button id="nextAppointment" class="button primary" type="button">📲 Confirmar siguiente pendiente</button>
+          <button id="deleteAgendaDay" class="button danger" type="button">🗑️ Borrar día</button>
+          <button id="purgeOldAgendas" class="button secondary" type="button">Borrar agendas anteriores a hoy</button>
         </div>
         <section id="manualImport" class="subpanel hidden">
           <label for="oracleText">Texto copiado de Oracle Field Service</label>
           <textarea id="oracleText" rows="8" maxlength="500000" placeholder="Pega aquí el texto de Oracle"></textarea>
-          <button id="processOracle" class="button primary" type="button">Procesar instalaciones</button>
+          <div class="agenda-import"><button id="pasteOracle" class="button secondary" type="button">Pegar del portapapeles</button><button id="processOracle" class="button primary" type="button">Procesar instalaciones</button></div>
         </section>
         <p class="fine">Solo se importan instalaciones. Teléfonos, direcciones y notas se guardan de forma privada para tu cuenta y no aparecen en la supervisión Master.</p>
         <div id="appointmentNotice" class="notice hidden" role="status"></div>
         <div id="appointmentFilters" class="appointment-filters"></div>
-        <div id="appointmentIgnored" class="muted"></div>
+        <div id="appointmentIgnored" class="muted agenda-ignored"></div>
         <div id="appointmentList" class="appointment-list"></div>
         <section class="subpanel preferences-panel">
           <button id="preferencesToggle" class="button secondary" type="button">Ajustes de agenda</button>
           <form id="appointmentPreferences" class="hidden">
             <label for="installationKeywords">Palabras que identifican instalaciones (una por línea)</label><textarea id="installationKeywords" rows="4"></textarea>
             <label for="installationTemplate">Plantilla WhatsApp · Instalación</label><textarea id="installationTemplate" rows="7"></textarea>
+            <button id="restoreInstallationTemplate" class="button secondary" type="button">Restaurar plantilla de V1</button>
             <label for="maintenanceTemplate">Plantilla WhatsApp · Mantenimiento (no se importa)</label><textarea id="maintenanceTemplate" rows="5"></textarea>
             <label for="cancellationTemplate">Plantilla de correo de cancelación</label><textarea id="cancellationTemplate" rows="7"></textarea>
             <div class="grid-form"><label>Para<input id="cancelEmailTo" type="email" maxlength="320"></label><label>CC<input id="cancelEmailCc" maxlength="1000"></label><label>Asunto<input id="cancelEmailSubject" maxlength="500"></label></div>
+            <button id="restoreCancellationDefaults" class="button secondary" type="button">Restaurar valores predeterminados de V1</button>
             <button class="button primary" type="submit">Guardar ajustes</button>
           </form>
+          <div class="fine">La retención central del sistema se aplica también a esta agenda. Puedes borrar manualmente un día o todos tus días anteriores a hoy.</div>
+          <button id="checkUpdate" class="button secondary" type="button">Comprobar actualización</button>
           <form id="presentationNameForm" class="presentation-name-form">
             <label for="presentationName">Nombre que aparecerá en los mensajes de WhatsApp</label>
             <input id="presentationName" required maxlength="120" autocomplete="given-name">
@@ -162,8 +172,7 @@
     </section>
     <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3am1"></script>
-  <script type="module" src="./app.js?v=3am1"></script>
+  <script src="./config.js?v=3ap1"></script>
+  <script type="module" src="./app.js?v=3ap1"></script>
 </body>
 </html>
-

@@ -61,6 +61,11 @@ export function parseOracleInstallations(text, keywords = ["kit hogar", "kit bá
       full_address: fullAddress,
       postal_code: postalCode,
     };
+    const phoneDigits = phone.replace(/\D/g, "");
+    entry.issues = [];
+    if (phoneDigits.length < 9 || phoneDigits.length > 15) entry.issues.push("Teléfono no válido");
+    if (!population) entry.issues.push("Población no detectada");
+    if (!fullAddress) entry.issues.push("Dirección no detectada");
     if (isInstallation) installations.push(entry);
     else ignored.push({ time, type: type || "Tipo no detectado" });
   }
