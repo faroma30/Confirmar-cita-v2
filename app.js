@@ -1,7 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3as1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3at1";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
@@ -22,6 +22,8 @@ let teamsForActor = [];
 let appointmentTeams = [];
 let selectedAppointmentTeam = "";
 let currentAppointments = [];
+let ownAppointmentsRequestSequence = 0;
+let masterAppointmentsRequestSequence = 0;
 let ignoredAppointments = [];
 let appointmentFilter = "Todas";
 let appointmentDate = addLocalDays(todayMadrid(), 1);
@@ -39,8 +41,9 @@ let initializedWorkspaceUserId = null;
 let initializedWorkspaceRole = null;
 let masterSelectedTechnicianId = "";
 let selectedMasterView = "appointments";
+let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3as1";
+const APP_BUILD = "3at1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -102,7 +105,7 @@ function createSupabaseClient() {
 
 function hideWorkspacePanels() {
   ["authPanel", "authDisabled", "activationPanel", "workspace", "adminPanel", "masterPanel",
-    "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel"].forEach((id) => setVisible(id, false));
+    "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel", "workspaceLoading", "adminPanelLoading"].forEach((id) => setVisible(id, false));
   setVisible("signOut", false);
   setVisible("settingsToggle", false);
 }
@@ -112,6 +115,58 @@ function finishStartup() {
   setVisible("startupStatus", false);
 }
 
+function publishLoginDiagnostic(diagnostic, roleDataMs = null, stageReached = roleDataMs == null ? "verified_shell" : "role_panel_ready") {
+  if (!diagnostic) return;
+  const now = performance.now();
+  window.__CC_LOGIN_DIAGNOSTICS__ = Object.freeze({
+    source: diagnostic.source,
+    edgeRequestMs: diagnostic.edgeRequestMs,
+    sessionInstallMs: diagnostic.sessionInstallMs,
+    getSessionMs: diagnostic.getSessionMs ?? null,
+    getUserMs: diagnostic.getUserMs ?? null,
+    profileReadMs: diagnostic.profileReadMs ?? null,
+    permissionValidationMs: diagnostic.permissionValidationMs ?? null,
+    profileAuthorizationMs: diagnostic.profileAuthorizationMs ?? null,
+    verifiedShellMs: diagnostic.verifiedShellMs ?? null,
+    panelShellMs: diagnostic.panelShellMs ?? null,
+    roleDataMs,
+    totalMs: now - diagnostic.startedAt,
+    stageReached,
+  });
+}
+
+function finishWorkspaceLoading(diagnostic) {
+  setVisible("workspaceLoading", false);
+  setVisible("adminPanelLoading", false);
+  setVisible("settingsToggle", ["admin", "master", "technician"].includes(activeProfile?.role));
+  if (activeProfile?.role === "admin") setVisible("adminPanel", true);
+  else if (activeProfile?.role === "master") {
+    setVisible("masterViewTabs", true);
+    setMasterView(selectedMasterView, { persist: false });
+  } else if (activeProfile?.role === "technician") setVisible("appointmentsPanel", true);
+  diagnostic.panelShellMs ??= performance.now() - diagnostic.startedAt;
+  publishLoginDiagnostic(diagnostic, null, "panel_shell_ready");
+}
+
+function clearWorkspaceAgendaResults() {
+  currentAppointments = [];
+  appointmentIdentityIndex = [];
+  ignoredAppointments = [];
+  $("appointmentList").replaceChildren();
+  $("appointmentStats").replaceChildren();
+  $("appointmentFilters").replaceChildren();
+  $("appointmentIgnored").textContent = "";
+  $("masterAppointmentList").replaceChildren();
+  setVisible("appointmentNotice", false);
+}
+
+function showWorkspaceLoadFailure(message) {
+  setVisible("adminPanelLoading", false);
+  setVisible("workspaceLoading", true);
+  $("workspaceLoadingMessage").textContent = message;
+  $("workspaceLoadingRetry").classList.remove("hidden");
+}
+
 async function fetchOwnProfile() {
   const { data, error } = await supabase.rpc("cc_my_profile");
   if (error) throw error;
@@ -119,11 +174,21 @@ async function fetchOwnProfile() {
 }
 
 async function routeSession({ preserveWorkspace = false } = {}) {
+  const routeStartedAt = performance.now();
+  if (activeLoginAttempt?.sessionInstallStartedAt && activeLoginAttempt.sessionInstallMs == null) {
+    activeLoginAttempt.sessionInstallMs = routeStartedAt - activeLoginAttempt.sessionInstallStartedAt;
+  }
+  const diagnostic = activeLoginAttempt ?? {
+    source: "session_restore", startedAt: routeStartedAt, edgeRequestMs: null, sessionInstallMs: null,
+  };
+  activeLoginAttempt = null;
   const previousUserId = activeUser?.id ?? null;
   clearNotice();
   settingsNavigation.abandon();
   hideWorkspacePanels();
+  const sessionReadStartedAt = performance.now();
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  diagnostic.getSessionMs = performance.now() - sessionReadStartedAt;
   if (sessionError) {
     finishStartup();
     notify("La sesión no está disponible. Vuelve a iniciar sesión.", "error");
@@ -145,7 +210,9 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     setVisible("authPanel", true);
     return;
   }
+  const identityCheckStartedAt = performance.now();
   const { data: verifiedUser, error: userError } = await supabase.auth.getUser();
+  diagnostic.getUserMs = performance.now() - identityCheckStartedAt;
   if (userError || !verifiedUser?.user || verifiedUser.user.id !== session.user.id) {
     if (userError && (userError.name === "AuthRetryableFetchError" || userError.status === 0 || navigator.onLine === false)) {
       finishStartup();
@@ -169,6 +236,8 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     initializedWorkspaceRole = null;
   }
   activeUser = verifiedUser.user;
+  const profileCheckStartedAt = performance.now();
+  const profileReadStartedAt = performance.now();
   try {
     activeProfile = await fetchOwnProfile();
   } catch {
@@ -177,6 +246,8 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     setVisible("signOut", true);
     return;
   }
+  diagnostic.profileReadMs = performance.now() - profileReadStartedAt;
+  const permissionValidationStartedAt = performance.now();
   if (!activeProfile) {
     finishStartup();
     notify("Esta identidad no tiene acceso al módulo. Contacta con el administrador.", "error");
@@ -205,9 +276,17 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     setVisible("signOut", true);
     return;
   }
+  diagnostic.permissionValidationMs = performance.now() - permissionValidationStartedAt;
+  diagnostic.profileAuthorizationMs = performance.now() - profileCheckStartedAt;
+  const resumeLoadedWorkspace = preserveWorkspace
+    && initializedWorkspaceUserId === activeUser.id
+    && initializedWorkspaceRole === activeProfile.role;
   setVisible("workspace", true);
   setVisible("signOut", true);
-  setVisible("settingsToggle", ["admin", "master", "technician"].includes(activeProfile.role));
+  if (!resumeLoadedWorkspace) clearWorkspaceAgendaResults();
+  setVisible("workspaceLoading", true);
+  $("workspaceLoadingMessage").textContent = "Tu acceso está verificado. Estamos preparando tu espacio.";
+  $("workspaceLoadingRetry").classList.add("hidden");
   $("welcomeName").textContent = activeProfile.display_name;
   const changeLogin = $("changeEmployeeId");
   const changeLoginLabel = changeLogin.closest("label");
@@ -228,17 +307,27 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     ? "Panel de administración. Esta cuenta no abre agendas ni instalaciones."
     : "";
   setVisible("roleDescription", activeProfile.role === "admin");
-  const resumeLoadedWorkspace = preserveWorkspace
-    && initializedWorkspaceUserId === activeUser.id
-    && initializedWorkspaceRole === activeProfile.role;
+  diagnostic.verifiedShellMs = performance.now() - diagnostic.startedAt;
+  finishStartup();
+  const roleDataStartedAt = performance.now();
   if (activeProfile.role === "admin") {
     setVisible("agendaSettingsGroup", false);
-    setVisible("adminPanel", true);
     if (!resumeLoadedWorkspace) {
-      await loadAdminPanel();
+      setVisible("workspaceLoading", false);
+      setVisible("adminPanelLoading", true);
+      diagnostic.panelShellMs = performance.now() - diagnostic.startedAt;
+      publishLoginDiagnostic(diagnostic, null, "panel_shell_ready");
+      const loaded = await loadAdminPanel();
+      if (!loaded) {
+        showWorkspaceLoadFailure("No se pudo cargar el panel. Comprueba la conexión e inténtalo de nuevo.");
+        publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt, "role_data_failed");
+        return;
+      }
       initializedWorkspaceUserId = activeUser.id;
       initializedWorkspaceRole = activeProfile.role;
     }
+    finishWorkspaceLoading(diagnostic);
+    publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt);
   } else if (activeProfile.role === "master") {
     const navigation = masterNavigation.read(activeUser.id);
     selectedMasterView = navigation.view;
@@ -246,39 +335,66 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     masterRouteDayOffset = navigation.dayOffset;
     masterRouteDate = addLocalDays(todayMadrid(), masterRouteDayOffset);
     setVisible("agendaSettingsGroup", true);
-    setVisible("masterViewTabs", true);
-    setMasterView(navigation.view, { persist: false });
+    appointmentDate = addLocalDays(todayMadrid(), appointmentDayOffset);
+    renderAgendaDateNavigation();
+    setVisible("appointmentsLoading", !resumeLoadedWorkspace);
+    setVisible("masterAppointmentsLoading", !resumeLoadedWorkspace);
     if (resumeLoadedWorkspace) {
-      finishStartup();
+      finishWorkspaceLoading(diagnostic);
+      publishLoginDiagnostic(diagnostic, 0);
       return;
     }
     try {
-      await Promise.all([loadMasterPanel(), loadAppointmentTeams(), loadAppointmentPreferences()]);
-      await loadOwnAppointments(appointmentDate);
-      await loadMasterAppointments();
+      const ownAppointmentsPromise = loadOwnAppointments(appointmentDate).catch(() => false);
+      const [masterLoaded] = await Promise.all([
+        loadMasterPanel(), loadAppointmentTeams(), loadAppointmentPreferences(),
+      ]);
+      if (!masterLoaded) throw new Error("workspace data unavailable");
       initializedWorkspaceUserId = activeUser.id;
       initializedWorkspaceRole = activeProfile.role;
+      finishWorkspaceLoading(diagnostic);
+      const [ownAppointmentsLoaded, masterAppointmentsLoaded] = await Promise.all([
+        ownAppointmentsPromise, loadMasterAppointments(),
+      ]);
+      setVisible("appointmentsLoading", false);
+      setVisible("masterAppointmentsLoading", false);
+      if (!ownAppointmentsLoaded || !masterAppointmentsLoaded) throw new Error("appointment data unavailable");
+      publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt);
     } catch {
       appointmentNotice("No se pudo cargar tu agenda o el equipo. Actualiza la página e inténtalo de nuevo.", "error");
+      setVisible("appointmentsLoading", false);
+      setVisible("masterAppointmentsLoading", false);
+      if (!initializedWorkspaceUserId) showWorkspaceLoadFailure("No se pudo cargar el equipo. Vuelve a intentarlo.");
+      publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt, "role_data_failed");
     }
   } else {
     setVisible("agendaSettingsGroup", true);
-    setVisible("appointmentsPanel", true);
     setVisible("masterViewTabs", false);
+    appointmentDate = addLocalDays(todayMadrid(), appointmentDayOffset);
+    renderAgendaDateNavigation();
+    setVisible("appointmentsLoading", !resumeLoadedWorkspace);
     if (resumeLoadedWorkspace) {
-      finishStartup();
+      finishWorkspaceLoading(diagnostic);
+      publishLoginDiagnostic(diagnostic, 0);
       return;
     }
     try {
+      const ownAppointmentsPromise = loadOwnAppointments(appointmentDate).catch(() => false);
       await Promise.all([loadAppointmentTeams(), loadAppointmentPreferences()]);
-      await loadOwnAppointments(appointmentDate);
       initializedWorkspaceUserId = activeUser.id;
       initializedWorkspaceRole = activeProfile.role;
+      finishWorkspaceLoading(diagnostic);
+      const ownAppointmentsLoaded = await ownAppointmentsPromise;
+      setVisible("appointmentsLoading", false);
+      if (!ownAppointmentsLoaded) throw new Error("appointment data unavailable");
+      publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt);
     } catch {
       appointmentNotice("No se pudo cargar la agenda. Actualiza la página e inténtalo de nuevo.", "error");
+      setVisible("appointmentsLoading", false);
+      if (!initializedWorkspaceUserId) showWorkspaceLoadFailure("No se pudo cargar el equipo. Vuelve a intentarlo.");
+      publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt, "role_data_failed");
     }
   }
-  finishStartup();
 }
 
 function persistMasterNavigation() {
@@ -448,6 +564,7 @@ async function loadAppointmentPreferences() {
 }
 
 async function loadOwnAppointments(date = appointmentDate) {
+  const requestSequence = ++ownAppointmentsRequestSequence;
   appointmentDate = date || addLocalDays(todayMadrid(), 1);
   const [dayResult, indexResult, ignoredResult] = await Promise.all([
     supabase.rpc("cc_my_appointments", { p_work_date: appointmentDate }),
@@ -455,9 +572,11 @@ async function loadOwnAppointments(date = appointmentDate) {
     supabase.rpc("cc_my_ignored_interventions", { p_work_date: appointmentDate }),
   ]);
   if (dayResult.error || indexResult.error || ignoredResult.error || !Array.isArray(dayResult.data) || !Array.isArray(indexResult.data)) {
+    if (requestSequence !== ownAppointmentsRequestSequence) return true;
     appointmentNotice("No se pudo recuperar la agenda. Comprueba la conexión e inténtalo de nuevo.", "error");
     return false;
   }
+  if (requestSequence !== ownAppointmentsRequestSequence) return true;
   currentAppointments = dayResult.data.map((row) => ({
     ...row,
     last_changes: importChangesBySource.get(row.source_key) ?? [],
@@ -949,6 +1068,7 @@ async function processOracleText() {
 }
 
 async function loadMasterAppointments() {
+  const requestSequence = ++masterAppointmentsRequestSequence;
   const date = masterRouteDate || addLocalDays(todayMadrid(), masterRouteDayOffset);
   masterRouteDate = date;
   renderThreeDaySelector($("masterDateNav"), date, masterRouteDayOffset, (selected, offset) => {
@@ -961,6 +1081,7 @@ async function loadMasterAppointments() {
   masterSelectedTechnicianId = technicianId || "";
   persistMasterNavigation();
   const { data, error } = await supabase.rpc("cc_master_team_appointments", { p_work_date: date });
+  if (requestSequence !== masterAppointmentsRequestSequence) return true;
   const target = $("masterAppointmentList");
   target.replaceChildren();
   if (error || !Array.isArray(data)) { target.textContent = "No se pudo consultar la supervisión."; return false; }
@@ -1300,16 +1421,31 @@ function bindEvents() {
     clearNotice();
     const employeeId = $("employeeId").value;
     const password = $("password").value;
+    const attempt = {
+      source: "interactive_login", startedAt: performance.now(), edgeRequestMs: null, sessionInstallMs: null,
+    };
+    activeLoginAttempt = attempt;
+    const edgeRequestStartedAt = performance.now();
     const { data, error } = await supabase.functions.invoke("login-by-matricula", {
       body: { login_id: employeeId, password },
     });
+    attempt.edgeRequestMs = performance.now() - edgeRequestStartedAt;
     $("password").value = "";
     if (error || data?.error || !data?.session) {
+      activeLoginAttempt = null;
+      publishLoginDiagnostic(attempt, null, "edge_request_failed");
       notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
       return;
     }
+    attempt.sessionInstallStartedAt = performance.now();
     const { error: sessionError } = await supabase.auth.setSession(data.session);
-    if (sessionError) notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
+    attempt.sessionInstallMs = performance.now() - attempt.sessionInstallStartedAt;
+    delete attempt.sessionInstallStartedAt;
+    if (sessionError) {
+      activeLoginAttempt = null;
+      publishLoginDiagnostic(attempt, null, "session_install_failed");
+      notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
+    }
   });
   $("activationForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1362,6 +1498,11 @@ function bindEvents() {
   });
   $("settingsToggle").addEventListener("click", settingsNavigation.open);
   $("settingsClose").addEventListener("click", settingsNavigation.close);
+  $("workspaceLoadingRetry").addEventListener("click", () => {
+    window.__CC_APP_READY__ = false;
+    setVisible("startupStatus", true);
+    void routeSession().catch(() => window.__CC_SHOW_INIT_ERROR__?.());
+  });
   $("signOut").addEventListener("click", async () => {
     hideWorkspacePanels();
     setVisible("startupStatus", true);
