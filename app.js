@@ -1,4 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
+import { captureSubmittedForm } from "./form-events.mjs";
 
 const $ = (id) => document.getElementById(id);
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
@@ -203,7 +204,7 @@ async function loadAdminPanel() {
   ]);
   if (teamsResult.error || accountsResult.error || settingsResult.error) {
     notify("No se pudo cargar la información administrativa.", "error");
-    return;
+    return false;
   }
   teamsForActor = Array.isArray(teamsResult.data) ? teamsResult.data : [];
   const teamList = $("adminTeams");
@@ -303,6 +304,7 @@ async function loadAdminPanel() {
     target.append(makeAccountCard(profile, names, actions));
   }
   if (!accounts.length) target.textContent = "Aún no hay cuentas de equipo.";
+  return true;
 }
 
 async function setAdminAccountStatus(userId, status) {
@@ -333,7 +335,7 @@ async function loadMasterPanel() {
   ]);
   if (teamsResult.error || accountsResult.error) {
     notify("No se pudo cargar la información de tu equipo.", "error");
-    return;
+    return false;
   }
   teamsForActor = Array.isArray(teamsResult.data) ? teamsResult.data : [];
   const chips = $("masterTeams");
@@ -381,6 +383,7 @@ async function loadMasterPanel() {
     }, [teamName], actions));
   }
   if (!accountTarget.childElementCount) accountTarget.textContent = "No hay técnicos asignados todavía.";
+  return true;
 }
 
 async function setMasterMembership(teamId, technicianId, active) {
@@ -487,6 +490,7 @@ function bindEvents() {
     } catch { notify("No se pudo crear el equipo.", "error"); }
   });
   $("accountForm").addEventListener("submit", async (event) => {
+    const form = captureSubmittedForm(event);
     event.preventDefault();
     const formData = {
       display_name: $("newDisplayName").value,
@@ -502,12 +506,18 @@ function bindEvents() {
     }
     try {
       const result = await createAccount(formData, role, teamIds);
-      event.currentTarget.reset();
+      form.reset();
       notify(result.message, "success");
-      await loadAdminPanel();
+      try {
+        const refreshed = await loadAdminPanel();
+        if (!refreshed) notify("La cuenta se creó, pero no se pudo actualizar el panel. Recarga la página; no repitas el alta.", "error");
+      } catch {
+        notify("La cuenta se creó, pero no se pudo actualizar el panel. Recarga la página; no repitas el alta.", "error");
+      }
     } catch { notify("No se pudo crear la cuenta. Comprueba el rol, la matrícula y los permisos.", "error"); }
   });
   $("masterAccountForm").addEventListener("submit", async (event) => {
+    const form = captureSubmittedForm(event);
     event.preventDefault();
     const teamId = $("masterTeamSelect").value;
     if (!teamId) { notify("No tienes un equipo activo para asignar.", "error"); return; }
@@ -516,9 +526,14 @@ function bindEvents() {
         display_name: $("masterDisplayName").value,
         employee_id: $("masterEmployeeId").value,
       }, "technician", [teamId]);
-      event.currentTarget.reset();
+      form.reset();
       notify(result.message, "success");
-      await loadMasterPanel();
+      try {
+        const refreshed = await loadMasterPanel();
+        if (!refreshed) notify("La cuenta se creó, pero no se pudo actualizar el panel. Recarga la página; no repitas el alta.", "error");
+      } catch {
+        notify("La cuenta se creó, pero no se pudo actualizar el panel. Recarga la página; no repitas el alta.", "error");
+      }
     } catch { notify("No se pudo crear la cuenta. Comprueba los datos y los permisos del equipo.", "error"); }
   });
   $("retentionForm").addEventListener("submit", async (event) => {
@@ -549,3 +564,4 @@ async function start() {
 }
 
 start().catch(() => notify("No se pudo iniciar la aplicación.", "error"));
+
