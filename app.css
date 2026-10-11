@@ -6,10 +6,11 @@
 /* V1 header treatment, extended to the available V2 application width. */
 .header.hero{position:relative;display:block;width:calc(100% + 28px);margin:-24px -14px 22px;padding:18px 60px 14px;background:linear-gradient(135deg,#f0002f,#e30613);color:#fff;border-radius:0 0 24px 24px;box-shadow:0 6px 18px #e3061326;text-align:center}
 .hero-inner{text-align:center}
-.header.hero .brand-logo{display:block;width:210px;max-width:72%;height:74px;max-height:none;margin:0 auto;object-fit:contain}
-.header.hero h1{margin:2px 0 0;color:#fff;font-size:19px;line-height:1.25;font-weight:800}
+.header.hero .brand-logo{display:inline-block;width:210px;max-width:72%;height:74px;max-height:none;margin:0 auto;object-fit:contain;vertical-align:baseline}
+.header.hero h1{margin:2px 0 0;color:#fff;font-size:19px;line-height:normal;font-weight:800}
 .hero-actions{position:absolute;top:30px;right:16px;display:flex;flex-direction:column;align-items:center;gap:8px}
 .header.hero .gear{position:static;width:44px;height:44px;display:grid;place-items:center;padding:8px;background:#ffffff25;color:#fff;border:0;border-radius:14px;font-size:22px;line-height:1;cursor:pointer}
+.header.hero .gear:focus-visible,.hero-sign-out:focus-visible{outline:3px solid #fff;outline-offset:2px}
 .header.hero .gear.hidden{display:none}
 .hero-sign-out{border:1px solid #ffffff55;border-radius:9px;padding:6px 8px;background:#ffffff1c;color:#fff;font:inherit;font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer}
 .hero-sign-out.hidden{display:none}
