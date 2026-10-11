@@ -1,14 +1,13 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ar1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3as1";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
 
 const $ = (id) => document.getElementById(id);
 const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminPanel", "masterViewTabs", "appointmentsPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel"];
-const LOGIN_ID_STORAGE_KEY = "confirmar-citas-v2-login-id";
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
 const configured = typeof config.url === "string"
   && config.url.startsWith("https://")
@@ -41,7 +40,7 @@ let initializedWorkspaceRole = null;
 let masterSelectedTechnicianId = "";
 let selectedMasterView = "appointments";
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3ar1";
+const APP_BUILD = "3as1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -99,21 +98,6 @@ function createSupabaseClient() {
       detectSessionInUrl: true,
     },
   });
-}
-
-function rememberLoginId(value) {
-  try {
-    const loginId = String(value ?? "").trim();
-    if (loginId) window.localStorage.setItem(LOGIN_ID_STORAGE_KEY, loginId);
-    else window.localStorage.removeItem(LOGIN_ID_STORAGE_KEY);
-  } catch {
-    // Browser storage can be unavailable; the login remains usable without remembering the identifier.
-  }
-}
-
-function restoreLoginId() {
-  try { $("employeeId").value = window.localStorage.getItem(LOGIN_ID_STORAGE_KEY) ?? ""; }
-  catch { /* Browser storage can be unavailable; leave the field empty. */ }
 }
 
 function hideWorkspacePanels() {
@@ -1311,26 +1295,21 @@ async function createAccount(formData, role, teamIds) {
 }
 
 function bindEvents() {
-  $("employeeId").addEventListener("input", () => rememberLoginId($("employeeId").value));
   $("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     clearNotice();
     const employeeId = $("employeeId").value;
     const password = $("password").value;
-    rememberLoginId(employeeId);
     const { data, error } = await supabase.functions.invoke("login-by-matricula", {
       body: { login_id: employeeId, password },
     });
+    $("password").value = "";
     if (error || data?.error || !data?.session) {
-      $("password").value = "";
       notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
       return;
     }
     const { error: sessionError } = await supabase.auth.setSession(data.session);
-    if (sessionError) {
-      $("password").value = "";
-      notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
-    }
+    if (sessionError) notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
   });
   $("activationForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1548,7 +1527,6 @@ function refreshMadridDates() {
 
 async function start() {
   hideWorkspacePanels();
-  restoreLoginId();
   if (!configured) {
     finishStartup();
     setVisible("configWarning", true);
@@ -1564,7 +1542,6 @@ async function start() {
   supabase.auth.onAuthStateChange((event) => {
     if (["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED", "PASSWORD_RECOVERY"].includes(event)) {
       if (event === "SIGNED_OUT") {
-        $("password").value = "";
         if (activeUser?.id) masterNavigation.clear(activeUser.id);
         activeUser = null;
         activeProfile = null;
