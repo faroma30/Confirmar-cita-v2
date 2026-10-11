@@ -1,6 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ap1";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
@@ -34,7 +35,12 @@ let appointmentPreferences = {};
 let importChangesBySource = new Map();
 let undoTimer = null;
 let sharedTextConsumed = false;
-const APP_BUILD = "3as1";
+let initializedWorkspaceUserId = null;
+let initializedWorkspaceRole = null;
+let masterSelectedTechnicianId = "";
+let selectedMasterView = "appointments";
+const masterNavigation = createMasterNavigationStorage(window.localStorage);
+const APP_BUILD = "3ap1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -111,7 +117,8 @@ async function fetchOwnProfile() {
   return data;
 }
 
-async function routeSession() {
+async function routeSession({ preserveWorkspace = false } = {}) {
+  const previousUserId = activeUser?.id ?? null;
   clearNotice();
   settingsNavigation.abandon();
   hideWorkspacePanels();
@@ -124,8 +131,15 @@ async function routeSession() {
   }
   const session = sessionData.session;
   if (!session) {
+    if (previousUserId) masterNavigation.clear(previousUserId);
     activeUser = null;
     activeProfile = null;
+    initializedWorkspaceUserId = null;
+    initializedWorkspaceRole = null;
+    masterSelectedTechnicianId = "";
+    selectedMasterView = "appointments";
+    appointmentDayOffset = 1;
+    masterRouteDayOffset = 1;
     finishStartup();
     setVisible("authPanel", true);
     return;
@@ -137,13 +151,21 @@ async function routeSession() {
       setVisible("startupError", true);
       return;
     }
+    if (previousUserId) masterNavigation.clear(previousUserId);
     activeUser = null;
     activeProfile = null;
+    initializedWorkspaceUserId = null;
+    initializedWorkspaceRole = null;
     await supabase.auth.signOut({ scope: "local" });
     finishStartup();
     setVisible("authPanel", true);
     notify("La sesión ya no es válida. Inicia sesión de nuevo.", "error");
     return;
+  }
+  if (previousUserId && previousUserId !== verifiedUser.user.id) {
+    masterNavigation.clear(previousUserId);
+    initializedWorkspaceUserId = null;
+    initializedWorkspaceRole = null;
   }
   activeUser = verifiedUser.user;
   try {
@@ -161,18 +183,22 @@ async function routeSession() {
     return;
   }
   if (activeProfile.status === "pending_activation" || activeProfile.must_change_password) {
+    initializedWorkspaceUserId = null;
     finishStartup();
     setVisible("activationPanel", true);
     setVisible("signOut", true);
     return;
   }
   if (!activeProfile.activation_verified_at) {
+    initializedWorkspaceUserId = null;
     finishStartup();
     notify("La cuenta aún no está habilitada para este módulo. Contacta con el administrador.", "error");
     setVisible("signOut", true);
     return;
   }
   if (activeProfile.status !== "active") {
+    masterNavigation.clear(activeUser.id);
+    initializedWorkspaceUserId = null;
     finishStartup();
     notify("La cuenta está desactivada. Contacta con el administrador.", "error");
     setVisible("signOut", true);
@@ -199,31 +225,55 @@ async function routeSession() {
   $("roleDescription").textContent = activeProfile.role === "admin"
     ? "Panel de administración. Esta cuenta no abre agendas ni instalaciones."
     : activeProfile.role === "master"
-      ? "Tus instalaciones, rutas de tu equipo y gestión de técnicos autorizados."
+      ? ""
       : "Acceso limitado a tus instalaciones y ajustes personales.";
+  setVisible("roleDescription", activeProfile.role !== "master");
+  const resumeLoadedWorkspace = preserveWorkspace
+    && initializedWorkspaceUserId === activeUser.id
+    && initializedWorkspaceRole === activeProfile.role;
   if (activeProfile.role === "admin") {
     setVisible("agendaSettingsGroup", false);
     setVisible("adminPanel", true);
-    await loadAdminPanel();
+    if (!resumeLoadedWorkspace) {
+      await loadAdminPanel();
+      initializedWorkspaceUserId = activeUser.id;
+      initializedWorkspaceRole = activeProfile.role;
+    }
   } else if (activeProfile.role === "master") {
+    const navigation = masterNavigation.read(activeUser.id);
+    selectedMasterView = navigation.view;
+    masterSelectedTechnicianId = navigation.technicianId;
+    masterRouteDayOffset = navigation.dayOffset;
+    masterRouteDate = addLocalDays(todayMadrid(), masterRouteDayOffset);
     setVisible("agendaSettingsGroup", true);
     setVisible("masterViewTabs", true);
-    setVisible("appointmentsPanel", true);
-    setVisible("masterPanel", false);
-    setMasterView("appointments");
+    setMasterView(navigation.view, { persist: false });
+    if (resumeLoadedWorkspace) {
+      finishStartup();
+      return;
+    }
     try {
       await Promise.all([loadMasterPanel(), loadAppointmentTeams(), loadAppointmentPreferences()]);
       await loadOwnAppointments(appointmentDate);
       await loadMasterAppointments();
+      initializedWorkspaceUserId = activeUser.id;
+      initializedWorkspaceRole = activeProfile.role;
     } catch {
       appointmentNotice("No se pudo cargar tu agenda o el equipo. Actualiza la página e inténtalo de nuevo.", "error");
     }
   } else {
     setVisible("agendaSettingsGroup", true);
     setVisible("appointmentsPanel", true);
+    setVisible("masterViewTabs", false);
+    if (resumeLoadedWorkspace) {
+      finishStartup();
+      return;
+    }
     try {
       await Promise.all([loadAppointmentTeams(), loadAppointmentPreferences()]);
       await loadOwnAppointments(appointmentDate);
+      initializedWorkspaceUserId = activeUser.id;
+      initializedWorkspaceRole = activeProfile.role;
     } catch {
       appointmentNotice("No se pudo cargar la agenda. Actualiza la página e inténtalo de nuevo.", "error");
     }
@@ -231,13 +281,24 @@ async function routeSession() {
   finishStartup();
 }
 
-function setMasterView(view) {
+function persistMasterNavigation() {
+  if (activeProfile?.role !== "master" || !activeUser?.id) return;
+  masterNavigation.save(activeUser.id, {
+    view: selectedMasterView,
+    technicianId: $("masterTechnicianSelect")?.value || masterSelectedTechnicianId,
+    dayOffset: masterRouteDayOffset,
+  });
+}
+
+function setMasterView(view, { persist = true } = {}) {
   const panels = {
     appointments: "appointmentsPanel",
     routes: "masterPanel",
     technicians: "masterTechniciansPanel",
     create: "masterCreatePanel",
   };
+  if (!Object.hasOwn(panels, view)) view = "appointments";
+  selectedMasterView = view;
   for (const [key, id] of Object.entries(panels)) setVisible(id, key === view);
   for (const [key, id] of Object.entries({
     appointments: "masterOwnTab", routes: "masterRouteTab",
@@ -246,6 +307,7 @@ function setMasterView(view) {
     $(id).className = `button ${key === view ? "primary" : "secondary"}`;
     $(id).setAttribute("aria-current", key === view ? "page" : "false");
   }
+  if (persist) persistMasterNavigation();
 }
 
 function addTeamOption(container, team, checked = false, radio = false) {
@@ -274,9 +336,7 @@ function makeAccountCard(profile, teams = [], actions = []) {
   main.append(title, detail);
   if (profile.role === "technician" && Object.hasOwn(profile, "employee_id")) {
     const identifier = document.createElement("p");
-    identifier.textContent = profile.employee_id
-      ? `Matrícula: ${profile.employee_id}`
-      : "Matrícula pendiente de sincronizar; aparecerá después de su próximo inicio de sesión.";
+    identifier.textContent = `Matrícula: ${profile.employee_id || "—"}`;
     main.append(identifier);
   }
   if (teams.length) {
@@ -295,6 +355,39 @@ function makeAccountCard(profile, teams = [], actions = []) {
     buttonBox.append(button);
   }
   card.append(main, buttonBox);
+  return card;
+}
+
+function makeMasterTechnicianCard(profile, teamName, actions = []) {
+  const card = document.createElement("article");
+  card.className = "account-card master-technician-card";
+  const details = document.createElement("div");
+  const name = document.createElement("h4");
+  name.textContent = profile.display_name;
+  const employeeId = document.createElement("p");
+  employeeId.textContent = `Matrícula: ${profile.employee_id || "—"}`;
+  const team = document.createElement("p");
+  team.textContent = `Equipo: ${teamName}`;
+  details.append(name, employeeId, team);
+  card.append(details);
+  if (actions.length) {
+    const menu = document.createElement("details");
+    menu.className = "master-technician-actions";
+    const summary = document.createElement("summary");
+    summary.textContent = "Acciones";
+    const buttonBox = document.createElement("div");
+    buttonBox.className = "account-actions";
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.className = "button secondary";
+      button.type = "button";
+      button.textContent = action.label;
+      button.addEventListener("click", action.run);
+      buttonBox.append(button);
+    }
+    menu.append(summary, buttonBox);
+    card.append(menu);
+  }
   return card;
 }
 
@@ -446,8 +539,8 @@ function renderAppointments() {
   const next = rows.find((row) => row.status === "pending" && !(row.issues ?? []).length && !row.source_missing && !row.contacted_at);
   const nextButton = $("nextAppointment");
   nextButton.disabled = !next;
-  nextButton.textContent = next ? "📲 Confirmar siguiente pendiente" : "No hay pendientes disponibles";
-  nextButton.onclick = () => { if (next) reviewWhatsApp(next); };
+  nextButton.textContent = next ? "📲 WhatsApp · siguiente pendiente" : "No hay pendientes disponibles";
+  nextButton.onclick = () => { if (next) void openAppointmentWhatsApp(next); };
   const visible = rows.filter((row) => appointmentFilter === "Todas"
     || (appointmentFilter === "Contactadas" ? Boolean(row.contacted_at)
       : appointmentFilter === "Ignoradas" ? false : row.status === appointmentFilter.toLowerCase()));
@@ -598,7 +691,7 @@ function renderAppointmentCard(row) {
     button.addEventListener("click", handler);
     actions.append(button);
   };
-  addAction("WhatsApp", () => reviewWhatsApp(row), "primary");
+  addAction("WhatsApp", () => void openAppointmentWhatsApp(row), "primary");
   addAction("Llamar", () => callAppointment(row));
   addAction("Maps", () => openAppointmentMaps(row));
   addAction("Editar", () => editAppointment(row));
@@ -624,14 +717,29 @@ async function openAppointmentWhatsApp(row, customMessage = "") {
     const time = new Date(row.contacted_at).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit" });
     if (!window.confirm(`Ya abriste WhatsApp para esta cita a las ${time}. ¿Abrirlo de nuevo?`)) return;
   }
-  const { data, error } = await supabase.rpc("cc_record_whatsapp_open", { p_appointment_id: row.id });
-  if (error) { appointmentNotice("No se pudo registrar la apertura de WhatsApp. No se ha abierto la aplicación.", "error"); return; }
-  row.contacted_at = data;
-  renderAppointments();
   const template = appointmentPreferences.installation_template || DEFAULT_INSTALLATION_TEMPLATE;
   const message = customMessage || appointmentMessage(template, row);
   const phone = normalizePhoneForWhatsApp(row.phone);
-  window.location.assign(buildWhatsAppUrl(phone, message, navigator.userAgent));
+  if (!phone) { appointmentNotice("No hay teléfono válido para abrir WhatsApp.", "error"); return; }
+  let openedWindow;
+  try {
+    openedWindow = window.open(buildWhatsAppUrl(phone, message, navigator.userAgent), "_blank");
+    if (openedWindow) openedWindow.opener = null;
+  } catch {
+    openedWindow = null;
+  }
+  if (!openedWindow) {
+    appointmentNotice("El navegador bloqueó la apertura de WhatsApp. Permite las ventanas emergentes e inténtalo de nuevo.", "error");
+    return;
+  }
+  const { data, error } = await supabase.rpc("cc_record_whatsapp_open", { p_appointment_id: row.id });
+  if (error || !data) {
+    appointmentNotice("WhatsApp se abrió, pero no se pudo guardar el contacto. El mensaje no consta como enviado.", "error");
+    return;
+  }
+  row.contacted_at = data;
+  renderAppointments();
+  appointmentNotice("WhatsApp abierto. El registro no confirma que se haya enviado el mensaje.", "success");
 }
 
 function callAppointment(row) {
@@ -846,9 +954,12 @@ async function loadMasterAppointments() {
   renderThreeDaySelector($("masterDateNav"), date, masterRouteDayOffset, (selected, offset) => {
     masterRouteDayOffset = offset;
     masterRouteDate = selected;
+    persistMasterNavigation();
     void loadMasterAppointments();
   });
   const technicianId = $("masterTechnicianSelect").value;
+  masterSelectedTechnicianId = technicianId || "";
+  persistMasterNavigation();
   const { data, error } = await supabase.rpc("cc_master_team_appointments", { p_work_date: date });
   const target = $("masterAppointmentList");
   target.replaceChildren();
@@ -859,9 +970,14 @@ async function loadMasterAppointments() {
     const item = document.createElement("article"); item.className = "master-appointment-row";
     const content = document.createElement("div");
     const title = document.createElement("strong"); title.textContent = `${row.scheduled_time} · ${row.population} · ${row.technician}`;
-    const meta = document.createElement("span"); meta.textContent = `Fecha: ${formatDateTitle(row.work_date)} · Prospecto: ${row.prospect_ref || "—"} · Estado: ${humanStatus(row.status)}`;
+    const meta = document.createElement("span"); meta.textContent = "Fecha: " + formatDateTitle(row.work_date) + " · Prospecto: " + (row.prospect_ref || "—");
+    const status = document.createElement("span");
+    status.className = "state-badge master-route-status " + row.status;
+    status.textContent = humanStatus(row.status);
     content.append(title, meta);
     const side = document.createElement("div");
+    side.className = "master-route-indicators";
+    side.append(status);
     const contact = document.createElement("span");
     contact.className = `contact-badge${row.contacted_at ? "" : " not-contacted"}`;
     contact.textContent = row.contacted_at
@@ -1100,7 +1216,7 @@ async function loadMasterPanel() {
     select.append(option);
   }
   const routeSelect = $("masterTechnicianSelect");
-  const previousTechnician = routeSelect.value;
+  const previousTechnician = routeSelect.value || masterSelectedTechnicianId;
   routeSelect.replaceChildren();
   const technicianProfiles = new Map();
   for (const profile of (Array.isArray(accountsResult.data) ? accountsResult.data : [])) {
@@ -1113,8 +1229,13 @@ async function loadMasterPanel() {
     const option = document.createElement("option"); option.value = technicianId; option.textContent = name;
     routeSelect.append(option);
   }
-  if ([...routeSelect.options].some((option) => option.value === previousTechnician && previousTechnician)) routeSelect.value = previousTechnician;
-  else routeSelect.value = "";
+  if ([...routeSelect.options].some((option) => option.value === previousTechnician && previousTechnician)) {
+    routeSelect.value = previousTechnician;
+    masterSelectedTechnicianId = previousTechnician;
+  } else {
+    routeSelect.value = "";
+    masterSelectedTechnicianId = "";
+  }
   const accountTarget = $("masterAccounts");
   accountTarget.replaceChildren();
   const teamNames = new Map(teamsForActor.map((team) => [team.id, team.name]));
@@ -1136,13 +1257,11 @@ async function loadMasterPanel() {
         });
       }
     }
-    accountTarget.append(makeAccountCard({
+    accountTarget.append(makeMasterTechnicianCard({
       display_name: profile.display_name,
       role: "technician",
       employee_id: profile.employee_id_display,
-      status: `${profile.account_status} · equipo ${profile.membership_status}`,
-      must_change_password: profile.must_change_password,
-    }, [teamName], actions));
+    }, teamName, actions));
   }
   if (!accountTarget.childElementCount) accountTarget.textContent = "No hay técnicos asignados todavía.";
   renderThreeDaySelector($("masterDateNav"), masterRouteDate, masterRouteDayOffset, (date, offset) => {
@@ -1316,7 +1435,11 @@ function bindEvents() {
       }
     });
   }
-  $("masterTechnicianSelect").addEventListener("change", () => void loadMasterAppointments());
+  $("masterTechnicianSelect").addEventListener("change", () => {
+    masterSelectedTechnicianId = $("masterTechnicianSelect").value;
+    persistMasterNavigation();
+    void loadMasterAppointments();
+  });
   $("refreshMasterRoute").addEventListener("click", () => void loadMasterAppointments());
   $("teamForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1419,8 +1542,22 @@ async function start() {
   createSupabaseClient();
   supabase.auth.onAuthStateChange((event) => {
     if (["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED", "PASSWORD_RECOVERY"].includes(event)) {
-      if (event === "SIGNED_IN") { appointmentDayOffset = 1; masterRouteDayOffset = 1; }
-      queueMicrotask(() => { void routeSession().catch(() => window.__CC_SHOW_INIT_ERROR__?.()); });
+      if (event === "SIGNED_OUT") {
+        if (activeUser?.id) masterNavigation.clear(activeUser.id);
+        activeUser = null;
+        activeProfile = null;
+        initializedWorkspaceUserId = null;
+        initializedWorkspaceRole = null;
+        masterSelectedTechnicianId = "";
+        selectedMasterView = "appointments";
+        appointmentDayOffset = 1;
+        masterRouteDayOffset = 1;
+      }
+      const preserveWorkspace = event !== "SIGNED_OUT"
+        && Boolean(activeUser?.id
+          && initializedWorkspaceUserId === activeUser.id
+          && initializedWorkspaceRole === activeProfile?.role);
+      queueMicrotask(() => { void routeSession({ preserveWorkspace }).catch(() => window.__CC_SHOW_INIT_ERROR__?.()); });
     }
   });
   window.addEventListener("pageshow", (event) => {
@@ -1429,7 +1566,10 @@ async function start() {
     setVisible("startupError", false);
     setVisible("startupStatus", true);
     window.__CC_APP_READY__ = false;
-    void routeSession().catch(() => window.__CC_SHOW_INIT_ERROR__?.());
+    const preserveWorkspace = Boolean(activeUser?.id
+      && initializedWorkspaceUserId === activeUser.id
+      && initializedWorkspaceRole === activeProfile?.role);
+    void routeSession({ preserveWorkspace }).catch(() => window.__CC_SHOW_INIT_ERROR__?.());
   });
   window.addEventListener("pagehide", () => {
     // Hide authenticated DOM before a browser can freeze this document in its back/forward cache.
@@ -1451,4 +1591,3 @@ start().catch(() => {
     console.error("[Confirmar Citas] Error de inicialización (CC_INIT_FAILED)");
   }
 });
-
