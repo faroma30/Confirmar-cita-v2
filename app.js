@@ -8,6 +8,7 @@ import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedA
 
 const $ = (id) => document.getElementById(id);
 const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminPanel", "masterViewTabs", "appointmentsPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel"];
+const LOGIN_ID_STORAGE_KEY = "confirmar-citas-v2-login-id";
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
 const configured = typeof config.url === "string"
   && config.url.startsWith("https://")
@@ -98,6 +99,21 @@ function createSupabaseClient() {
       detectSessionInUrl: true,
     },
   });
+}
+
+function rememberLoginId(value) {
+  try {
+    const loginId = String(value ?? "").trim();
+    if (loginId) window.localStorage.setItem(LOGIN_ID_STORAGE_KEY, loginId);
+    else window.localStorage.removeItem(LOGIN_ID_STORAGE_KEY);
+  } catch {
+    // Browser storage can be unavailable; the login remains usable without remembering the identifier.
+  }
+}
+
+function restoreLoginId() {
+  try { $("employeeId").value = window.localStorage.getItem(LOGIN_ID_STORAGE_KEY) ?? ""; }
+  catch { /* Browser storage can be unavailable; leave the field empty. */ }
 }
 
 function hideWorkspacePanels() {
@@ -1295,21 +1311,26 @@ async function createAccount(formData, role, teamIds) {
 }
 
 function bindEvents() {
+  $("employeeId").addEventListener("input", () => rememberLoginId($("employeeId").value));
   $("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     clearNotice();
     const employeeId = $("employeeId").value;
     const password = $("password").value;
+    rememberLoginId(employeeId);
     const { data, error } = await supabase.functions.invoke("login-by-matricula", {
       body: { login_id: employeeId, password },
     });
-    $("password").value = "";
     if (error || data?.error || !data?.session) {
+      $("password").value = "";
       notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
       return;
     }
     const { error: sessionError } = await supabase.auth.setSession(data.session);
-    if (sessionError) notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
+    if (sessionError) {
+      $("password").value = "";
+      notify("No se pudo iniciar sesión. Comprueba los datos o contacta con el administrador.", "error");
+    }
   });
   $("activationForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1527,6 +1548,7 @@ function refreshMadridDates() {
 
 async function start() {
   hideWorkspacePanels();
+  restoreLoginId();
   if (!configured) {
     finishStartup();
     setVisible("configWarning", true);
@@ -1542,6 +1564,7 @@ async function start() {
   supabase.auth.onAuthStateChange((event) => {
     if (["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED", "PASSWORD_RECOVERY"].includes(event)) {
       if (event === "SIGNED_OUT") {
+        $("password").value = "";
         if (activeUser?.id) masterNavigation.clear(activeUser.id);
         activeUser = null;
         activeProfile = null;
