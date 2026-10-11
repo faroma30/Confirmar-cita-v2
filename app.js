@@ -1,7 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3aq2";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ar1";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
@@ -40,7 +40,7 @@ let initializedWorkspaceRole = null;
 let masterSelectedTechnicianId = "";
 let selectedMasterView = "appointments";
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3aq2";
+const APP_BUILD = "3ar1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -226,10 +226,8 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   rolePill.className = `pill ${activeProfile.role}`;
   $("roleDescription").textContent = activeProfile.role === "admin"
     ? "Panel de administración. Esta cuenta no abre agendas ni instalaciones."
-    : activeProfile.role === "master"
-      ? ""
-      : "Acceso limitado a tus instalaciones y ajustes personales.";
-  setVisible("roleDescription", activeProfile.role !== "master");
+    : "";
+  setVisible("roleDescription", activeProfile.role === "admin");
   const resumeLoadedWorkspace = preserveWorkspace
     && initializedWorkspaceUserId === activeUser.id
     && initializedWorkspaceRole === activeProfile.role;
