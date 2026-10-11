@@ -6,4 +6,3 @@ export function captureSubmittedForm(event) {
   }
   return form;
 }
-

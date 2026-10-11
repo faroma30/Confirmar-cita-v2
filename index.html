@@ -7,7 +7,8 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3ak1">
+  <link rel="stylesheet" href="./app.css?v=3al1">
+  <link rel="stylesheet" href="./agenda.css?v=3al1">
 </head>
 <body>
   <main class="shell">
@@ -93,10 +94,52 @@
         <h3 class="list-title">Equipos</h3><div id="adminTeams" class="account-list"></div>
         <h3 class="list-title">Cuentas del módulo</h3><div id="adminAccounts" class="account-list"></div>
       </section>
+      <nav id="masterViewTabs" class="master-view-tabs hidden" aria-label="Vistas Master">
+        <button class="button primary" id="masterOwnTab" type="button">Mis citas</button>
+        <button class="button secondary" id="masterTeamTab" type="button">Mi equipo</button>
+      </nav>
+      <section id="appointmentsPanel" class="panel hidden">
+        <p class="eyebrow">AGENDA PERSONAL</p><h2>Confirmar Citas</h2>
+        <div class="agenda-controls">
+          <label for="appointmentDate">Agenda del día</label>
+          <input id="appointmentDate" type="date">
+          <label id="appointmentTeamLabel" for="appointmentTeam">Equipo de importación</label>
+          <select id="appointmentTeam"></select>
+          <button id="reloadAppointments" class="button secondary" type="button">Actualizar agenda</button>
+        </div>
+        <div class="agenda-stats" id="appointmentStats"></div>
+        <div class="agenda-import">
+          <button id="importClipboard" class="button primary" type="button">📋 Importar desde Oracle</button>
+          <button id="manualToggle" class="button secondary" type="button">Pegar texto manualmente</button>
+        </div>
+        <section id="manualImport" class="subpanel hidden">
+          <label for="oracleText">Texto copiado de Oracle Field Service</label>
+          <textarea id="oracleText" rows="8" maxlength="500000" placeholder="Pega aquí el texto de Oracle"></textarea>
+          <button id="processOracle" class="button primary" type="button">Procesar instalaciones</button>
+        </section>
+        <p class="fine">Solo se importan instalaciones. Teléfonos, direcciones y notas se guardan de forma privada para tu cuenta y no aparecen en la supervisión Master.</p>
+        <div id="appointmentNotice" class="notice hidden" role="status"></div>
+        <div id="appointmentFilters" class="appointment-filters"></div>
+        <div id="appointmentIgnored" class="muted"></div>
+        <div id="appointmentList" class="appointment-list"></div>
+        <section class="subpanel preferences-panel">
+          <button id="preferencesToggle" class="button secondary" type="button">Ajustes de agenda</button>
+          <form id="appointmentPreferences" class="hidden">
+            <label for="installationKeywords">Palabras que identifican instalaciones (una por línea)</label><textarea id="installationKeywords" rows="4"></textarea>
+            <label for="installationTemplate">Plantilla WhatsApp · Instalación</label><textarea id="installationTemplate" rows="7"></textarea>
+            <label for="maintenanceTemplate">Plantilla WhatsApp · Mantenimiento (no se importa)</label><textarea id="maintenanceTemplate" rows="5"></textarea>
+            <label for="cancellationTemplate">Plantilla de correo de cancelación</label><textarea id="cancellationTemplate" rows="7"></textarea>
+            <div class="grid-form"><label>Para<input id="cancelEmailTo" type="email" maxlength="320"></label><label>CC<input id="cancelEmailCc" maxlength="1000"></label><label>Asunto<input id="cancelEmailSubject" maxlength="500"></label></div>
+            <button class="button primary" type="submit">Guardar ajustes</button>
+          </form>
+        </section>
+      </section>
       <section id="masterPanel" class="panel hidden">
-        <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Técnicos</h2>
-        <p>Solo se muestran cuentas asignadas a tus equipos. No aparecen cuentas Administrador ni datos de contacto de los clientes.</p>
+        <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Mi equipo</h2>
+        <p>La supervisión solo muestra técnico, fecha, hora, población, prospecto, estado, apertura de WhatsApp y actualización. «Contactada» significa WhatsApp abierto; no confirma que se enviara un mensaje.</p>
         <div id="masterTeams" class="team-chips"></div>
+        <div class="agenda-controls"><label for="masterAppointmentDate">Supervisión del día</label><input id="masterAppointmentDate" type="date"><button id="loadMasterAppointments" class="button secondary" type="button">Consultar</button></div>
+        <div id="masterAppointmentList" class="appointment-list"></div>
         <section class="subpanel master-invite">
           <h3>Crear técnico</h3>
           <form id="masterAccountForm">
@@ -109,19 +152,10 @@
         </section>
         <div id="masterAccounts" class="account-list"></div>
       </section>
-      <section id="technicianPanel" class="panel hidden">
-        <p class="eyebrow">CUENTA TÉCNICO</p><h2>Acceso verificado</h2>
-        <p>La autenticación y los ajustes de seguridad están activos. La agenda multiusuario se conectará en la siguiente fase.</p>
-      </section>
-      <section id="masterOwnPanel" class="panel hidden">
-        <p class="eyebrow">CUENTA MASTER</p><h2>Tus instalaciones</h2>
-        <p>La agenda propia y la sincronización se conectarán en la siguiente fase.</p>
-      </section>
     </section>
     <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3ak1"></script>
-  <script type="module" src="./app.js?v=3ak1"></script>
+  <script src="./config.js?v=3al1"></script>
+  <script type="module" src="./app.js?v=3al1"></script>
 </body>
 </html>
-

@@ -1,5 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
+import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 
 const $ = (id) => document.getElementById(id);
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
@@ -13,6 +14,27 @@ let supabase = null;
 let activeUser = null;
 let activeProfile = null;
 let teamsForActor = [];
+let appointmentTeams = [];
+let selectedAppointmentTeam = "";
+let currentAppointments = [];
+let ignoredAppointments = [];
+let appointmentFilter = "Todas";
+let appointmentDate = addBusinessDays(new Date(), 1);
+let appointmentPreferences = {};
+
+const DEFAULT_INSTALLATION_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la alarma de Verisure* para hacer la instalación de la alarma.\n\nMañana estaré en *{POBLACION}* a las *{HORA}*.\n\n📍 Dirección: *{DIRECCION}*\n\nPor favor, comprueba que la dirección es correcta.\n\nImportante que tenga el *DNI* (físico) y el *número de cuenta*.\n\nTe avisaré cuando esté de camino. Cualquier cosa, házmela saber.\n\n*Si necesitas CANCELAR la instalación avísame antes de las 00:00 de hoy para evitar penalizaciones.*`;
+const DEFAULT_MAINTENANCE_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la alarma de Verisure* para hacer el mantenimiento de la alarma.\n\nMañana estaré en *{POBLACION}* a las *{HORA}*.\n\n📍 Dirección: *{DIRECCION}*\n\nPor favor, comprueba que la dirección es correcta.`;
+const DEFAULT_CANCELLATION_TEMPLATE = `Buenos días,\n\nEl cliente correspondiente al prospecto {PROSPECTO} solicita cancelar la cita prevista a las {HORA}.\n\nTipo de intervención: {TIPO}\nPoblación: {POBLACION}\nTeléfono: {TELEFONO}\nDirección: {DIRECCION}\n\nMotivo indicado por el cliente: {MOTIVO}\n\nUn saludo,\n{TECNICO}`;
+
+function localDateString(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+function addBusinessDays(date, days) {
+  const [year, month, day] = localDateString(date).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days, 12));
+}
 
 function notify(message, type = "") {
   const node = $("notice");
@@ -49,7 +71,7 @@ function createSupabaseClient() {
 
 function hideWorkspacePanels() {
   ["authPanel", "authDisabled", "activationPanel", "workspace", "securityPanel",
-    "adminPanel", "masterPanel", "technicianPanel", "masterOwnPanel"].forEach((id) => setVisible(id, false));
+    "adminPanel", "masterPanel", "appointmentsPanel", "masterViewTabs"].forEach((id) => setVisible(id, false));
   setVisible("signOut", false);
 }
 
@@ -129,12 +151,33 @@ async function routeSession() {
     setVisible("adminPanel", true);
     await loadAdminPanel();
   } else if (activeProfile.role === "master") {
-    setVisible("masterPanel", true);
-    setVisible("masterOwnPanel", true);
-    await loadMasterPanel();
+    setVisible("masterViewTabs", true);
+    setVisible("appointmentsPanel", true);
+    setVisible("masterPanel", false);
+    setMasterView("appointments");
+    try {
+      await Promise.all([loadMasterPanel(), loadAppointmentTeams(), loadAppointmentPreferences()]);
+      await Promise.all([loadOwnAppointments(appointmentDate), loadMasterAppointments()]);
+    } catch {
+      appointmentNotice("No se pudo cargar tu agenda o el equipo. Actualiza la página e inténtalo de nuevo.", "error");
+    }
   } else {
-    setVisible("technicianPanel", true);
+    setVisible("appointmentsPanel", true);
+    try {
+      await Promise.all([loadAppointmentTeams(), loadAppointmentPreferences()]);
+      await loadOwnAppointments(appointmentDate);
+    } catch {
+      appointmentNotice("No se pudo cargar la agenda. Actualiza la página e inténtalo de nuevo.", "error");
+    }
   }
+}
+
+function setMasterView(view) {
+  const own = view === "appointments";
+  setVisible("appointmentsPanel", own);
+  setVisible("masterPanel", !own);
+  $("masterOwnTab").className = `button ${own ? "primary" : "secondary"}`;
+  $("masterTeamTab").className = `button ${own ? "secondary" : "primary"}`;
 }
 
 function addTeamOption(container, team, checked = false, radio = false) {
@@ -178,6 +221,413 @@ function makeAccountCard(profile, teams = [], actions = []) {
   }
   card.append(main, buttonBox);
   return card;
+}
+
+function appointmentNotice(message, type = "") {
+  const node = $("appointmentNotice");
+  node.textContent = message;
+  node.className = `notice${type ? ` ${type}` : ""}`;
+  node.classList.remove("hidden");
+}
+
+async function loadAppointmentTeams() {
+  const { data, error } = await supabase.rpc("cc_my_appointment_teams");
+  if (error || !Array.isArray(data)) throw new Error("team list unavailable");
+  appointmentTeams = data;
+  const select = $("appointmentTeam");
+  select.replaceChildren();
+  for (const team of appointmentTeams) {
+    const option = document.createElement("option");
+    option.value = team.id;
+    option.textContent = team.name;
+    select.append(option);
+  }
+  const current = appointmentTeams.some((team) => team.id === selectedAppointmentTeam)
+    ? selectedAppointmentTeam : appointmentTeams[0]?.id ?? "";
+  selectedAppointmentTeam = current;
+  select.value = current;
+  $("appointmentTeamLabel").classList.toggle("hidden", appointmentTeams.length < 2);
+  select.classList.toggle("hidden", appointmentTeams.length < 2);
+  if (!appointmentTeams.length) appointmentNotice("No tienes un equipo activo para importar agendas.", "error");
+}
+
+const defaultAppointmentPreferences = () => ({
+  installation_keywords: ["kit hogar", "kit básico", "kit basico", "kit negocio", "kit premium"],
+  installation_template: DEFAULT_INSTALLATION_TEMPLATE,
+  maintenance_template: DEFAULT_MAINTENANCE_TEMPLATE,
+  cancellation_template: DEFAULT_CANCELLATION_TEMPLATE,
+  cancellation_email_to: "",
+  cancellation_email_cc: "",
+  cancellation_email_subject: "Cliente cancela - Prospecto {PROSPECTO}",
+});
+
+async function loadAppointmentPreferences() {
+  const { data, error } = await supabase.rpc("cc_my_appointment_preferences");
+  if (error) throw new Error("preferences unavailable");
+  appointmentPreferences = { ...defaultAppointmentPreferences(), ...(data ?? {}) };
+  $("installationKeywords").value = (appointmentPreferences.installation_keywords ?? []).join("\n");
+  $("installationTemplate").value = appointmentPreferences.installation_template ?? DEFAULT_INSTALLATION_TEMPLATE;
+  $("maintenanceTemplate").value = appointmentPreferences.maintenance_template ?? DEFAULT_MAINTENANCE_TEMPLATE;
+  $("cancellationTemplate").value = appointmentPreferences.cancellation_template ?? DEFAULT_CANCELLATION_TEMPLATE;
+  $("cancelEmailTo").value = appointmentPreferences.cancellation_email_to ?? "";
+  $("cancelEmailCc").value = appointmentPreferences.cancellation_email_cc ?? "";
+  $("cancelEmailSubject").value = appointmentPreferences.cancellation_email_subject ?? "";
+}
+
+async function loadOwnAppointments(date = appointmentDate) {
+  appointmentDate = date || localDateString(addLocalDays(new Date(), 1));
+  $("appointmentDate").value = appointmentDate;
+  const [dayResult, indexResult] = await Promise.all([
+    supabase.rpc("cc_my_appointments", { p_work_date: appointmentDate }),
+    supabase.rpc("cc_my_appointment_identity_index"),
+  ]);
+  if (dayResult.error || indexResult.error || !Array.isArray(dayResult.data) || !Array.isArray(indexResult.data)) {
+    appointmentNotice("No se pudo recuperar la agenda. Comprueba la conexión e inténtalo de nuevo.", "error");
+    return false;
+  }
+  currentAppointments = dayResult.data;
+  appointmentIdentityIndex = indexResult.data;
+  renderAppointments();
+  return true;
+}
+
+let appointmentIdentityIndex = [];
+
+function setAgendaFilter(filter) {
+  appointmentFilter = filter;
+  renderAppointments();
+}
+
+function renderAppointments() {
+  const rows = [...currentAppointments].sort((a, b) => String(a.scheduled_time).localeCompare(String(b.scheduled_time)));
+  const visible = rows.filter((row) => appointmentFilter === "Todas"
+    || (appointmentFilter === "Contactadas" ? Boolean(row.contacted_at) : row.status === appointmentFilter.toLowerCase()));
+  const counts = {
+    Instalaciones: rows.filter((row) => !row.source_missing).length,
+    Contactadas: rows.filter((row) => row.contacted_at).length,
+    Pendientes: rows.filter((row) => row.status === "pending").length,
+    Confirmadas: rows.filter((row) => row.status === "confirmed").length,
+  };
+  const statTarget = $("appointmentStats");
+  statTarget.replaceChildren();
+  for (const [label, count] of Object.entries(counts)) {
+    const stat = document.createElement("div");
+    stat.className = "agenda-stat";
+    const number = document.createElement("strong");
+    number.textContent = String(count);
+    const caption = document.createElement("span");
+    caption.textContent = label;
+    stat.append(number, caption);
+    statTarget.append(stat);
+  }
+  const filters = $("appointmentFilters");
+  filters.replaceChildren();
+  for (const label of ["Todas", "pending", "confirmed", "cancelled", "Contactadas"]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `button ${appointmentFilter === label ? "primary" : "secondary"}`;
+    button.textContent = ({ pending: "Pendientes", confirmed: "Confirmadas", cancelled: "Canceladas" })[label] ?? label;
+    button.addEventListener("click", () => setAgendaFilter(label));
+    filters.append(button);
+  }
+  const ignoredTarget = $("appointmentIgnored");
+  ignoredTarget.textContent = ignoredAppointments.length
+    ? `Se omitieron ${ignoredAppointments.length} intervenciones que no son instalaciones.` : "";
+  const list = $("appointmentList");
+  list.replaceChildren();
+  if (!visible.length) {
+    const empty = document.createElement("div");
+    empty.className = "agenda-empty";
+    empty.textContent = rows.length ? "No hay instalaciones en este filtro." : "No hay instalaciones guardadas para esta fecha.";
+    list.append(empty);
+    return;
+  }
+  for (const row of visible) list.append(renderAppointmentCard(row));
+}
+
+function humanStatus(status) {
+  return ({ pending: "Pendiente", confirmed: "Confirmada", cancelled: "Cancelada" })[status] ?? "Pendiente";
+}
+
+function appointmentTemplateValues(row, reason = "") {
+  return {
+    TECNICO: activeProfile?.display_name ?? "el técnico",
+    POBLACION: row.population ?? "",
+    HORA: row.scheduled_time ?? "",
+    DIRECCION: [row.full_address, row.postal_code].filter(Boolean).join(" "),
+    TELEFONO: row.phone ?? "",
+    PROSPECTO: row.prospect_ref ?? "Sin prospecto",
+    MTO: row.prospect_ref ?? "Sin prospecto",
+    TIPO: row.installation_type || "Instalación",
+    MOTIVO: reason,
+  };
+}
+
+function fillAppointmentTemplate(template, row, reason = "") {
+  let result = String(template ?? "");
+  for (const [key, value] of Object.entries(appointmentTemplateValues(row, reason))) {
+    result = result.replaceAll(`{${key}}`, value || "");
+  }
+  return result;
+}
+
+function renderAppointmentCard(row) {
+  const card = document.createElement("article");
+  card.className = `appointment-card${row.source_missing ? " missing" : ""}`;
+  const head = document.createElement("div");
+  head.className = "appt-head";
+  const title = document.createElement("h3");
+  title.textContent = `${row.scheduled_time} · ${row.population || "Población pendiente"}`;
+  const status = document.createElement("span");
+  status.className = `state-badge ${row.status}`;
+  status.textContent = humanStatus(row.status);
+  head.append(title, status);
+  card.append(head);
+  const type = document.createElement("p");
+  type.className = "appt-meta";
+  type.textContent = `${row.installation_type || "Instalación"} · Prospecto: ${row.prospect_ref || "—"}`;
+  card.append(type);
+  const phone = document.createElement("p");
+  phone.textContent = row.phone ? `Teléfono: ${row.phone}` : "Teléfono no detectado";
+  const address = document.createElement("p");
+  address.textContent = `📍 ${[row.full_address, row.postal_code].filter(Boolean).join(" ") || "Dirección no detectada"}`;
+  card.append(phone, address);
+  if (row.contacted_at) {
+    const contact = document.createElement("div");
+    contact.className = "contact-badge";
+    contact.textContent = `WhatsApp abierto · ${new Date(row.contacted_at).toLocaleString("es-ES")}`;
+    card.append(contact);
+  }
+  if (row.private_note) {
+    const note = document.createElement("p");
+    note.className = "private-note";
+    note.textContent = `Nota privada: ${row.private_note}`;
+    card.append(note);
+  }
+  if (row.source_missing) {
+    const missing = document.createElement("p");
+    missing.className = "fine";
+    missing.textContent = "Esta cita ya no aparece en la última importación de Oracle.";
+    card.append(missing);
+  }
+  const actions = document.createElement("div");
+  actions.className = "appointment-actions";
+  const addAction = (label, handler, style = "secondary") => {
+    const button = document.createElement("button");
+    button.className = `button ${style}`;
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", handler);
+    actions.append(button);
+  };
+  addAction("WhatsApp", () => openAppointmentWhatsApp(row), "primary");
+  addAction("Llamar", () => callAppointment(row));
+  addAction("Maps", () => openAppointmentMaps(row));
+  addAction("Editar", () => editAppointment(row));
+  addAction("Revisar mensaje", () => reviewWhatsApp(row));
+  addAction("Pendiente", () => changeAppointmentStatus(row, "pending"));
+  addAction("Confirmar", () => changeAppointmentStatus(row, "confirmed"), "primary");
+  addAction("Cancelar", () => changeAppointmentStatus(row, "cancelled"), "danger");
+  addAction("Nota", () => editAppointmentNote(row));
+  if (row.source_missing) addAction("Eliminar", () => removeAppointment(row), "danger");
+  card.append(actions);
+  const updated = document.createElement("p");
+  updated.className = "appt-meta";
+  updated.textContent = `Actualizada: ${new Date(row.updated_at).toLocaleString("es-ES")}`;
+  card.append(updated);
+  return card;
+}
+
+async function openAppointmentWhatsApp(row, customMessage = "") {
+  if (!row.phone) { appointmentNotice("No hay teléfono válido para abrir WhatsApp.", "error"); return; }
+  const { data, error } = await supabase.rpc("cc_record_whatsapp_open", { p_appointment_id: row.id });
+  if (error) { appointmentNotice("No se pudo registrar la apertura de WhatsApp. No se ha abierto la aplicación.", "error"); return; }
+  row.contacted_at = data;
+  renderAppointments();
+  const template = appointmentPreferences.installation_template || DEFAULT_INSTALLATION_TEMPLATE;
+  const message = customMessage || fillAppointmentTemplate(template, row);
+  const phone = normalizePhoneForWhatsApp(row.phone);
+  const intent = `intent://send?phone=${phone}&text=${encodeURIComponent(message)}#Intent;scheme=whatsapp;package=com.whatsapp;end`;
+  window.location.assign(intent);
+}
+
+function callAppointment(row) {
+  const phone = normalizePhoneForCall(row.phone);
+  if (!phone) { appointmentNotice("No hay teléfono válido para llamar.", "error"); return; }
+  window.location.href = `tel:${phone}`;
+}
+
+function openAppointmentMaps(row) {
+  const query = [cleanMapAddress(row.full_address, row.population), row.postal_code].filter(Boolean).join(", ");
+  if (!query.trim()) { appointmentNotice("No hay dirección para abrir Maps.", "error"); return; }
+  const intent = `intent://maps.google.com/maps?q=${encodeURIComponent(query)}#Intent;scheme=https;package=com.google.android.apps.maps;end`;
+  window.location.assign(intent);
+}
+
+function reviewWhatsApp(row) {
+  const template = appointmentPreferences.installation_template || DEFAULT_INSTALLATION_TEMPLATE;
+  const message = window.prompt("Revisa o modifica el mensaje de WhatsApp", fillAppointmentTemplate(template, row));
+  if (message !== null) void openAppointmentWhatsApp(row, message);
+}
+
+async function editAppointment(row) {
+  const time = window.prompt("Hora (HH:MM)", row.scheduled_time ?? ""); if (time === null) return;
+  const population = window.prompt("Población", row.population ?? ""); if (population === null) return;
+  const phone = window.prompt("Teléfono", row.phone ?? ""); if (phone === null) return;
+  const address = window.prompt("Dirección", row.full_address ?? ""); if (address === null) return;
+  const postal = window.prompt("Código postal", row.postal_code ?? ""); if (postal === null) return;
+  const { error } = await supabase.rpc("cc_edit_appointment_details", {
+    p_appointment_id: row.id, p_scheduled_time: time, p_population: population,
+    p_phone: phone, p_full_address: address, p_postal_code: postal,
+  });
+  if (error) appointmentNotice("No se pudieron guardar los cambios privados.", "error");
+  else { appointmentNotice("Información actualizada.", "success"); await loadOwnAppointments(appointmentDate); }
+}
+
+async function editAppointmentNote(row) {
+  const note = window.prompt("Nota privada (solo visible para ti)", row.private_note ?? "");
+  if (note === null) return;
+  const { error } = await supabase.rpc("cc_save_appointment_private", {
+    p_appointment_id: row.id, p_phone: row.phone ?? "", p_full_address: row.full_address ?? "",
+    p_postal_code: row.postal_code ?? "", p_private_note: note,
+    p_cancellation_reason: row.cancellation_reason ?? "",
+  });
+  if (error) appointmentNotice("No se pudo guardar la nota privada.", "error");
+  else { appointmentNotice("Nota guardada.", "success"); await loadOwnAppointments(appointmentDate); }
+}
+
+async function changeAppointmentStatus(row, status) {
+  if (status === "cancelled") {
+    const reason = window.prompt("Motivo comunicado por el cliente");
+    if (reason === null) return;
+    if (!reason.trim()) { appointmentNotice("Indica el motivo de cancelación.", "error"); return; }
+    const { error } = await supabase.rpc("cc_cancel_appointment", { p_appointment_id: row.id, p_reason: reason.trim() });
+    if (error) { appointmentNotice("No se pudo registrar la cancelación.", "error"); return; }
+    row.cancellation_reason = reason.trim();
+    const email = buildCancellationEmail(row, reason.trim());
+    if (email) window.location.href = email;
+  } else {
+    const { error } = await supabase.rpc("cc_set_appointment_status", { p_appointment_id: row.id, p_new_status: status });
+    if (error) { appointmentNotice("No se pudo cambiar el estado.", "error"); return; }
+  }
+  appointmentNotice(`Cita actualizada: ${humanStatus(status)}.`, "success");
+  await loadOwnAppointments(appointmentDate);
+}
+
+function buildCancellationEmail(row, reason) {
+  const template = appointmentPreferences.cancellation_template || DEFAULT_CANCELLATION_TEMPLATE;
+  const subject = fillAppointmentTemplate(appointmentPreferences.cancellation_email_subject || "Cliente cancela - Prospecto {PROSPECTO}", row, reason);
+  const body = fillAppointmentTemplate(template, row, reason);
+  const to = appointmentPreferences.cancellation_email_to || "";
+  if (!to) return "";
+  const cc = appointmentPreferences.cancellation_email_cc || "";
+  return `mailto:${encodeURIComponent(to)}?${cc ? `cc=${encodeURIComponent(cc)}&` : ""}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+async function removeAppointment(row) {
+  if (!window.confirm("¿Eliminar esta cita de tu agenda?")) return;
+  const { error } = await supabase.rpc("cc_delete_appointment", { p_appointment_id: row.id });
+  if (error) appointmentNotice("No se pudo eliminar la cita.", "error");
+  else { appointmentNotice("Cita eliminada.", "success"); await loadOwnAppointments(appointmentDate); }
+}
+
+async function makeStableSourceKey(row, occurrence = 0) {
+  const identity = row.prospect_ref
+    ? `prospect:${String(row.prospect_ref).trim().toUpperCase()}`
+    : `fallback:${appointmentDate}:${row.time}:${row.population.toLocaleLowerCase("es-ES")}:${row.type.toLocaleLowerCase("es-ES")}:${occurrence}`;
+  const bytes = new TextEncoder().encode(`${activeUser.id}:${identity}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  let hex = [...digest.slice(0, 16)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  hex = `${hex.slice(0, 12)}5${hex.slice(13, 16)}${(parseInt(hex[16], 16) & 3 | 8).toString(16)}${hex.slice(17)}`;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function matchesAppointment(existing, parsed) {
+  if (parsed.prospect_ref && existing.prospect_ref) return parsed.prospect_ref === existing.prospect_ref;
+  if (parsed.prospect_ref || existing.prospect_ref) return false;
+  const samePrivateIdentity = parsed.phone && parsed.full_address
+    && existing.phone === parsed.phone && existing.full_address === parsed.full_address
+    && (existing.installation_type ?? "") === parsed.type;
+  return samePrivateIdentity || (existing.work_date === appointmentDate
+    && existing.scheduled_time === parsed.time && existing.population === parsed.population
+    && (existing.installation_type ?? "") === parsed.type
+    && (existing.phone ?? "") === parsed.phone && (existing.full_address ?? "") === parsed.full_address);
+}
+
+async function processOracleText() {
+  const text = $("oracleText").value;
+  if (!text.trim()) { appointmentNotice("Pega primero el texto de Oracle.", "error"); return; }
+  if (!selectedAppointmentTeam || !appointmentTeams.some((team) => team.id === selectedAppointmentTeam)) {
+    appointmentNotice("No hay un equipo autorizado para esta importación.", "error"); return;
+  }
+  const parsed = parseOracleInstallations(text, appointmentPreferences.installation_keywords);
+  ignoredAppointments = parsed.ignored;
+  const occurrences = new Map();
+  const usedSources = new Set();
+  const rows = [];
+  for (const item of parsed.installations) {
+    const old = appointmentIdentityIndex.find((candidate) => !usedSources.has(candidate.source_key) && matchesAppointment(candidate, item));
+    if (old) usedSources.add(old.source_key);
+    const base = item.prospect_ref ? `p:${item.prospect_ref}` : `n:${appointmentDate}|${item.time}|${item.population}|${item.type}`;
+    const occurrence = occurrences.get(base) ?? 0;
+    occurrences.set(base, occurrence + 1);
+    const sourceKey = old?.source_key ?? await stableSourceKey(activeUser.id, appointmentDate, item, occurrence);
+    rows.push({
+      source_key: sourceKey, work_date: appointmentDate, scheduled_time: item.time,
+      population: item.population || "Población pendiente", prospect_ref: item.prospect_ref,
+      kind: "installation", type: item.type, phone: item.phone,
+      full_address: item.full_address, postal_code: item.postal_code,
+      private_note: old?.private_note ?? "", cancellation_reason: old?.cancellation_reason ?? "",
+    });
+  }
+  const duplicateProspects = rows.filter((row, index) => row.prospect_ref && rows.findIndex((other) => other.prospect_ref === row.prospect_ref) !== index);
+  if (duplicateProspects.length) { appointmentNotice("Oracle contiene referencias de prospecto duplicadas; revisa el texto antes de importar.", "error"); return; }
+  const { data, error } = await supabase.rpc("cc_sync_appointment_batch", {
+    p_team_id: selectedAppointmentTeam, p_work_date: appointmentDate, p_rows: rows,
+  });
+  if (error) { appointmentNotice("La importación no se pudo guardar. Revisa el equipo y la fecha e inténtalo de nuevo.", "error"); return; }
+  $("oracleText").value = "";
+  await loadOwnAppointments(appointmentDate);
+  appointmentNotice(`Importación guardada: ${Number(data) || 0} instalaciones. Se conservaron los estados y notas existentes.`, "success");
+}
+
+async function loadMasterAppointments() {
+  const date = $("masterAppointmentDate").value || appointmentDate;
+  $("masterAppointmentDate").value = date;
+  const { data, error } = await supabase.rpc("cc_master_team_appointments", { p_work_date: date });
+  const target = $("masterAppointmentList");
+  target.replaceChildren();
+  if (error || !Array.isArray(data)) { target.textContent = "No se pudo consultar la supervisión."; return false; }
+  if (!data.length) { const empty = document.createElement("div"); empty.className = "agenda-empty"; empty.textContent = "No hay citas de equipo para esta fecha."; target.append(empty); return true; }
+  for (const row of data) {
+    const item = document.createElement("article"); item.className = "master-appointment-row";
+    const content = document.createElement("div");
+    const title = document.createElement("strong"); title.textContent = `${row.scheduled_time} · ${row.population} · ${row.technician}`;
+    const meta = document.createElement("span"); meta.textContent = `Prospecto: ${row.prospect_ref || "—"} · ${humanStatus(row.status)}`;
+    content.append(title, meta);
+    const side = document.createElement("div");
+    if (row.contacted_at) { const contact = document.createElement("span"); contact.className = "contact-badge"; contact.textContent = `WhatsApp abierto · ${new Date(row.contacted_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`; side.append(contact); }
+    const updated = document.createElement("span"); updated.textContent = `Actualizada ${new Date(row.last_updated_at).toLocaleString("es-ES")}`; side.append(updated);
+    item.append(content, side); target.append(item);
+  }
+  return true;
+}
+
+async function saveAppointmentPreferences(event) {
+  event.preventDefault();
+  const keywords = $("installationKeywords").value.split(/\r?\n/).map((item) => item.trim().toLocaleLowerCase("es-ES")).filter(Boolean);
+  const { error } = await supabase.rpc("cc_save_my_appointment_preferences", {
+    p_installation_keywords: keywords,
+    p_installation_template: $("installationTemplate").value,
+    p_maintenance_template: $("maintenanceTemplate").value,
+    p_cancellation_template: $("cancellationTemplate").value,
+    p_email_to: $("cancelEmailTo").value.trim(),
+    p_email_cc: $("cancelEmailCc").value.trim(),
+    p_email_subject: $("cancelEmailSubject").value.trim(),
+  });
+  if (error) { appointmentNotice("No se pudieron guardar los ajustes.", "error"); return; }
+  await loadAppointmentPreferences();
+  appointmentNotice("Ajustes personales guardados.", "success");
 }
 
 async function invokeAdmin(body) {
@@ -480,6 +930,32 @@ function bindEvents() {
     await supabase.auth.signOut();
     await routeSession();
   });
+  $("masterOwnTab").addEventListener("click", () => setMasterView("appointments"));
+  $("masterTeamTab").addEventListener("click", () => {
+    setMasterView("team");
+    void loadMasterAppointments();
+  });
+  $("appointmentDate").addEventListener("change", () => void loadOwnAppointments($("appointmentDate").value));
+  $("appointmentTeam").addEventListener("change", () => { selectedAppointmentTeam = $("appointmentTeam").value; });
+  $("reloadAppointments").addEventListener("click", () => void loadOwnAppointments($("appointmentDate").value));
+  $("importClipboard").addEventListener("click", async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) { appointmentNotice("El portapapeles está vacío.", "error"); return; }
+      $("oracleText").value = text;
+      await processOracleText();
+    } catch {
+      setVisible("manualImport", true);
+      appointmentNotice("El navegador no permitió leer el portapapeles. Pega el texto manualmente.", "error");
+    }
+  });
+  $("manualToggle").addEventListener("click", () => setVisible("manualImport", $("manualImport").classList.contains("hidden")));
+  $("processOracle").addEventListener("click", () => void processOracleText());
+  $("preferencesToggle").addEventListener("click", () => setVisible("appointmentPreferences", $("appointmentPreferences").classList.contains("hidden")));
+  $("appointmentPreferences").addEventListener("submit", saveAppointmentPreferences);
+  $("masterAppointmentDate").value = appointmentDate;
+  $("masterAppointmentDate").addEventListener("change", () => void loadMasterAppointments());
+  $("loadMasterAppointments").addEventListener("click", () => void loadMasterAppointments());
   $("teamForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -564,4 +1040,3 @@ async function start() {
 }
 
 start().catch(() => notify("No se pudo iniciar la aplicación.", "error"));
-
