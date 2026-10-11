@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3aq1">
+  <meta name="app-build" content="3ar2">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3aq1">
-  <link rel="stylesheet" href="./agenda.css?v=3aq1">
+  <link rel="stylesheet" href="./app.css?v=3ar2">
+  <link rel="stylesheet" href="./agenda.css?v=3ar2">
 </head>
 <body>
   <main class="shell">
@@ -42,7 +42,7 @@
     <section id="authPanel" class="panel narrow hidden">
       <h2>Iniciar sesión</h2>
       <form id="loginForm">
-        <label for="employeeId">Usuario admin o matrícula</label>
+        <label for="employeeId">Matrícula</label>
         <input id="employeeId" name="login_id" autocomplete="username" inputmode="text" required minlength="4" maxlength="32">
         <label for="password">Contraseña</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
@@ -67,21 +67,9 @@
     <section id="workspace" class="hidden">
       <section class="panel welcome">
         <div><span id="rolePill" class="pill"></span><h2 id="welcomeName"></h2><p id="roleDescription"></p></div>
-        <button id="securityToggle" class="button secondary" type="button">Ajustes · Seguridad</button>
-      </section>
-      <section id="securityPanel" class="panel hidden">
-        <h2>Cambiar contraseña</h2>
-        <p>Confirma tu contraseña actual para volver a autenticarte. La matrícula, el rol y el equipo no se editan desde aquí.</p>
-        <form id="changePasswordForm" class="grid-form">
-          <label>Usuario o matrícula<input id="changeEmployeeId" autocomplete="username" required minlength="4" maxlength="32"></label>
-          <label>Contraseña actual<input id="currentPassword" type="password" autocomplete="current-password" required maxlength="256"></label>
-          <label>Nueva contraseña<input id="newPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="128"></label>
-          <label>Repite la contraseña<input id="newPassword2" type="password" autocomplete="new-password" required minlength="6" maxlength="128"></label>
-          <button class="button primary" type="submit">Actualizar contraseña</button>
-        </form>
       </section>
       <section id="adminPanel" class="panel hidden">
-        <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div></div>
+        <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div><button id="adminSettingsToggle" class="icon-button" type="button" aria-label="Ajustes avanzados" title="Ajustes avanzados">⚙</button></div>
         <div class="admin-grid">
           <section class="subpanel">
             <h3>Crear equipo</h3>
@@ -109,28 +97,26 @@
       </section>
       <nav id="masterViewTabs" class="master-view-tabs hidden" aria-label="Vistas Master">
         <button class="button primary" id="masterOwnTab" type="button">Mis citas</button>
-        <button class="button secondary" id="masterTeamTab" type="button">Mi equipo</button>
+        <button class="button secondary" id="masterRouteTab" type="button">Rutas del equipo</button>
+        <button class="button secondary" id="masterTechniciansTab" type="button">Mis técnicos</button>
+        <button class="button secondary" id="masterCreateTab" type="button">Crear técnico</button>
       </nav>
       <section id="appointmentsPanel" class="panel hidden">
-        <p class="eyebrow">AGENDA PERSONAL</p><h2>Confirmar Citas</h2>
+        <div class="agenda-heading"><div><p class="eyebrow">AGENDA PERSONAL</p><h2>Confirmar Citas</h2></div><button id="settingsToggle" class="icon-button" type="button" aria-label="Ajustes" title="Ajustes">⚙</button></div>
         <div class="agenda-controls">
-          <label for="appointmentDate">Agenda del día</label>
-          <input id="appointmentDate" type="date">
           <label id="appointmentTeamLabel" for="appointmentTeam">Equipo de importación</label>
           <select id="appointmentTeam"></select>
-          <button id="reloadAppointments" class="button secondary" type="button">Actualizar agenda</button>
         </div>
         <div id="appointmentDateTitle" class="daytitle"></div>
         <div id="agendaDateNav" class="datechips" aria-label="Agendas guardadas"></div>
         <div class="agenda-stats" id="appointmentStats"></div>
         <div class="agenda-import">
           <button id="importClipboard" class="button primary" type="button">📋 Importar desde Oracle</button>
-          <button id="manualToggle" class="button secondary" type="button">Pegar texto manualmente</button>
           <button id="nextAppointment" class="button primary" type="button">📲 Confirmar siguiente pendiente</button>
           <button id="deleteAgendaDay" class="button danger" type="button">🗑️ Borrar día</button>
-          <button id="purgeOldAgendas" class="button secondary" type="button">Borrar agendas anteriores a hoy</button>
         </div>
         <section id="manualImport" class="subpanel hidden">
+          <p id="manualImportIntro">El portapapeles no está disponible. Pega aquí el texto que copiaste de Oracle Field Service y pulsa «Procesar instalaciones».</p>
           <label for="oracleText">Texto copiado de Oracle Field Service</label>
           <textarea id="oracleText" rows="8" maxlength="500000" placeholder="Pega aquí el texto de Oracle"></textarea>
           <div class="agenda-import"><button id="pasteOracle" class="button secondary" type="button">Pegar del portapapeles</button><button id="processOracle" class="button primary" type="button">Procesar instalaciones</button></div>
@@ -140,37 +126,54 @@
         <div id="appointmentFilters" class="appointment-filters"></div>
         <div id="appointmentIgnored" class="muted agenda-ignored"></div>
         <div id="appointmentList" class="appointment-list"></div>
-        <section class="subpanel preferences-panel">
-          <button id="preferencesToggle" class="button secondary" type="button" aria-expanded="false" aria-controls="agendaPreferencesPanel">Ajustes de agenda</button>
-          <div id="agendaPreferencesPanel" class="agenda-preferences hidden">
-          <form id="appointmentPreferences">
-            <label for="installationKeywords">Palabras que identifican instalaciones (una por línea)</label><textarea id="installationKeywords" rows="4"></textarea>
-            <label for="installationTemplate">Plantilla WhatsApp · Instalación</label><textarea id="installationTemplate" rows="7"></textarea>
-            <button id="restoreInstallationTemplate" class="button secondary" type="button">Restaurar plantilla de V1</button>
-            <label for="maintenanceTemplate">Plantilla WhatsApp · Mantenimiento (no se importa)</label><textarea id="maintenanceTemplate" rows="5"></textarea>
-            <label for="cancellationTemplate">Plantilla de correo de cancelación</label><textarea id="cancellationTemplate" rows="7"></textarea>
-            <div class="grid-form"><label>Para<input id="cancelEmailTo" type="email" maxlength="320"></label><label>CC<input id="cancelEmailCc" maxlength="1000"></label><label>Asunto<input id="cancelEmailSubject" maxlength="500"></label></div>
-            <button id="restoreCancellationDefaults" class="button secondary" type="button">Restaurar valores predeterminados de V1</button>
-            <button class="button primary" type="submit">Guardar ajustes</button>
-          </form>
-          <div class="fine">La retención central del sistema se aplica también a esta agenda. Puedes borrar manualmente un día o todos tus días anteriores a hoy.</div>
-          <button id="checkUpdate" class="button secondary" type="button">Comprobar actualización</button>
+      </section>
+      <section id="personalSettingsPanel" class="panel hidden" aria-labelledby="settingsTitle">
+          <div class="section-heading"><h2 id="settingsTitle">Ajustes</h2><button id="settingsClose" class="button quiet" type="button">Cerrar</button></div>
+          <div id="agendaSettingsGroup">
           <form id="presentationNameForm" class="presentation-name-form">
             <label for="presentationName">Nombre que aparecerá en los mensajes de WhatsApp</label>
             <input id="presentationName" required maxlength="120" autocomplete="given-name">
             <button class="button secondary" type="submit">Guardar nombre</button>
           </form>
+          <form id="appointmentPreferences">
+            <label for="installationKeywords">Palabras que identifican instalaciones (una por línea)</label><textarea id="installationKeywords" rows="4"></textarea>
+            <label for="installationTemplate">Plantilla WhatsApp · Instalación</label><textarea id="installationTemplate" rows="7"></textarea>
+            <label for="maintenanceTemplate">Plantilla WhatsApp · Mantenimiento (no se importa)</label><textarea id="maintenanceTemplate" rows="5"></textarea>
+            <label for="cancellationTemplate">Plantilla de correo de cancelación</label><textarea id="cancellationTemplate" rows="7"></textarea>
+            <div class="grid-form"><label>Para<input id="cancelEmailTo" type="email" maxlength="320"></label><label>CC<input id="cancelEmailCc" maxlength="1000"></label><label>Asunto<input id="cancelEmailSubject" maxlength="500"></label></div>
+            <button id="restoreCancellationDefaults" class="button secondary" type="button">Restaurar predeterminado</button>
+            <button class="button primary" type="submit">Guardar ajustes</button>
+          </form>
           </div>
-        </section>
+          <section id="securityPanel" class="advanced-settings">
+            <h3>Ajustes avanzados</h3>
+            <h4>Cambiar contraseña</h4>
+            <p>Confirma tu contraseña actual para volver a autenticarte. La matrícula, el rol y el equipo no se editan desde aquí.</p>
+            <form id="changePasswordForm" class="grid-form">
+              <label>Usuario o matrícula<input id="changeEmployeeId" autocomplete="username" required minlength="4" maxlength="32"></label>
+              <label>Contraseña actual<input id="currentPassword" type="password" autocomplete="current-password" required maxlength="256"></label>
+              <label>Nueva contraseña<input id="newPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="128"></label>
+              <label>Repite la contraseña<input id="newPassword2" type="password" autocomplete="new-password" required minlength="6" maxlength="128"></label>
+              <button class="button primary" type="submit">Actualizar contraseña</button>
+            </form>
+          </section>
       </section>
       <section id="masterPanel" class="panel hidden">
-        <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Mi equipo</h2>
+        <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Rutas del equipo</h2>
         <p>La supervisión solo muestra técnico, fecha, hora, población, prospecto, estado, apertura de WhatsApp y actualización. «Contactada» significa WhatsApp abierto; no confirma que se enviara un mensaje.</p>
         <div id="masterTeams" class="team-chips"></div>
-        <div class="agenda-controls"><label for="masterAppointmentDate">Supervisión del día</label><input id="masterAppointmentDate" type="date"><button id="loadMasterAppointments" class="button secondary" type="button">Consultar</button></div>
+        <div class="agenda-controls"><label for="masterTechnicianSelect">Técnico</label><select id="masterTechnicianSelect"></select><button id="refreshMasterRoute" class="button secondary" type="button">Actualizar ruta</button></div>
+        <div id="masterDateNav" class="datechips" aria-label="Fecha de las rutas"></div>
         <div id="masterAppointmentList" class="appointment-list"></div>
+      </section>
+      <section id="masterTechniciansPanel" class="panel hidden">
+        <p class="eyebrow">GESTIÓN DEL EQUIPO</p><h2>Mis técnicos</h2>
+        <p>Gestiona únicamente las asignaciones de técnicos que pertenecen a tus equipos.</p>
+        <div id="masterAccounts" class="account-list"></div>
+      </section>
+      <section id="masterCreatePanel" class="panel hidden">
+        <p class="eyebrow">GESTIÓN DEL EQUIPO</p><h2>Crear técnico</h2>
         <section class="subpanel master-invite">
-          <h3>Crear técnico</h3>
           <form id="masterAccountForm">
             <label for="masterDisplayName">Nombre completo del perfil</label><input id="masterDisplayName" required maxlength="120">
             <label for="masterPresentationName">Nombre en mensajes</label><input id="masterPresentationName" required maxlength="120">
@@ -180,13 +183,30 @@
           </form>
           <p class="fine">La contraseña inicial es la matrícula normalizada (mayúsculas, sin espacios ni guiones). Entrégala personalmente. Quien conozca la matrícula puede tomar el control antes de que su titular la cambie.</p>
         </section>
-        <div id="masterAccounts" class="account-list"></div>
       </section>
+      <dialog id="messagePreviewDialog" class="app-dialog" aria-labelledby="messagePreviewTitle">
+        <h2 id="messagePreviewTitle">Revisar mensaje de WhatsApp</h2>
+        <p>Comprueba el texto. WhatsApp solo se abrirá cuando pulses el botón.</p>
+        <label for="messagePreviewText">Mensaje completo</label>
+        <textarea id="messagePreviewText" class="message-preview-text" rows="14" maxlength="5000" aria-label="Mensaje completo editable"></textarea>
+        <div class="dialog-actions"><button id="copyPreviewMessage" class="button secondary" type="button">Copiar mensaje</button><button id="openPreviewWhatsApp" class="button primary" type="button">Abrir WhatsApp</button><button id="closePreviewDialog" class="button quiet" type="button">Cerrar</button></div>
+      </dialog>
+      <dialog id="editAppointmentDialog" class="app-dialog" aria-labelledby="editAppointmentTitle">
+        <h2 id="editAppointmentTitle">Editar instalación</h2>
+        <form id="editAppointmentForm" class="dialog-form">
+          <label>Hora<input id="editScheduledTime" type="time" required></label>
+          <label>Población<input id="editPopulation" required maxlength="160"></label>
+          <label>Teléfono<input id="editPhone" type="tel" maxlength="40" autocomplete="tel"></label>
+          <label>Dirección<input id="editAddress" maxlength="500" autocomplete="street-address"></label>
+          <label>Código postal<input id="editPostalCode" maxlength="20" autocomplete="postal-code"></label>
+          <div class="dialog-actions"><button class="button primary" type="submit">Guardar cambios</button><button id="cancelEditAppointment" class="button quiet" type="button">Cancelar</button></div>
+        </form>
+      </dialog>
     </section>
     <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3aq1"></script>
-  <script src="./startup-status.js?v=3aq1"></script>
-  <script type="module" src="./app.js?v=3aq1"></script>
+  <script src="./config.js?v=3ar2"></script>
+  <script src="./startup-status.js?v=3ar2"></script>
+  <script type="module" src="./app.js?v=3ar2"></script>
 </body>
 </html>

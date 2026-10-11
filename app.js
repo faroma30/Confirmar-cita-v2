@@ -21,12 +21,18 @@ let selectedAppointmentTeam = "";
 let currentAppointments = [];
 let ignoredAppointments = [];
 let appointmentFilter = "Todas";
-let appointmentDate = addBusinessDays(new Date(), 1);
+let appointmentDate = addLocalDays(todayMadrid(), 1);
+let appointmentDayOffset = 1;
+let masterRouteDate = addLocalDays(todayMadrid(), 1);
+let masterRouteDayOffset = 1;
+let previousMadridDate = todayMadrid();
+let activeEditAppointment = null;
+let previewAppointment = null;
 let appointmentPreferences = {};
 let importChangesBySource = new Map();
 let undoTimer = null;
 let sharedTextConsumed = false;
-const APP_BUILD = "3aq1";
+const APP_BUILD = "3ar2";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -34,15 +40,6 @@ const DEFAULT_INSTALLATION_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la
 const DEFAULT_MAINTENANCE_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la alarma de Verisure* para hacer el mantenimiento de la alarma.\n\nMañana estaré en *{POBLACION}* a las *{HORA}*.\n\n📍 Dirección: *{DIRECCION}*\n\nPor favor, comprueba que la dirección es correcta.\n\n*Si necesitas CANCELAR el mantenimiento avísame antes de las 00:00 de hoy para evitar penalizaciones.*`;
 const DEFAULT_CANCELLATION_TEMPLATE = `Buenos días,\n\nEl cliente correspondiente al prospecto {MTO} solicita cancelar la cita prevista a las {HORA}.\n\nTipo de intervención: {TIPO}\nPoblación: {POBLACION}\nTeléfono: {TELEFONO}\nDirección: {DIRECCION}\n\nMotivo indicado por el cliente: {MOTIVO}\n\nUn saludo,\n{TECNICO}`;
 
-function localDateString(date) {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-function addBusinessDays(date, days) {
-  const [year, month, day] = localDateString(date).split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days, 12));
-}
 function addLocalDays(date, days) {
   return dateOffset(date, days);
 }
@@ -75,7 +72,8 @@ function createSupabaseClient() {
   supabase = createClient(config.url, config.publishableKey, {
     auth: {
       persistSession: true,
-      storage: window.sessionStorage,
+      // Supabase Auth owns this session storage. Application code never stores passwords.
+      storage: window.localStorage,
       storageKey: "confirmar-citas-v2-auth-session",
       autoRefreshToken: true,
       detectSessionInUrl: true,
@@ -84,8 +82,8 @@ function createSupabaseClient() {
 }
 
 function hideWorkspacePanels() {
-  ["authPanel", "authDisabled", "activationPanel", "workspace", "securityPanel",
-    "adminPanel", "masterPanel", "appointmentsPanel", "masterViewTabs"].forEach((id) => setVisible(id, false));
+  ["authPanel", "authDisabled", "activationPanel", "workspace", "adminPanel", "masterPanel",
+    "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel"].forEach((id) => setVisible(id, false));
   setVisible("signOut", false);
 }
 
@@ -118,7 +116,22 @@ async function routeSession() {
     setVisible("authPanel", true);
     return;
   }
-  activeUser = session.user;
+  const { data: verifiedUser, error: userError } = await supabase.auth.getUser();
+  if (userError || !verifiedUser?.user || verifiedUser.user.id !== session.user.id) {
+    if (userError && (userError.name === "AuthRetryableFetchError" || userError.status === 0 || navigator.onLine === false)) {
+      finishStartup();
+      setVisible("startupError", true);
+      return;
+    }
+    activeUser = null;
+    activeProfile = null;
+    await supabase.auth.signOut({ scope: "local" });
+    finishStartup();
+    setVisible("authPanel", true);
+    notify("La sesión ya no es válida. Inicia sesión de nuevo.", "error");
+    return;
+  }
+  activeUser = verifiedUser.user;
   try {
     activeProfile = await fetchOwnProfile();
   } catch {
@@ -172,23 +185,27 @@ async function routeSession() {
   $("roleDescription").textContent = activeProfile.role === "admin"
     ? "Panel de administración. Esta cuenta no abre agendas ni instalaciones."
     : activeProfile.role === "master"
-      ? "Acceso a tus instalaciones y supervisión limitada a tus equipos."
+      ? "Tus instalaciones, rutas de tu equipo y gestión de técnicos autorizados."
       : "Acceso limitado a tus instalaciones y ajustes personales.";
   if (activeProfile.role === "admin") {
+    setVisible("agendaSettingsGroup", false);
     setVisible("adminPanel", true);
     await loadAdminPanel();
   } else if (activeProfile.role === "master") {
+    setVisible("agendaSettingsGroup", true);
     setVisible("masterViewTabs", true);
     setVisible("appointmentsPanel", true);
     setVisible("masterPanel", false);
     setMasterView("appointments");
     try {
       await Promise.all([loadMasterPanel(), loadAppointmentTeams(), loadAppointmentPreferences()]);
-      await Promise.all([loadOwnAppointments(appointmentDate), loadMasterAppointments()]);
+      await loadOwnAppointments(appointmentDate);
+      await loadMasterAppointments();
     } catch {
       appointmentNotice("No se pudo cargar tu agenda o el equipo. Actualiza la página e inténtalo de nuevo.", "error");
     }
   } else {
+    setVisible("agendaSettingsGroup", true);
     setVisible("appointmentsPanel", true);
     try {
       await Promise.all([loadAppointmentTeams(), loadAppointmentPreferences()]);
@@ -201,11 +218,20 @@ async function routeSession() {
 }
 
 function setMasterView(view) {
-  const own = view === "appointments";
-  setVisible("appointmentsPanel", own);
-  setVisible("masterPanel", !own);
-  $("masterOwnTab").className = `button ${own ? "primary" : "secondary"}`;
-  $("masterTeamTab").className = `button ${own ? "secondary" : "primary"}`;
+  const panels = {
+    appointments: "appointmentsPanel",
+    routes: "masterPanel",
+    technicians: "masterTechniciansPanel",
+    create: "masterCreatePanel",
+  };
+  for (const [key, id] of Object.entries(panels)) setVisible(id, key === view);
+  for (const [key, id] of Object.entries({
+    appointments: "masterOwnTab", routes: "masterRouteTab",
+    technicians: "masterTechniciansTab", create: "masterCreateTab",
+  })) {
+    $(id).className = `button ${key === view ? "primary" : "secondary"}`;
+    $(id).setAttribute("aria-current", key === view ? "page" : "false");
+  }
 }
 
 function addTeamOption(container, team, checked = false, radio = false) {
@@ -232,6 +258,13 @@ function makeAccountCard(profile, teams = [], actions = []) {
   const stateName = profile.status ?? profile.account_status ?? "";
   detail.textContent = `${roleName} · ${stateName}${profile.must_change_password ? " · activación pendiente" : ""}`;
   main.append(title, detail);
+  if (profile.role === "technician" && Object.hasOwn(profile, "employee_id")) {
+    const identifier = document.createElement("p");
+    identifier.textContent = profile.employee_id
+      ? `Matrícula: ${profile.employee_id}`
+      : "Matrícula pendiente de sincronizar; aparecerá después de su próximo inicio de sesión.";
+    main.append(identifier);
+  }
   if (teams.length) {
     const teamLine = document.createElement("p");
     teamLine.textContent = teams.join(" · ");
@@ -290,20 +323,14 @@ const defaultAppointmentPreferences = () => ({
 });
 
 async function loadAppointmentPreferences() {
-  const [{ data, error }, activeDateResult] = await Promise.all([
-    supabase.rpc("cc_my_appointment_preferences"),
-    supabase.rpc("cc_my_active_work_date"),
-  ]);
-  if (error || activeDateResult.error) throw new Error("preferences unavailable");
+  const { data, error } = await supabase.rpc("cc_my_appointment_preferences");
+  if (error) throw new Error("preferences unavailable");
   appointmentPreferences = { ...defaultAppointmentPreferences(), ...(data ?? {}) };
   for (const [field, fallback] of [["cancellation_email_to", DEFAULT_CANCEL_TO], ["cancellation_email_cc", DEFAULT_CANCEL_CC]]) {
     if (data?.[field] == null) appointmentPreferences[field] = fallback;
   }
-  const today = todayMadrid();
-  const cutoff = addLocalDays(today, -2);
-  if (activeDateResult.data && activeDateResult.data >= cutoff) appointmentDate = activeDateResult.data;
-  else appointmentDate = addLocalDays(today, 1);
-  $("appointmentDate").value = appointmentDate;
+  appointmentDate = addLocalDays(todayMadrid(), appointmentDayOffset);
+  renderAgendaDateNavigation();
   $("installationKeywords").value = (appointmentPreferences.installation_keywords ?? []).join("\n");
   $("installationTemplate").value = appointmentPreferences.installation_template ?? DEFAULT_INSTALLATION_TEMPLATE;
   $("maintenanceTemplate").value = appointmentPreferences.maintenance_template ?? DEFAULT_MAINTENANCE_TEMPLATE;
@@ -314,8 +341,7 @@ async function loadAppointmentPreferences() {
 }
 
 async function loadOwnAppointments(date = appointmentDate) {
-  appointmentDate = date || localDateString(addLocalDays(new Date(), 1));
-  $("appointmentDate").value = appointmentDate;
+  appointmentDate = date || addLocalDays(todayMadrid(), 1);
   const [dayResult, indexResult, ignoredResult] = await Promise.all([
     supabase.rpc("cc_my_appointments", { p_work_date: appointmentDate }),
     supabase.rpc("cc_my_appointment_identity_index"),
@@ -324,10 +350,6 @@ async function loadOwnAppointments(date = appointmentDate) {
   if (dayResult.error || indexResult.error || ignoredResult.error || !Array.isArray(dayResult.data) || !Array.isArray(indexResult.data)) {
     appointmentNotice("No se pudo recuperar la agenda. Comprueba la conexión e inténtalo de nuevo.", "error");
     return false;
-  }
-  const dateResult = await supabase.rpc("cc_set_my_active_work_date", { p_work_date: appointmentDate });
-  if (dateResult.error) {
-    appointmentNotice("La agenda se cargó, pero no se pudo sincronizar la fecha seleccionada.", "error");
   }
   currentAppointments = dayResult.data.map((row) => ({
     ...row,
@@ -371,35 +393,31 @@ function setAgendaFilter(filter) {
 
 function renderAgendaDateNavigation() {
   const target = $("agendaDateNav");
+  renderThreeDaySelector(target, appointmentDate, appointmentDayOffset, (date, offset) => {
+    appointmentDayOffset = offset;
+    void selectAppointmentDate(date);
+  });
+  $("appointmentDateTitle").textContent = formatDateTitle(appointmentDate);
+}
+
+function renderThreeDaySelector(target, selectedDate, selectedOffset, onSelect) {
   target.replaceChildren();
   const today = todayMadrid();
-  const earliest = addLocalDays(today, -2);
-  const dates = new Set([
-    addLocalDays(today, -1), today, addLocalDays(today, 1), appointmentDate,
-    ...appointmentIdentityIndex.map((row) => row.work_date).filter((date) => date >= earliest),
-  ]);
-  const ordered = [...dates].filter((date) => date >= earliest).sort();
-  $("appointmentDateTitle").textContent = formatDateTitle(appointmentDate);
-  for (const date of ordered) {
+  for (const { offset, label: dayLabel } of [
+    { offset: -1, label: "Ayer" }, { offset: 0, label: "Hoy" }, { offset: 1, label: "Mañana" },
+  ]) {
+    const date = addLocalDays(today, offset);
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `button secondary datechip${date === appointmentDate ? " on" : ""}${date === today ? " today" : ""}`;
-    button.textContent = date === today ? "HOY" : date === addLocalDays(today, 1) ? "MAÑANA" : formatDateChip(date);
-    button.setAttribute("aria-pressed", String(date === appointmentDate));
-    button.addEventListener("click", () => void selectAppointmentDate(date));
+    button.className = `button secondary datechip date-option${date === selectedDate ? " on" : ""}${offset === 0 ? " today" : ""}`;
+    const label = document.createElement("span"); label.className = "date-option-label"; label.textContent = dayLabel;
+    const value = document.createElement("span"); value.className = "date-option-value"; value.textContent = formatDateChip(date);
+    button.append(label, value);
+    button.setAttribute("aria-label", `${dayLabel}, ${formatDateTitle(date)}`);
+    button.setAttribute("aria-pressed", String(offset === selectedOffset));
+    button.addEventListener("click", () => onSelect(date, offset));
     target.append(button);
   }
-  const newDate = document.createElement("button");
-  newDate.className = "button secondary datechip addDate";
-  newDate.type = "button";
-  newDate.textContent = "＋";
-  newDate.setAttribute("aria-label", "Abrir otra fecha");
-  newDate.addEventListener("click", () => {
-    const picker = $("appointmentDate");
-    if (typeof picker.showPicker === "function") picker.showPicker();
-    else { picker.focus(); picker.click(); }
-  });
-  target.append(newDate);
 }
 
 async function selectAppointmentDate(date) {
@@ -415,7 +433,7 @@ function renderAppointments() {
   const nextButton = $("nextAppointment");
   nextButton.disabled = !next;
   nextButton.textContent = next ? "📲 Confirmar siguiente pendiente" : "No hay pendientes disponibles";
-  nextButton.onclick = () => { if (next) void openAppointmentWhatsApp(next); };
+  nextButton.onclick = () => { if (next) reviewWhatsApp(next); };
   const visible = rows.filter((row) => appointmentFilter === "Todas"
     || (appointmentFilter === "Contactadas" ? Boolean(row.contacted_at)
       : appointmentFilter === "Ignoradas" ? false : row.status === appointmentFilter.toLowerCase()));
@@ -526,7 +544,7 @@ function renderAppointmentCard(row) {
   if (row.contacted_at) {
     const contact = document.createElement("div");
     contact.className = "contact-badge";
-    contact.textContent = `WhatsApp abierto · ${new Date(row.contacted_at).toLocaleString("es-ES")}`;
+    contact.textContent = `WhatsApp abierto · ${new Date(row.contacted_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`;
     card.append(contact);
   }
   if (row.private_note) {
@@ -566,7 +584,7 @@ function renderAppointmentCard(row) {
     button.addEventListener("click", handler);
     actions.append(button);
   };
-  addAction("WhatsApp", () => openAppointmentWhatsApp(row), "primary");
+  addAction("WhatsApp", () => reviewWhatsApp(row), "primary");
   addAction("Llamar", () => callAppointment(row));
   addAction("Maps", () => openAppointmentMaps(row));
   addAction("Editar", () => editAppointment(row));
@@ -588,8 +606,8 @@ function renderAppointmentCard(row) {
 async function openAppointmentWhatsApp(row, customMessage = "") {
   if (!row.phone) { appointmentNotice("No hay teléfono válido para abrir WhatsApp.", "error"); return; }
   if (row.issues?.length) { appointmentNotice(`Revisa primero: ${row.issues.join(", ")}.`, "error"); return; }
-  if (row.contacted_at && !customMessage) {
-    const time = new Date(row.contacted_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+  if (row.contacted_at) {
+    const time = new Date(row.contacted_at).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit" });
     if (!window.confirm(`Ya abriste WhatsApp para esta cita a las ${time}. ¿Abrirlo de nuevo?`)) return;
   }
   const { data, error } = await supabase.rpc("cc_record_whatsapp_open", { p_appointment_id: row.id });
@@ -623,22 +641,35 @@ async function copyAppointmentAddress(row) {
 
 function reviewWhatsApp(row) {
   const template = appointmentPreferences.installation_template || DEFAULT_INSTALLATION_TEMPLATE;
-  const message = window.prompt("Revisa o modifica el mensaje de WhatsApp", appointmentMessage(template, row));
-  if (message !== null) void openAppointmentWhatsApp(row, message);
+  previewAppointment = row;
+  $("messagePreviewText").value = appointmentMessage(template, row);
+  $("messagePreviewDialog").showModal();
 }
 
 async function editAppointment(row) {
-  const time = window.prompt("Hora (HH:MM)", row.scheduled_time ?? ""); if (time === null) return;
-  const population = window.prompt("Población", row.population ?? ""); if (population === null) return;
-  const phone = window.prompt("Teléfono", row.phone ?? ""); if (phone === null) return;
-  const address = window.prompt("Dirección", row.full_address ?? ""); if (address === null) return;
-  const postal = window.prompt("Código postal", row.postal_code ?? ""); if (postal === null) return;
+  activeEditAppointment = row;
+  $("editScheduledTime").value = String(row.scheduled_time ?? "").slice(0, 5);
+  $("editPopulation").value = row.population ?? "";
+  $("editPhone").value = row.phone ?? "";
+  $("editAddress").value = row.full_address ?? "";
+  $("editPostalCode").value = row.postal_code ?? "";
+  $("editAppointmentDialog").showModal();
+}
+
+async function saveAppointmentDetails(event) {
+  event.preventDefault();
+  const row = activeEditAppointment;
+  if (!row) return;
   const { error } = await supabase.rpc("cc_edit_appointment_details", {
-    p_appointment_id: row.id, p_scheduled_time: time, p_population: population,
-    p_phone: phone, p_full_address: address, p_postal_code: postal,
+    p_appointment_id: row.id, p_scheduled_time: $("editScheduledTime").value,
+    p_population: $("editPopulation").value.trim(), p_phone: $("editPhone").value,
+    p_full_address: $("editAddress").value, p_postal_code: $("editPostalCode").value,
   });
-  if (error) appointmentNotice("No se pudieron guardar los cambios privados.", "error");
-  else { appointmentNotice("Información actualizada.", "success"); await loadOwnAppointments(appointmentDate); }
+  if (error) { appointmentNotice("No se pudieron guardar los cambios privados.", "error"); return; }
+  $("editAppointmentDialog").close();
+  activeEditAppointment = null;
+  appointmentNotice("Información actualizada.", "success");
+  await loadOwnAppointments(appointmentDate);
 }
 
 async function editAppointmentNote(row) {
@@ -796,22 +827,34 @@ async function processOracleText() {
 }
 
 async function loadMasterAppointments() {
-  const date = $("masterAppointmentDate").value || appointmentDate;
-  $("masterAppointmentDate").value = date;
+  const date = masterRouteDate || addLocalDays(todayMadrid(), masterRouteDayOffset);
+  masterRouteDate = date;
+  renderThreeDaySelector($("masterDateNav"), date, masterRouteDayOffset, (selected, offset) => {
+    masterRouteDayOffset = offset;
+    masterRouteDate = selected;
+    void loadMasterAppointments();
+  });
+  const technicianId = $("masterTechnicianSelect").value;
   const { data, error } = await supabase.rpc("cc_master_team_appointments", { p_work_date: date });
   const target = $("masterAppointmentList");
   target.replaceChildren();
   if (error || !Array.isArray(data)) { target.textContent = "No se pudo consultar la supervisión."; return false; }
-  if (!data.length) { const empty = document.createElement("div"); empty.className = "agenda-empty"; empty.textContent = "No hay citas de equipo para esta fecha."; target.append(empty); return true; }
-  for (const row of data) {
+  const rows = data.filter((row) => technicianId && row.technician_id === technicianId);
+  if (!rows.length) { const empty = document.createElement("div"); empty.className = "agenda-empty"; empty.textContent = technicianId ? "Este técnico no tiene citas para esta fecha." : "Selecciona un técnico de tus equipos para consultar su ruta."; target.append(empty); return true; }
+  for (const row of rows) {
     const item = document.createElement("article"); item.className = "master-appointment-row";
     const content = document.createElement("div");
     const title = document.createElement("strong"); title.textContent = `${row.scheduled_time} · ${row.population} · ${row.technician}`;
-    const meta = document.createElement("span"); meta.textContent = `Prospecto: ${row.prospect_ref || "—"} · ${humanStatus(row.status)}`;
+    const meta = document.createElement("span"); meta.textContent = `Fecha: ${formatDateTitle(row.work_date)} · Prospecto: ${row.prospect_ref || "—"} · Estado: ${humanStatus(row.status)}`;
     content.append(title, meta);
     const side = document.createElement("div");
-    if (row.contacted_at) { const contact = document.createElement("span"); contact.className = "contact-badge"; contact.textContent = `WhatsApp abierto · ${new Date(row.contacted_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`; side.append(contact); }
-    const updated = document.createElement("span"); updated.textContent = `Actualizada ${new Date(row.last_updated_at).toLocaleString("es-ES")}`; side.append(updated);
+    const contact = document.createElement("span");
+    contact.className = `contact-badge${row.contacted_at ? "" : " not-contacted"}`;
+    contact.textContent = row.contacted_at
+      ? `WhatsApp abierto · ${new Date(row.contacted_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}`
+      : "WhatsApp no abierto";
+    side.append(contact);
+    const updated = document.createElement("span"); updated.textContent = `Actualizada ${new Date(row.last_updated_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`; side.append(updated);
     item.append(content, side); target.append(item);
   }
   return true;
@@ -834,23 +877,15 @@ async function saveAppointmentPreferences(event) {
   appointmentNotice("Ajustes personales guardados.", "success");
 }
 
-async function checkUpdate() {
-  try {
-    const response = await fetch(`./index.html?check=${Date.now()}`, { cache: "no-store" });
-    if (!response.ok) throw new Error("version check failed");
-    const html = await response.text();
-    const published = html.match(/<meta\s+name=["']app-build["']\s+content=["']([^"']+)["']/i)?.[1] ?? "sin identificar";
-    window.alert(`Build publicada: ${published}\nTu build actual: ${APP_BUILD}`);
-  } catch { window.alert("No se pudo comprobar la actualización."); }
-}
-
 function restoreV1Defaults() {
+  if (!window.confirm("Se restaurarán la plantilla de instalación, la de mantenimiento y la de cancelación, además de los destinatarios y el asunto. ¿Continuar?")) return;
   $("installationTemplate").value = DEFAULT_INSTALLATION_TEMPLATE;
   $("maintenanceTemplate").value = DEFAULT_MAINTENANCE_TEMPLATE;
   $("cancellationTemplate").value = DEFAULT_CANCELLATION_TEMPLATE;
   $("cancelEmailTo").value = DEFAULT_CANCEL_TO;
   $("cancelEmailCc").value = DEFAULT_CANCEL_CC;
   $("cancelEmailSubject").value = "Cliente cancela - Prospecto {MTO}";
+  $("appointmentPreferences").requestSubmit();
 }
 
 async function deleteAppointmentDay() {
@@ -859,15 +894,6 @@ async function deleteAppointmentDay() {
   if (error) { appointmentNotice("No se pudo borrar la agenda de ese día.", "error"); return; }
   importChangesBySource.clear();
   appointmentNotice(`Se eliminaron ${Number(data) || 0} citas de tu agenda.`, "success");
-  await loadOwnAppointments(appointmentDate);
-}
-
-async function purgeOldAppointments() {
-  if (!window.confirm("¿Borrar todas tus agendas anteriores a hoy? Esta acción elimina citas, estados, contactos, teléfonos, direcciones, notas y motivos de cancelación y no se puede deshacer.")) return;
-  const { data, error } = await supabase.rpc("cc_purge_my_appointments_before_today");
-  if (error) { appointmentNotice("No se pudieron borrar las agendas anteriores.", "error"); return; }
-  importChangesBySource.clear();
-  appointmentNotice(`Se eliminaron ${Number(data) || 0} citas anteriores a hoy.`, "success");
   await loadOwnAppointments(appointmentDate);
 }
 
@@ -1059,6 +1085,22 @@ async function loadMasterPanel() {
     option.textContent = team.name;
     select.append(option);
   }
+  const routeSelect = $("masterTechnicianSelect");
+  const previousTechnician = routeSelect.value;
+  routeSelect.replaceChildren();
+  const technicianProfiles = new Map();
+  for (const profile of (Array.isArray(accountsResult.data) ? accountsResult.data : [])) {
+    if (profile.account_status !== "active" || profile.membership_status !== "active" || profile.must_change_password) continue;
+    if (!technicianProfiles.has(profile.technician_id)) technicianProfiles.set(profile.technician_id, profile.display_name);
+  }
+  const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "Selecciona un técnico"; placeholder.disabled = true;
+  routeSelect.append(placeholder);
+  for (const [technicianId, name] of [...technicianProfiles].sort((a, b) => a[1].localeCompare(b[1], "es"))) {
+    const option = document.createElement("option"); option.value = technicianId; option.textContent = name;
+    routeSelect.append(option);
+  }
+  if ([...routeSelect.options].some((option) => option.value === previousTechnician && previousTechnician)) routeSelect.value = previousTechnician;
+  else routeSelect.value = "";
   const accountTarget = $("masterAccounts");
   accountTarget.replaceChildren();
   const teamNames = new Map(teamsForActor.map((team) => [team.id, team.name]));
@@ -1083,11 +1125,15 @@ async function loadMasterPanel() {
     accountTarget.append(makeAccountCard({
       display_name: profile.display_name,
       role: "technician",
+      employee_id: profile.employee_id_display,
       status: `${profile.account_status} · equipo ${profile.membership_status}`,
       must_change_password: profile.must_change_password,
     }, [teamName], actions));
   }
   if (!accountTarget.childElementCount) accountTarget.textContent = "No hay técnicos asignados todavía.";
+  renderThreeDaySelector($("masterDateNav"), masterRouteDate, masterRouteDayOffset, (date, offset) => {
+    masterRouteDate = date; masterRouteDayOffset = offset; void loadMasterAppointments();
+  });
   return true;
 }
 
@@ -1181,49 +1227,74 @@ function bindEvents() {
       notify("Contraseña actualizada. Inicia sesión de nuevo.", "success");
     }
   });
-  $("securityToggle").addEventListener("click", () => setVisible("securityPanel", $("securityPanel").classList.contains("hidden")));
+  const toggleSettings = () => {
+    const opening = $("personalSettingsPanel").classList.contains("hidden");
+    setVisible("personalSettingsPanel", opening);
+    if (opening) $("personalSettingsPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  $("settingsToggle").addEventListener("click", toggleSettings);
+  $("adminSettingsToggle").addEventListener("click", toggleSettings);
+  $("settingsClose").addEventListener("click", () => setVisible("personalSettingsPanel", false));
   $("signOut").addEventListener("click", async () => {
-    await supabase.auth.signOut();
+    hideWorkspacePanels();
+    setVisible("startupStatus", true);
+    const { error } = await supabase.auth.signOut();
+    if (error) await supabase.auth.signOut({ scope: "local" });
     await routeSession();
+    if (error) notify("Sesión local cerrada. Comprueba la conexión para confirmar el cierre remoto.", "error");
   });
   $("masterOwnTab").addEventListener("click", () => setMasterView("appointments"));
-  $("masterTeamTab").addEventListener("click", () => {
-    setMasterView("team");
+  $("masterRouteTab").addEventListener("click", () => {
+    setMasterView("routes");
     void loadMasterAppointments();
   });
-  $("appointmentDate").addEventListener("change", () => void selectAppointmentDate($("appointmentDate").value));
+  $("masterTechniciansTab").addEventListener("click", () => setMasterView("technicians"));
+  $("masterCreateTab").addEventListener("click", () => setMasterView("create"));
   $("appointmentTeam").addEventListener("change", () => { selectedAppointmentTeam = $("appointmentTeam").value; });
-  $("reloadAppointments").addEventListener("click", () => void loadOwnAppointments($("appointmentDate").value));
   $("importClipboard").addEventListener("click", async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (!text.trim()) { appointmentNotice("El portapapeles está vacío.", "error"); return; }
+      if (!text.trim()) {
+        setVisible("manualImport", true);
+        appointmentNotice("El portapapeles está vacío. Pega el texto de Oracle en el cuadro inferior.", "error");
+        $("oracleText").focus();
+        return;
+      }
       $("oracleText").value = text;
       await processOracleText();
     } catch {
       setVisible("manualImport", true);
       appointmentNotice("El navegador no permitió leer el portapapeles. Pega el texto manualmente.", "error");
+      $("oracleText").focus();
     }
   });
-  $("manualToggle").addEventListener("click", () => setVisible("manualImport", $("manualImport").classList.contains("hidden")));
   $("processOracle").addEventListener("click", () => void processOracleText());
   $("pasteOracle").addEventListener("click", async () => {
     try { $("oracleText").value = await navigator.clipboard.readText(); }
     catch { appointmentNotice("No se pudo leer el portapapeles. Mantén pulsado en el cuadro y elige Pegar.", "error"); }
   });
-  $("preferencesToggle").addEventListener("click", () => {
-    const panel = $("agendaPreferencesPanel");
-    const expanded = panel.classList.contains("hidden");
-    setVisible("agendaPreferencesPanel", expanded);
-    $("preferencesToggle").setAttribute("aria-expanded", String(expanded));
-  });
   $("appointmentPreferences").addEventListener("submit", saveAppointmentPreferences);
-  $("restoreInstallationTemplate").addEventListener("click", () => { $("installationTemplate").value = DEFAULT_INSTALLATION_TEMPLATE; });
   $("restoreCancellationDefaults").addEventListener("click", restoreV1Defaults);
-  $("checkUpdate").addEventListener("click", checkUpdate);
   $("deleteAgendaDay").addEventListener("click", () => void deleteAppointmentDay());
-  $("purgeOldAgendas").addEventListener("click", () => void purgeOldAppointments());
   $("presentationNameForm").addEventListener("submit", savePresentationName);
+  $("editAppointmentForm").addEventListener("submit", saveAppointmentDetails);
+  $("cancelEditAppointment").addEventListener("click", () => { $("editAppointmentDialog").close(); activeEditAppointment = null; });
+  $("closePreviewDialog").addEventListener("click", () => { $("messagePreviewDialog").close(); previewAppointment = null; });
+  $("copyPreviewMessage").addEventListener("click", async () => {
+    const message = $("messagePreviewText").value;
+    try { await navigator.clipboard.writeText(message); appointmentNotice("Mensaje copiado. WhatsApp no se ha abierto.", "success"); }
+    catch { window.prompt("Copia el mensaje completo:", message); }
+  });
+  $("openPreviewWhatsApp").addEventListener("click", () => {
+    if (!previewAppointment) return;
+    const row = previewAppointment;
+    const message = $("messagePreviewText").value;
+    $("messagePreviewDialog").close(); previewAppointment = null;
+    void openAppointmentWhatsApp(row, message);
+  });
+  $("messagePreviewDialog").addEventListener("click", (event) => {
+    if (event.target === $("messagePreviewDialog")) $("messagePreviewDialog").close();
+  });
   for (const [fullNameId, presentationNameId] of [["newDisplayName", "newPresentationName"], ["masterDisplayName", "masterPresentationName"]]) {
     const fullName = $(fullNameId);
     const presentationName = $(presentationNameId);
@@ -1236,9 +1307,8 @@ function bindEvents() {
       }
     });
   }
-  $("masterAppointmentDate").value = appointmentDate;
-  $("masterAppointmentDate").addEventListener("change", () => void loadMasterAppointments());
-  $("loadMasterAppointments").addEventListener("click", () => void loadMasterAppointments());
+  $("masterTechnicianSelect").addEventListener("change", () => void loadMasterAppointments());
+  $("refreshMasterRoute").addEventListener("click", () => void loadMasterAppointments());
   $("teamForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -1306,6 +1376,24 @@ function bindEvents() {
   });
 }
 
+function refreshMadridDates() {
+  const today = todayMadrid();
+  if (today === previousMadridDate) return;
+  previousMadridDate = today;
+  appointmentDate = addLocalDays(today, appointmentDayOffset);
+  masterRouteDate = addLocalDays(today, masterRouteDayOffset);
+  renderAgendaDateNavigation();
+  renderThreeDaySelector($("masterDateNav"), masterRouteDate, masterRouteDayOffset, (date, offset) => {
+    masterRouteDate = date; masterRouteDayOffset = offset; void loadMasterAppointments();
+  });
+  if (!activeProfile || activeProfile.role === "admin") return;
+  if (activeProfile.role === "technician" || $("appointmentsPanel").classList.contains("hidden") === false) {
+    importChangesBySource.clear(); ignoredAppointments = [];
+    void loadOwnAppointments(appointmentDate);
+  }
+  if (activeProfile.role === "master" && !$("masterPanel").classList.contains("hidden")) void loadMasterAppointments();
+}
+
 async function start() {
   hideWorkspacePanels();
   if (!configured) {
@@ -1320,9 +1408,29 @@ async function start() {
   }
   bindEvents();
   createSupabaseClient();
-  supabase.auth.onAuthStateChange(() => {
-    queueMicrotask(() => routeSession());
+  supabase.auth.onAuthStateChange((event) => {
+    if (["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED", "PASSWORD_RECOVERY"].includes(event)) {
+      if (event === "SIGNED_IN") { appointmentDayOffset = 1; masterRouteDayOffset = 1; }
+      queueMicrotask(() => { void routeSession().catch(() => window.__CC_SHOW_INIT_ERROR__?.()); });
+    }
   });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    hideWorkspacePanels();
+    setVisible("startupError", false);
+    setVisible("startupStatus", true);
+    window.__CC_APP_READY__ = false;
+    void routeSession().catch(() => window.__CC_SHOW_INIT_ERROR__?.());
+  });
+  window.addEventListener("pagehide", () => {
+    // Hide authenticated DOM before a browser can freeze this document in its back/forward cache.
+    hideWorkspacePanels();
+    window.__CC_APP_READY__ = false;
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshMadridDates();
+  });
+  window.setInterval(refreshMadridDates, 30_000);
   await routeSession();
 }
 

@@ -22,4 +22,3 @@ export function fillAppointmentTemplate(template, row = {}, presentationName, re
 export function buildWhatsAppIntent(phone, message) {
   return `intent://send?phone=${phone}&text=${encodeURIComponent(message)}#Intent;scheme=whatsapp;package=com.whatsapp;end`;
 }
-
