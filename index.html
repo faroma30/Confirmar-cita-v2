@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3ap1">
+  <meta name="app-build" content="3aq1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3ap1">
-  <link rel="stylesheet" href="./agenda.css?v=3ap1">
+  <link rel="stylesheet" href="./app.css?v=3aq1">
+  <link rel="stylesheet" href="./agenda.css?v=3aq1">
 </head>
 <body>
   <main class="shell">
@@ -19,14 +19,25 @@
       <button id="signOut" class="button quiet hidden" type="button">Cerrar sesión</button>
     </header>
     <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+    <section id="startupStatus" class="panel narrow" role="status" aria-live="polite">
+      <span class="pill pending">Iniciando</span>
+      <h2>Comprobando acceso</h2>
+      <p>Estamos restaurando la sesión y verificando la conexión. Espera un momento.</p>
+    </section>
+    <section id="startupError" class="panel narrow hidden" role="alert">
+      <span class="pill pending">No se pudo iniciar</span>
+      <h2>La aplicación no está disponible</h2>
+      <p>No se pudo cargar o inicializar Confirmar Citas. Recarga la página y, si continúa, avisa al administrador.</p>
+      <button id="retryStartup" class="button secondary" type="button">Volver a intentar</button>
+    </section>
     <section id="configWarning" class="panel hidden">
       <h2>Falta configurar la conexión</h2>
       <p>La dirección pública del proyecto está preparada. Añade la clave publicable en <code>config.js</code> antes de probar el acceso.</p>
     </section>
-    <section id="authDisabled" class="panel narrow">
+    <section id="authDisabled" class="panel narrow hidden">
       <span class="pill pending">Versión de pruebas</span>
       <h2>Acceso desactivado</h2>
-      <p>El inicio de sesión se habilitará después de validar las funciones de autenticación con cuentas sintéticas.</p>
+      <p>El inicio de sesión está desactivado en la configuración de esta versión. Si debería estar disponible, contacta con el administrador.</p>
     </section>
     <section id="authPanel" class="panel narrow hidden">
       <h2>Iniciar sesión</h2>
@@ -130,8 +141,9 @@
         <div id="appointmentIgnored" class="muted agenda-ignored"></div>
         <div id="appointmentList" class="appointment-list"></div>
         <section class="subpanel preferences-panel">
-          <button id="preferencesToggle" class="button secondary" type="button">Ajustes de agenda</button>
-          <form id="appointmentPreferences" class="hidden">
+          <button id="preferencesToggle" class="button secondary" type="button" aria-expanded="false" aria-controls="agendaPreferencesPanel">Ajustes de agenda</button>
+          <div id="agendaPreferencesPanel" class="agenda-preferences hidden">
+          <form id="appointmentPreferences">
             <label for="installationKeywords">Palabras que identifican instalaciones (una por línea)</label><textarea id="installationKeywords" rows="4"></textarea>
             <label for="installationTemplate">Plantilla WhatsApp · Instalación</label><textarea id="installationTemplate" rows="7"></textarea>
             <button id="restoreInstallationTemplate" class="button secondary" type="button">Restaurar plantilla de V1</button>
@@ -148,6 +160,7 @@
             <input id="presentationName" required maxlength="120" autocomplete="given-name">
             <button class="button secondary" type="submit">Guardar nombre</button>
           </form>
+          </div>
         </section>
       </section>
       <section id="masterPanel" class="panel hidden">
@@ -172,7 +185,8 @@
     </section>
     <footer>Entorno de desarrollo · No usar para datos reales</footer>
   </main>
-  <script src="./config.js?v=3ap1"></script>
-  <script type="module" src="./app.js?v=3ap1"></script>
+  <script src="./config.js?v=3aq1"></script>
+  <script src="./startup-status.js?v=3aq1"></script>
+  <script type="module" src="./app.js?v=3aq1"></script>
 </body>
 </html>
