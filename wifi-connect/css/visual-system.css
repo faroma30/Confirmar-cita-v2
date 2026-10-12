@@ -1,0 +1,203 @@
+/* WiFi Connect visual system. Estilo.png is the official visual reference. */
+:host {
+  --navy-950: #020711;
+  --navy-900: #06101e;
+  --navy-850: #08182a;
+  --navy-800: #0b2035;
+  --cyan-500: #08c8ff;
+  --blue-500: #087dff;
+  --cyan-soft: #83dcff;
+  --text-primary: #f3f8ff;
+  --text-secondary: #9db3c9;
+  --line-soft: #15608a70;
+  --card-shadow: 0 14px 32px #00081180, inset 0 1px #b5efff0b;
+  --glow-blue: 0 0 22px #008eff2c;
+}
+
+:host { min-height: 100%; background: var(--navy-950); }
+:host {
+  min-height: 100dvh;
+  color: var(--text-primary);
+  background:
+    radial-gradient(ellipse at 4% 19%, #034b7b58 0, transparent 31%),
+    radial-gradient(ellipse at 96% 12%, #073d7950 0, transparent 34%),
+    radial-gradient(ellipse at 50% 95%, #041a345e 0, transparent 50%),
+    linear-gradient(155deg, #030a15 0%, #061222 48%, #020812 100%);
+}
+
+.app-shell {
+  width: min(100%, 480px);
+  max-width: 480px;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: calc(env(safe-area-inset-top) + 12px) 18px calc(100px + env(safe-area-inset-bottom));
+  overflow-x: clip;
+  isolation: isolate;
+  border-inline: 1px solid #0a447033;
+  background:
+    radial-gradient(ellipse at 50% 0%, #0d2b4652 0, transparent 42%),
+    linear-gradient(180deg, #030b17d9, #030a15e8 70%, #030a16f2);
+  box-shadow: 0 0 70px #00152a85, inset 0 0 48px #00172a29;
+}
+
+.screen { padding-top: 10px; }
+.page-heading { color: var(--text-primary); }
+.muted, .security-note { color: var(--text-secondary); }
+
+/* Shared cards, fields and actions */
+.card, .list-row, .empty, .validation-environment, .validation-item, .raw-text-panel, .confidence-card, .ocr-working {
+  color: var(--text-primary);
+  border: 1px solid var(--line-soft);
+  border-radius: 19px;
+  background: linear-gradient(145deg, #0b2035, #061321 78%);
+  box-shadow: var(--card-shadow);
+}
+.primary {
+  color: #fff;
+  border: 1px solid #5bd5ff80;
+  background: linear-gradient(115deg, #0875f4, #079eea 65%, #04b7ee);
+  box-shadow: 0 8px 24px #008fff45, inset 0 1px #fff4;
+}
+.secondary, .soft-button {
+  color: #c9eaff;
+  border: 1px solid #19618a8c;
+  background: linear-gradient(145deg, #0b2034, #071524);
+}
+.danger { color: #ffc8d0; border: 1px solid #a6455a88; background: #301522; }
+.field > span, .field-label { color: #d5e8f7; }
+.field input, .field select, .input-wrap, .ocr-edit-field textarea {
+  color: var(--text-primary);
+  border-color: #174663;
+  background: #04111f;
+  box-shadow: inset 0 1px #8ce4ff08;
+}
+.field input::placeholder, .ocr-edit-field textarea::placeholder { color: #708ba3; }
+.input-wrap input { background: transparent; }
+.input-wrap button, .secret-display button, .parser-review-card .input-wrap button {
+  color: var(--cyan-soft);
+  background: #0b2941;
+}
+.form-intro, .operator-hint, .parser-diagnostics, .lab-panel, .lab-comparison, .band-proposal, .parser-diagnostics pre, .lab-panel pre, .lab-metrics {
+  color: #bfd7e8;
+  border-color: #145174;
+  background: #081a2a;
+}
+.confidence-warning { color: #f8dfab; border-color: #876333; background: #282012; }
+.badge { color: #80edcb; background: #073b35; }
+
+/* Home: a single prominent creation action { padding-top: 2px; }
+.text-button { display: inline-flex; align-items: center; gap: 4px; padding: 8px 0 8px 8px; color: var(--cyan-soft); }
+.text-button span { font-size: 19px; line-height: 12px; }
+.recent-list { display: grid; gap: 8px; margin-top: 8px; }
+
+/* The four functional destinations use a balanced {
+  position: fixed;
+  z-index: 8;
+  right: auto;
+  bottom: 0;
+  left: 50%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: min(100%, 480px);
+  height: calc(76px + env(safe-area-inset-bottom));
+  margin: 0;
+  padding: 6px 14px calc(8px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  border-top: 1px solid #12608a66;
+  background: linear-gradient(180deg, #061322f2, #030b16f7);
+  box-shadow: 0 -12px 35px #0009147a, inset 0 1px #99e7ff0a;
+  backdrop-filter: blur(20px) saturate(135%);
+}
+.privacy-pill { color: #a6c0d7; border-color: #174663; background: #081a2be8; box-shadow: 0 8px 24px #00071188; }
+.toast { color: #f6fbff; border: 1px solid #2882ad; background: #0c2135; box-shadow: 0 8px 24px #000916a8; }
+
+/* Networks, band selection and the detected-network detail. */
+.networks-screen > .recent-header { margin: 5px 0 13px; }
+.networks-screen .page-heading { font-size: 24px; }
+.network-tabs { border-color: #124561; background: #04111e; box-shadow: inset 0 1px #94ddff0b; }
+.network-tabs button { color: #8da9bf; }
+.network-tabs button.active { color: #f1f9ff; background: linear-gradient(120deg, #0868a0, #0a4269); box-shadow: 0 3px 15px #008fdb46, inset 0 1px #adf2ff31; }
+.list-row { min-height: 68px; padding: 10px 12px; border-color: #124663; border-radius: 16px; }
+.list-row .row-wifi { color: var(--cyan-soft); border: 1px solid #105071; background: linear-gradient(145deg, #0b304a, #071e31); }
+.list-row .note { color: #9cb4c8; }
+.list-row time { color: #7e98af; }
+.empty { margin-top: 14px; padding: 25px 19px; }
+.empty h2 { color: var(--text-primary); }
+.empty p { color: var(--text-secondary); }
+.networks-screen > .recent-header .soft-button { color: #a9cce0; border-color: #164763; background: #071827; }
+.scan-choice-screen, .scan-review-screen, .scan-error-screen { padding-top: clamp(30px, 8dvh, 75px); }
+.scan-choice-screen > h1, .scan-review-screen > h1, .scan-error-screen > h1 { color: var(--text-primary); }
+.scan-choice-card { border-color: #0f79ac; background: linear-gradient(145deg, #0a2942, #061523); box-shadow: 0 0 22px #008eff22, inset 0 1px #b6f2ff12; }
+.scan-choice-card span { color: var(--cyan-soft); }
+.scan-choice-card { grid-template-columns: 44px minmax(0, 1fr); align-items: center; }
+.choice-wifi-icon { grid-row: 1 / span 2; display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid #0f5b80; border-radius: 13px; background: #082941; }
+.choice-wifi-icon svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.scan-review-card { padding: 18px; }
+.detected-card { border-color: #155275; background: linear-gradient(150deg, #0a2035, #051321); }
+.detected-wifi-mark { display: grid; width: 68px; height: 68px; margin: 13px auto 7px; place-items: center; color: var(--cyan-500); filter: drop-shadow(0 0 11px #08baff75); }
+.detected-wifi-mark svg { width: 64px; height: 64px; fill: none; stroke: currentColor; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.detected-ssid-row h2 { text-align: center; }
+.detected-ssid-row { align-items: center; }
+.detected-ssid-row h2 { color: #f4f9ff; }
+.detected-password { border-color: #16455f; background: #041321; }
+.detected-note { color: #b3c9d9; }
+.detected-expiry { color: #829bb0; }
+.network-status-chip, .detected-band { color: #9ce4ff; border-color: #176288; background: #09233a; }
+
+/* QR creation and generated QR maintain their existing controls and payload. */
+.form-screen .page-card { border-color: #155273; background: linear-gradient(150deg, #0a2034, #051321); }
+.form-screen .form-intro { border-color: #185577; background: #0a2134; }
+.form-screen .security-note { color: #90aabe; }
+.qr-feature-card { border-color: #15577d; background: linear-gradient(150deg, #0a2035, #051320); box-shadow: 0 18px 42px #0009148c, 0 0 28px #078eff20, inset 0 1px #b9efff0e; }
+.qr-box { box-shadow: 0 0 32px #37c9ff40; }
+.qr-security { color: var(--cyan-soft); }
+.qr-note { color: #b2c7d8; }
+.qr-actions .secondary, .qr-actions .copy-data-button { color: #d8f2ff; border-color: #17618a; background: linear-gradient(145deg, #0a2940, #061827); }
+.qr-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.qr-actions > * { display: grid; min-width: 0; min-height: 68px; align-content: center; justify-items: center; gap: 5px; padding: 8px 4px; font-size: 11px; line-height: 1.2; }
+.qr-actions .copy-data-button { grid-column: auto; }
+.qr-action-icon { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ssid-title { color: var(--text-primary); }
+.secret-display { color: #c2d6e5; }
+
+/* Camera, review, local diagnostics and validation use the same dark surface. */
+.camera-viewport { border-color: #176187; background: #020b16; box-shadow: 0 14px 40px #000914; }
+.camera-guide { border-color: #22caff; box-shadow: 0 0 0 999px #00102752, 0 0 28px #14b8ff5c; }
+.camera-guide span, .camera-loading { color: #f2f9ff; border: 1px solid #28729c; background: #051b2be8; }
+.camera-back { color: #d9f1ff; background: #0b2940; }
+.camera-error-card .error-symbol { color: var(--cyan-500); border: 1px solid #145374; background: #09253a; }
+.photo-preview { border-color: #155171; background: #041321; box-shadow: var(--card-shadow); }
+.ocr-working { background: linear-gradient(145deg, #0a2035, #061321); }
+.ocr-working strong { color: var(--cyan-soft); }
+.ocr-progress-track { background: #102a3c; }
+.ocr-progress-caption { color: #90aabd; }
+.confidence-card { background: linear-gradient(145deg, #0b2034, #061321); }
+.confidence-card span { color: #aac0d2; }
+.confidence-card strong { color: #5ce0b0; }
+.raw-text-panel { background: #061522; }
+.raw-text-panel pre, .parser-diagnostics pre, .lab-panel pre { color: #cde4f4; }
+.validation-summary { color: var(--text-primary); border: 1px solid #155274; background: #081a2b; box-shadow: var(--card-shadow); }
+.validation-environment, .validation-item { border-color: #164c69; background: linear-gradient(145deg, #0a2034, #061321); }
+.validation-section > h2 { color: #a8dcf2; }
+.validation-item details { border-color: #17415b; }
+.validation-mode-badge { color: #aee7ff; border-color: #1978a6; background: #09253a; }
+.lab-panel { border-color: #17618a; }
+.lab-failures { border-color: #165171; }
+.lab-comparison { border-color: #145174; }
+
+@media (max-width: 380px) {
+  .app-shell { padding-inline: 14px; }
+}
+
+/* Home follows the approved composition: short brand header, luminous primary action, vertical count cards {
+  position: relative;
+  isolation: isolate;
+  padding-top: 0;
+}
+
+@media (max-width: 380px) {
+}
+@media (min-width: 650px) {
+  :host { padding: 0; }
+  .app-shell { min-height: 100dvh; border-radius: 26px; }
+}

@@ -1,0 +1,7 @@
+.tool-categories { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin:12px 0 18px; padding:5px; border:1px solid #e6e9ef; border-radius:16px; background:#f5f7fa; }
+.tool-categories button { min-width:0; min-height:44px; border:0; border-radius:12px; background:transparent; color:#414a5b; font:inherit; font-weight:700; cursor:pointer; }
+.tool-categories button[aria-selected="true"] { color:#fff; background:#d90012; box-shadow:0 3px 10px #ab001c30; }
+#workspace.wifi-active > #confirmarToolContent { display:none!important; }
+#wifiConnectPanel { min-width:0; overflow:clip; }
+#wifiConnectPanel.hidden { display:none!important; }
+@media(max-width:480px) { .tool-categories { margin:10px 0 13px; } .tool-categories button { font-size:14px; } }

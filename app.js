@@ -1,15 +1,20 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createIssuesUI } from "./issues-ui.mjs?v=3az1";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3az1";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3az1";
+import { createIssuesUI } from "./issues-ui.mjs?v=3ba1";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3ba1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ba1";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
 
 const $ = (id) => document.getElementById(id);
+// Keep the existing V2 workspace DOM intact while switching the two top-level tools.
+const confirmarToolContent = $("confirmarToolContent");
+for (const child of [...$("workspace").children]) {
+  if (!["toolCategories", "wifiConnectPanel", "confirmarToolContent"].includes(child.id)) confirmarToolContent.append(child);
+}
 const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminViewTabs", "adminPanel", "adminRoutesPanel", "masterViewTabs", "appointmentsPanel", "masterSummaryPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel", "issuesPanel"];
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
 const configured = typeof config.url === "string"
@@ -50,7 +55,92 @@ let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3az1";
+const APP_BUILD = "3ba1";
+let selectedTool = "confirmar";
+let wifiInstance = null;
+let wifiLoadPromise = null;
+let wifiMountGeneration = 0;
+let wifiMountQueue = Promise.resolve();
+const toolScroll = { confirmar: 0, wifi: 0 };
+const toolStorageKey = (userId) => `cc-v2-tool-${userId}`;
+
+function toolOverlayOpen() { return settingsNavigation.isOpen() || issuesNavigation.isOpen(); }
+function updateToolVisibility() {
+  const allowed = Boolean(activeUser?.id && activeProfile?.status === "active" && activeProfile?.activation_verified_at && !activeProfile?.must_change_password);
+  const overlay = toolOverlayOpen();
+  setVisible("toolCategories", allowed && !overlay);
+  $("workspace").classList.toggle("wifi-active", allowed && !overlay && selectedTool === "wifi");
+  setVisible("wifiConnectPanel", allowed && !overlay && selectedTool === "wifi");
+  $("confirmarToolTab").setAttribute("aria-selected", String(selectedTool === "confirmar"));
+  $("wifiToolTab").setAttribute("aria-selected", String(selectedTool === "wifi"));
+  $("confirmarToolTab").tabIndex = selectedTool === "confirmar" ? 0 : -1;
+  $("wifiToolTab").tabIndex = selectedTool === "wifi" ? 0 : -1;
+  if (!allowed || overlay || selectedTool !== "wifi") wifiInstance?.suspend();
+}
+
+async function selectTool(tool, { push = true } = {}) {
+  if (!activeUser?.id || activeProfile?.status !== "active" || !activeProfile.activation_verified_at || activeProfile.must_change_password) return;
+  if (tool !== "confirmar" && tool !== "wifi") return;
+  if (tool === "wifi" && !wifiInstance) {
+    const userId = activeUser.id;
+    const generation = wifiMountGeneration;
+    $("wifiConnectPanel").textContent = "Preparando Wifi Connect…";
+    try {
+      if (!wifiLoadPromise) {
+        const mount = wifiMountQueue.then(async () => {
+          if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
+          const module = await import("./wifi-connect/entry.mjs?v=3ba1");
+          if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
+          const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId);
+          if (generation !== wifiMountGeneration || activeUser?.id !== userId) { instance.dispose(); throw new Error("La sesión ha cambiado."); }
+          return instance;
+        });
+        wifiMountQueue = mount.catch(() => {});
+        wifiLoadPromise = mount;
+      }
+      const instance = await wifiLoadPromise;
+      if (generation !== wifiMountGeneration || activeUser?.id !== userId || activeProfile?.status !== "active") { instance.dispose(); wifiLoadPromise = null; return; }
+      if (wifiInstance === instance && selectedTool === "wifi") return;
+      wifiInstance = instance;
+    } catch {
+      if (generation !== wifiMountGeneration) return;
+      wifiLoadPromise = null;
+      $("wifiConnectPanel").textContent = "No se pudo cargar Wifi Connect. Vuelve a intentarlo.";
+      selectedTool = "confirmar";
+      updateToolVisibility();
+      notify("No se pudo cargar Wifi Connect. Comprueba la conexión y vuelve a intentarlo.", "error");
+      return;
+    }
+  }
+  const previousTool = selectedTool;
+  if (previousTool !== tool) toolScroll[previousTool] = window.scrollY;
+  if (selectedTool === "wifi" && tool !== "wifi") wifiInstance?.suspend();
+  selectedTool = tool;
+  if (tool === "wifi") wifiInstance?.resume();
+  try { localStorage.setItem(toolStorageKey(activeUser.id), tool); } catch {}
+  if (push) {
+    try { history.pushState({ ...(history.state ?? {}), ccTool: tool }, "", location.href); } catch {}
+  } else {
+    try { history.replaceState({ ...(history.state ?? {}), ccTool: tool }, "", location.href); } catch {}
+  }
+  updateToolVisibility();
+  if (previousTool !== tool) requestAnimationFrame(() => window.scrollTo({ top: toolScroll[tool], behavior: "auto" }));
+}
+
+function restoreToolSelection() {
+  let saved = "confirmar";
+  try { saved = localStorage.getItem(toolStorageKey(activeUser.id)) || "confirmar"; } catch {}
+  void selectTool(saved === "wifi" ? "wifi" : "confirmar", { push: false });
+}
+
+function disposeWifiAccess(userId, { clearChoice = false } = {}) {
+  wifiMountGeneration++;
+  wifiInstance?.dispose(); wifiInstance = null; wifiLoadPromise = null;
+  selectedTool = "confirmar";
+  toolScroll.confirmar = 0; toolScroll.wifi = 0;
+  if (clearChoice && userId) { try { localStorage.removeItem(toolStorageKey(userId)); } catch {} }
+  updateToolVisibility();
+}
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -134,6 +224,10 @@ function createSupabaseClient() {
 }
 
 function hideWorkspacePanels() {
+  wifiInstance?.suspend();
+  $("workspace").classList.remove("wifi-active");
+  setVisible("wifiConnectPanel", false);
+  setVisible("toolCategories", false);
   ["authPanel", "authDisabled", "activationPanel", "workspace", "adminPanel", "masterPanel",
     "masterSummaryPanel", "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel", "issuesPanel", "adminViewTabs", "adminRoutesPanel", "workspaceLoading", "adminPanelLoading"].forEach((id) => setVisible(id, false));
   setVisible("signOut", false);
@@ -182,6 +276,7 @@ function finishWorkspaceLoading(diagnostic) {
   diagnostic.panelShellMs ??= performance.now() - diagnostic.startedAt;
   publishLoginDiagnostic(diagnostic, null, "panel_shell_ready");
   void issuesUI.refreshIndicator();
+  restoreToolSelection();
 }
 
 function clearWorkspaceAgendaResults() {
@@ -247,6 +342,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   }
   const session = sessionData.session;
   if (!session) {
+    disposeWifiAccess(previousUserId, { clearChoice: true });
     issuesUI.reset(); adminRoutesUI.reset();
     selectedAdminView = "management";
     if (previousUserId) masterNavigation.clear(previousUserId);
@@ -267,6 +363,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   const { data: verifiedUser, error: userError } = await supabase.auth.getUser();
   diagnostic.getUserMs = performance.now() - identityCheckStartedAt;
   if (userError || !verifiedUser?.user || verifiedUser.user.id !== session.user.id) {
+    disposeWifiAccess(previousUserId, { clearChoice: true });
     issuesUI.reset(); adminRoutesUI.reset();
     if (userError && (userError.name === "AuthRetryableFetchError" || userError.status === 0 || navigator.onLine === false)) {
       finishStartup();
@@ -285,6 +382,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     return;
   }
   if (previousUserId && previousUserId !== verifiedUser.user.id) {
+    disposeWifiAccess(previousUserId, { clearChoice: true });
     issuesUI.reset(); adminRoutesUI.reset();
     masterNavigation.clear(previousUserId);
     clearRolePanelResults();
@@ -311,6 +409,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     return;
   }
   if (activeProfile.status === "pending_activation" || activeProfile.must_change_password) {
+    disposeWifiAccess(activeUser.id);
     initializedWorkspaceUserId = null;
     finishStartup();
     setVisible("activationPanel", true);
@@ -318,6 +417,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     return;
   }
   if (!activeProfile.activation_verified_at) {
+    disposeWifiAccess(activeUser.id);
     initializedWorkspaceUserId = null;
     finishStartup();
     notify("La cuenta aún no está habilitada para este módulo. Contacta con el administrador.", "error");
@@ -325,6 +425,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     return;
   }
   if (activeProfile.status !== "active") {
+    disposeWifiAccess(activeUser.id);
     masterNavigation.clear(activeUser.id);
     initializedWorkspaceUserId = null;
     finishStartup();
@@ -1813,14 +1914,32 @@ function bindEvents() {
       notify("Contraseña actualizada. Inicia sesión de nuevo.", "success");
     }
   });
-  $("settingsToggle").addEventListener("click", settingsNavigation.open);
-  $("settingsClose").addEventListener("click", settingsNavigation.close);
+  $("settingsToggle").addEventListener("click", () => { settingsNavigation.open(); updateToolVisibility(); });
+  $("settingsClose").addEventListener("click", () => { settingsNavigation.close(); queueMicrotask(updateToolVisibility); });
+  $("reportError").addEventListener("click", () => queueMicrotask(updateToolVisibility));
+  $("issuesClose").addEventListener("click", () => queueMicrotask(updateToolVisibility));
+  $("confirmarToolTab").addEventListener("click", () => { void selectTool("confirmar"); });
+  $("wifiToolTab").addEventListener("click", () => { void selectTool("wifi"); });
+  $("toolCategories").addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const next = selectedTool === "wifi" ? "confirmar" : "wifi";
+    void selectTool(next).then(() => $(next === "wifi" ? "wifiToolTab" : "confirmarToolTab").focus());
+  });
+  window.addEventListener("popstate", (event) => {
+    queueMicrotask(() => {
+      if (toolOverlayOpen()) { updateToolVisibility(); return; }
+      if (!activeUser?.id || activeProfile?.status !== "active") return;
+      void selectTool(event.state?.ccTool === "wifi" ? "wifi" : "confirmar", { push: false });
+    });
+  });
   $("workspaceLoadingRetry").addEventListener("click", () => {
     window.__CC_APP_READY__ = false;
     setVisible("startupStatus", true);
     void routeSession().catch(() => window.__CC_SHOW_INIT_ERROR__?.());
   });
   $("signOut").addEventListener("click", async () => {
+    disposeWifiAccess(activeUser?.id, { clearChoice: true });
     hideWorkspacePanels();
     issuesUI.reset(); adminRoutesUI.reset();
     clearRolePanelResults();

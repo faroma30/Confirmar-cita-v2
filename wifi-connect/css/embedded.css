@@ -1,0 +1,5 @@
+:host { display:block; width:100%; min-width:0; color-scheme:dark; }
+:host .app-shell { min-height:calc(100dvh - 220px); }
+:host .bottom-nav { left:50%; }
+:host([hidden]) { display:none!important; }
+@media (max-width: 600px) { :host .app-shell { min-height:calc(100dvh - 175px); } }
