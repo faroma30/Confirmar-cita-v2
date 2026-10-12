@@ -1,14 +1,16 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3av1";
+import { createIssuesUI } from "./issues-ui.mjs?v=3ax1";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3ax1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ax1";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
 
 const $ = (id) => document.getElementById(id);
-const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminPanel", "masterViewTabs", "appointmentsPanel", "masterSummaryPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel"];
+const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminViewTabs", "adminPanel", "adminRoutesPanel", "masterViewTabs", "appointmentsPanel", "masterSummaryPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel", "issuesPanel"];
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
 const configured = typeof config.url === "string"
   && config.url.startsWith("https://")
@@ -48,7 +50,7 @@ let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3av1";
+const APP_BUILD = "3ax1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -66,6 +68,29 @@ const settingsNavigation = createSettingsNavigation({
   location,
   document,
 });
+const issuesNavigation = createSettingsNavigation({
+  getElement: $, viewIds: [...SETTINGS_VIEW_IDS.filter((id) => id !== "issuesPanel"), "personalSettingsPanel"],
+  settingsId: "issuesPanel", titleId: "issuesTitle", historyStateKey: "ccIssuesKey",
+  triggerId: "reportError", window, history, location, document,
+});
+const issuesUI = createIssuesUI({
+  $, getSupabase: () => supabase, getProfile: () => activeProfile,
+  navigation: issuesNavigation, notify, appVersion: APP_BUILD,
+});
+const adminRoutesUI = createAdminRoutesUI({
+  $, rpc: (name, args) => supabase.rpc(name, args),
+  getProfile: () => activeProfile, getUser: () => activeUser, notify,
+});
+let selectedAdminView = "management";
+function setAdminView(view) {
+  if (activeProfile?.role !== "admin") return;
+  selectedAdminView = view === "routes" ? "routes" : "management";
+  setVisible("adminPanel", selectedAdminView === "management");
+  setVisible("adminRoutesPanel", selectedAdminView === "routes");
+  $("adminManagementTab").className = `button ${selectedAdminView === "management" ? "primary" : "secondary"}`;
+  $("adminRoutesTab").className = `button ${selectedAdminView === "routes" ? "primary" : "secondary"}`;
+  if (selectedAdminView === "routes") void adminRoutesUI.load();
+}
 
 function addLocalDays(date, days) {
   return dateOffset(date, days);
@@ -110,9 +135,10 @@ function createSupabaseClient() {
 
 function hideWorkspacePanels() {
   ["authPanel", "authDisabled", "activationPanel", "workspace", "adminPanel", "masterPanel",
-    "masterSummaryPanel", "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel", "workspaceLoading", "adminPanelLoading"].forEach((id) => setVisible(id, false));
+    "masterSummaryPanel", "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel", "issuesPanel", "adminViewTabs", "adminRoutesPanel", "workspaceLoading", "adminPanelLoading"].forEach((id) => setVisible(id, false));
   setVisible("signOut", false);
   setVisible("settingsToggle", false);
+  setVisible("reportError", false);
 }
 
 function finishStartup() {
@@ -144,13 +170,18 @@ function finishWorkspaceLoading(diagnostic) {
   setVisible("workspaceLoading", false);
   setVisible("adminPanelLoading", false);
   setVisible("settingsToggle", ["admin", "master", "technician"].includes(activeProfile?.role));
-  if (activeProfile?.role === "admin") setVisible("adminPanel", true);
+  setVisible("reportError", ["admin", "master", "technician"].includes(activeProfile?.role));
+  if (activeProfile?.role === "admin") {
+    setVisible("adminViewTabs", true);
+    setAdminView(selectedAdminView);
+  }
   else if (activeProfile?.role === "master") {
     setVisible("masterViewTabs", true);
     setMasterView(selectedMasterView, { persist: false });
   } else if (activeProfile?.role === "technician") setVisible("appointmentsPanel", true);
   diagnostic.panelShellMs ??= performance.now() - diagnostic.startedAt;
   publishLoginDiagnostic(diagnostic, null, "panel_shell_ready");
+  void issuesUI.refreshIndicator();
 }
 
 function clearWorkspaceAgendaResults() {
@@ -202,11 +233,13 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   const previousUserId = activeUser?.id ?? null;
   clearNotice();
   settingsNavigation.abandon();
+  issuesNavigation.abandon();
   hideWorkspacePanels();
   const sessionReadStartedAt = performance.now();
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   diagnostic.getSessionMs = performance.now() - sessionReadStartedAt;
   if (sessionError) {
+    issuesUI.reset(); adminRoutesUI.reset();
     finishStartup();
     notify("La sesión no está disponible. Vuelve a iniciar sesión.", "error");
     setVisible("authPanel", true);
@@ -214,6 +247,8 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   }
   const session = sessionData.session;
   if (!session) {
+    issuesUI.reset(); adminRoutesUI.reset();
+    selectedAdminView = "management";
     if (previousUserId) masterNavigation.clear(previousUserId);
     activeUser = null;
     activeProfile = null;
@@ -232,6 +267,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   const { data: verifiedUser, error: userError } = await supabase.auth.getUser();
   diagnostic.getUserMs = performance.now() - identityCheckStartedAt;
   if (userError || !verifiedUser?.user || verifiedUser.user.id !== session.user.id) {
+    issuesUI.reset(); adminRoutesUI.reset();
     if (userError && (userError.name === "AuthRetryableFetchError" || userError.status === 0 || navigator.onLine === false)) {
       finishStartup();
       setVisible("startupError", true);
@@ -249,6 +285,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     return;
   }
   if (previousUserId && previousUserId !== verifiedUser.user.id) {
+    issuesUI.reset(); adminRoutesUI.reset();
     masterNavigation.clear(previousUserId);
     clearRolePanelResults();
     initializedWorkspaceUserId = null;
@@ -345,6 +382,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
       initializedWorkspaceUserId = activeUser.id;
       initializedWorkspaceRole = activeProfile.role;
     }
+    adminRoutesUI.setDirectory(teamsForActor, adminAccounts);
     finishWorkspaceLoading(diagnostic);
     publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt);
   } else if (activeProfile.role === "master") {
@@ -1276,6 +1314,7 @@ async function loadAdminPanel() {
   }
   teamsForActor = Array.isArray(teamsResult.data) ? teamsResult.data : [];
   adminAccounts = Array.isArray(accountsResult.data) ? accountsResult.data : [];
+  adminRoutesUI.setDirectory(teamsForActor, adminAccounts);
   const counts = adminCounts(teamsForActor, adminAccounts);
   const summary = $("adminSummary");
   summary.replaceChildren();
@@ -1605,6 +1644,9 @@ async function createAccount(formData, role, teamIds) {
 }
 
 function bindEvents() {
+  issuesUI.bind(); adminRoutesUI.bind();
+  $("adminManagementTab").addEventListener("click", () => setAdminView("management"));
+  $("adminRoutesTab").addEventListener("click", () => setAdminView("routes"));
   $("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     clearNotice();
@@ -1694,6 +1736,7 @@ function bindEvents() {
   });
   $("signOut").addEventListener("click", async () => {
     hideWorkspacePanels();
+    issuesUI.reset(); adminRoutesUI.reset();
     clearRolePanelResults();
     setVisible("startupStatus", true);
     const { error } = await supabase.auth.signOut();
@@ -1898,6 +1941,7 @@ async function start() {
   supabase.auth.onAuthStateChange((event) => {
     if (["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED", "PASSWORD_RECOVERY"].includes(event)) {
       if (event === "SIGNED_OUT") {
+        issuesUI.reset(); adminRoutesUI.reset();
         if (activeUser?.id) masterNavigation.clear(activeUser.id);
         activeUser = null;
         activeProfile = null;
@@ -1946,4 +1990,3 @@ start().catch(() => {
     console.error("[Confirmar Citas] Error de inicialización (CC_INIT_FAILED)");
   }
 });
-

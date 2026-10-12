@@ -1,7 +1,8 @@
-const HISTORY_STATE_KEY = "ccSettingsKey";
-
 /** Keeps settings in a separate screen while retaining the current agenda DOM and state. */
-export function createSettingsNavigation({ getElement, viewIds, settingsId, titleId, window, history, location, document }) {
+export function createSettingsNavigation({
+  getElement, viewIds, settingsId, titleId, window, history, location, document,
+  historyStateKey = "ccSettingsKey", triggerId = "settingsToggle",
+}) {
   let isOpen = false;
   let historyKey = null;
   let returnState = null;
@@ -19,7 +20,7 @@ export function createSettingsNavigation({ getElement, viewIds, settingsId, titl
         visibility: new Map(viewIds.map((id) => [id, !getElement(id).classList.contains("hidden")])),
         scrollY: window.scrollY,
       };
-      returnFocusId = document.activeElement?.id || "settingsToggle";
+      returnFocusId = document.activeElement?.id || triggerId;
     }
     for (const id of viewIds) setVisible(id, false);
     setVisible(settingsId, true);
@@ -41,7 +42,7 @@ export function createSettingsNavigation({ getElement, viewIds, settingsId, titl
     });
   };
   const onPopState = (event) => {
-    const returnedKey = event.state?.[HISTORY_STATE_KEY] ?? null;
+    const returnedKey = event.state?.[historyStateKey] ?? null;
     if (isOpen && returnedKey !== historyKey) restore();
     else if (!isOpen && historyKey && returnedKey === historyKey && returnState) show(historyKey, false);
   };
@@ -56,14 +57,14 @@ export function createSettingsNavigation({ getElement, viewIds, settingsId, titl
       show(historyKey, true);
       try {
         const currentState = history.state && typeof history.state === "object" ? history.state : {};
-        history.pushState({ ...currentState, [HISTORY_STATE_KEY]: historyKey }, "", location.href);
+        history.pushState({ ...currentState, [historyStateKey]: historyKey }, "", location.href);
       } catch {
         historyKey = null;
       }
     },
     close() {
       if (!isOpen) return;
-      if (historyKey && history.state?.[HISTORY_STATE_KEY] === historyKey) {
+      if (historyKey && history.state?.[historyStateKey] === historyKey) {
         closeFallback = window.setTimeout(() => {
           if (isOpen) restore();
         }, 500);
@@ -74,9 +75,9 @@ export function createSettingsNavigation({ getElement, viewIds, settingsId, titl
     },
     abandon() {
       clearFallback();
-      if (historyKey && history.state?.[HISTORY_STATE_KEY] === historyKey) {
+      if (historyKey && history.state?.[historyStateKey] === historyKey) {
         const nextState = { ...history.state };
-        delete nextState[HISTORY_STATE_KEY];
+        delete nextState[historyStateKey];
         history.replaceState(nextState, "", location.href);
       }
       setVisible(settingsId, false);
@@ -88,4 +89,3 @@ export function createSettingsNavigation({ getElement, viewIds, settingsId, titl
     isOpen: () => isOpen,
   };
 }
-

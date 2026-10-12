@@ -4,18 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3av1">
+  <meta name="app-build" content="3ax1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3av1">
-  <link rel="stylesheet" href="./agenda.css?v=3av1">
+  <link rel="stylesheet" href="./app.css?v=3ax1">
+  <link rel="stylesheet" href="./agenda.css?v=3ax1">
 </head>
 <body>
   <main class="shell">
     <header class="header hero">
+      <button id="reportError" class="hero-report hidden" type="button" aria-label="Reportar error" title="Reportar error"><span aria-hidden="true">⚠</span><span class="report-label">Reportar error</span><span id="reportUnreadBadge" class="report-badge hidden" aria-label="Respuestas nuevas"></span></button>
       <div class="hero-inner">
-        <img class="brand-logo" src="./verisure-logo.png?v=3av1" alt="Verisure" width="210" height="74">
+        <img class="brand-logo" src="./verisure-logo.png?v=3ax1" alt="Verisure" width="210" height="74">
         <h1>Confirmar Citas</h1>
       </div>
       <div class="hero-actions">
@@ -83,6 +84,11 @@
         <h2>Gestión del sistema</h2>
         <p>Cargando el panel de administración…</p>
       </section>
+      <nav id="adminViewTabs" class="master-view-tabs hidden" aria-label="Vistas de Administración">
+        <button id="adminManagementTab" class="button primary" type="button">Gestión</button>
+        <button id="adminRoutesTab" class="button secondary" type="button">Rutas de técnicos</button>
+        <button id="adminIssuesTab" class="button secondary" type="button">Reportes de errores <span id="adminPendingBadge" class="report-badge hidden"></span></button>
+      </nav>
       <section id="adminPanel" class="panel hidden">
         <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div></div>
         <div id="adminSummary" class="dashboard-summary" aria-label="Resumen administrativo"></div>
@@ -124,6 +130,32 @@
           <div class="dashboard-pagination"><button id="adminActivityPrevious" class="button secondary" type="button">Anterior</button><span id="adminActivityPage"></span><button id="adminActivityNext" class="button secondary" type="button">Siguiente</button></div>
         </section>
       </section>
+      <section id="adminRoutesPanel" class="panel hidden" aria-labelledby="adminRoutesTitle">
+        <h2 id="adminRoutesTitle">Rutas de técnicos</h2>
+        <div class="dashboard-filters">
+          <label>Equipo<select id="adminRouteTeam"><option value="">Todos los equipos</option></select></label>
+          <label>Técnico<select id="adminRouteTechnician"><option value="">Todos los técnicos</option></select></label>
+          <button id="adminRouteRefresh" class="button secondary" type="button">Actualizar ruta</button>
+        </div>
+        <div id="adminRouteDateNav" class="datechips" aria-label="Fecha de las rutas"></div>
+        <div id="adminRouteSummary" class="dashboard-summary"></div>
+        <div id="adminRouteList" class="appointment-list"></div>
+      </section>
+      <dialog id="adminRouteDetail" class="app-dialog" aria-labelledby="adminRouteDetailTitle">
+        <h2 id="adminRouteDetailTitle">Instalación</h2>
+        <div id="adminRouteCurrent"></div>
+        <form id="adminRouteEditForm" class="dialog-form">
+          <label>Hora<input id="adminEditTime" type="time" required></label>
+          <label>Población<input id="adminEditPopulation" required maxlength="160"></label>
+          <label>Dirección completa<input id="adminEditAddress" maxlength="500"></label>
+          <label>Teléfono<input id="adminEditPhone" type="tel" maxlength="40"></label>
+          <label>Estado<select id="adminEditStatus"><option value="pending">Pendiente</option><option value="confirmed">Confirmada</option><option value="cancelled">Cancelada</option></select></label>
+          <label>Motivo de la corrección<textarea id="adminEditReason" required minlength="10" maxlength="1000" rows="3"></textarea></label>
+          <button id="adminRouteSave" class="button primary" type="submit">Revisar y guardar</button>
+        </form>
+        <h3>Historial de correcciones</h3><div id="adminRouteHistory"></div>
+        <button id="adminRouteClose" class="button secondary" type="button">Cerrar</button>
+      </dialog>
       <nav id="masterViewTabs" class="master-view-tabs hidden" aria-label="Vistas Master">
         <button class="button primary" id="masterOwnTab" type="button">Mis citas</button>
         <button class="button secondary" id="masterSummaryTab" type="button">Resumen del equipo</button>
@@ -188,6 +220,26 @@
             </form>
           </section>
       </section>
+      <section id="issuesPanel" class="panel issue-screen hidden" aria-labelledby="issuesTitle">
+        <div class="settings-screen-header"><button id="issuesClose" class="button quiet settings-back" type="button">← Volver</button><h2 id="issuesTitle" tabindex="-1">Reportar error</h2></div>
+        <section id="issueCompose">
+          <form id="issueForm">
+            <label for="issueCategory">Tipo de problema</label>
+            <select id="issueCategory" required><option value="agenda">Agenda / Oracle</option><option value="whatsapp">WhatsApp / Mensajes</option><option value="login">Inicio de sesión</option><option value="teams">Master / Equipos</option><option value="settings">Ajustes</option><option value="other">Otro problema</option></select>
+            <label for="issueDescription">Descripción del error</label>
+            <textarea id="issueDescription" required minlength="20" maxlength="4000" rows="6" placeholder="Explica qué estabas haciendo y qué ocurrió."></textarea>
+            <label for="issueImage">Captura de pantalla (opcional; PNG, JPG o WebP, máximo 5 MB)</label>
+            <input id="issueImage" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
+            <p class="fine">Revisa la captura antes de enviarla para evitar incluir datos privados de clientes o contraseñas.</p>
+            <div id="issuePreview" class="hidden"><img id="issuePreviewImage" alt="Vista previa de la captura seleccionada"><button id="issueRemoveImage" class="button quiet" type="button">Quitar imagen</button></div>
+            <button id="issueSubmit" class="button primary" type="submit">Enviar reporte</button>
+          </form>
+          <p id="issueFormStatus" role="status" aria-live="polite"></p>
+        </section>
+        <section id="issueMine"><h3>Mis reportes <span id="issueUnreadCount" class="report-badge hidden"></span></h3><div id="issueMineList" class="account-list"></div><div class="dashboard-pagination"><button id="issueMinePrev" class="button secondary" type="button">Anterior</button><span id="issueMinePage"></span><button id="issueMineNext" class="button secondary" type="button">Siguiente</button></div></section>
+        <section id="issueAdminInbox" class="hidden"><h3>Reportes de errores</h3><div class="dashboard-filters"><label>Estado<select id="issueStatusFilter"><option value="">Todos</option><option value="pending">Pendientes</option><option value="reviewing">En revisión</option><option value="resolved">Resueltos</option></select></label><label>Categoría<select id="issueCategoryFilter"><option value="">Todas</option><option value="agenda">Agenda / Oracle</option><option value="whatsapp">WhatsApp / Mensajes</option><option value="login">Inicio de sesión</option><option value="teams">Master / Equipos</option><option value="settings">Ajustes</option><option value="other">Otro problema</option></select></label><label>Buscar<input id="issueSearch" type="search" maxlength="100" placeholder="Trabajador o descripción"></label></div><div id="issueAdminList" class="account-list"></div><div class="dashboard-pagination"><button id="issueAdminPrev" class="button secondary" type="button">Anterior</button><span id="issueAdminPage"></span><button id="issueAdminNext" class="button secondary" type="button">Siguiente</button></div></section>
+        <section id="issueDetail" class="subpanel hidden"><button id="issueDetailClose" class="button quiet" type="button">← Listado</button><div id="issueDetailContent"></div><button id="issueLoadAttachment" class="button secondary hidden" type="button">Ver captura</button><img id="issueDetailImage" class="hidden" alt="Captura adjunta al reporte"><div id="issueTimeline"></div><form id="issueAdminAction" class="hidden"><label>Estado<select id="issueNewStatus"><option value="pending">Pendiente</option><option value="reviewing">En revisión</option><option value="resolved">Resuelto</option></select></label><label>Respuesta al trabajador<textarea id="issueReply" maxlength="4000" rows="4"></textarea></label><button class="button primary" type="submit">Guardar estado o respuesta</button></form></section>
+      </section>
       <section id="masterSummaryPanel" class="panel hidden">
         <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Resumen del equipo</h2>
         <div id="masterSummaryDateNav" class="datechips" aria-label="Fecha del resumen"></div>
@@ -241,9 +293,8 @@
       </dialog>
     </section>
   </main>
-  <script src="./config.js?v=3av1"></script>
-  <script src="./startup-status.js?v=3av1"></script>
-  <script type="module" src="./app.js?v=3av1"></script>
+  <script src="./config.js?v=3ax1"></script>
+  <script src="./startup-status.js?v=3ax1"></script>
+  <script type="module" src="./app.js?v=3ax1"></script>
 </body>
 </html>
-
