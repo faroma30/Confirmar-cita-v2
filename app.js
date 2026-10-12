@@ -1,9 +1,9 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createIssuesUI } from "./issues-ui.mjs?v=3ax1";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3ax1";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ax1";
+import { createIssuesUI } from "./issues-ui.mjs?v=3az1";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3az1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3az1";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
@@ -50,7 +50,7 @@ let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3ax1";
+const APP_BUILD = "3az1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -530,6 +530,79 @@ function makeAccountCard(profile, teams = [], actions = []) {
   }
   card.append(main, buttonBox);
   return card;
+}
+
+function makeAdminAccountRow(profile, teams = [], actions = []) {
+  const row = document.createElement("article");
+  row.className = `admin-account-row${profile.role === "admin" ? " admin-account-self" : ""}`;
+
+  const identity = document.createElement("div");
+  identity.className = "admin-account-identity";
+  const name = document.createElement("strong");
+  name.textContent = profile.display_name;
+  const role = document.createElement("span");
+  role.className = "admin-account-role";
+  role.textContent = profile.role === "admin" ? "Administrador" : profile.role === "master" ? "Master" : "Técnico";
+  identity.append(name, role);
+
+  const details = document.createElement("div");
+  details.className = "admin-account-meta";
+  const identifier = document.createElement("span");
+  identifier.textContent = profile.role === "admin" ? "Usuario: admin" : `Matrícula: ${profile.employee_id_display || "—"}`;
+  const team = document.createElement("span");
+  team.textContent = `Equipo: ${teams.length ? teams.join(" · ") : "Sin equipo"}`;
+  details.append(identifier, team);
+
+  const state = document.createElement("div");
+  state.className = "admin-account-state";
+  const status = document.createElement("span");
+  const disabled = profile.status === "disabled";
+  status.className = `admin-account-status ${disabled ? "disabled" : profile.status === "active" ? "active" : "pending"}`;
+  status.textContent = disabled ? "Desactivado" : profile.status === "active" ? "Activo" : "Pendiente";
+  state.append(status);
+  if (profile.must_change_password) {
+    const pending = document.createElement("span");
+    pending.className = "admin-account-activation";
+    pending.textContent = "Cambio de contraseña pendiente";
+    state.append(pending);
+  }
+
+  row.append(identity, details, state);
+  if (actions.length) {
+    const menu = document.createElement("details");
+    menu.className = "admin-account-menu";
+    const summary = document.createElement("summary");
+    summary.textContent = "Acciones";
+    summary.setAttribute("aria-label", `Acciones de ${profile.display_name}`);
+    const options = document.createElement("div");
+    options.className = "admin-account-menu-options";
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.className = "admin-account-menu-option";
+      button.type = "button";
+      button.textContent = action.label;
+      button.addEventListener("click", () => {
+        menu.open = false;
+        action.run();
+      });
+      options.append(button);
+    }
+    menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      for (const other of row.parentElement?.querySelectorAll(".admin-account-menu[open]") ?? []) {
+        if (other !== menu) other.open = false;
+      }
+    });
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        menu.open = false;
+        summary.focus();
+      }
+    });
+    menu.append(summary, options);
+    row.append(menu);
+  }
+  return row;
 }
 
 function makeMasterTechnicianCard(profile, teamName, actions = []) {
@@ -1394,9 +1467,13 @@ function renderAdminAccounts() {
     teamId: $("adminAccountTeam").value,
     status: $("adminAccountStatus").value,
   });
+  const adminRows = document.createElement("div");
+  adminRows.className = "admin-account-rows";
+  const workerRows = document.createElement("div");
+  workerRows.className = "admin-account-rows";
   for (const profile of accounts) {
     const memberships = Array.isArray(profile.teams) ? profile.teams : [];
-    const names = memberships.map((membership) => `${membership.team_name} (${membership.membership_status})`);
+    const names = memberships.map((membership) => `${membership.team_name}${membership.membership_status === "active" ? "" : " (desactivado)"}`);
     const actions = [];
     if (profile.role === "technician" && !profile.employee_id_display) {
       actions.push({
@@ -1451,7 +1528,16 @@ function renderAdminAccounts() {
         });
       }
     }
-    target.append(makeAccountCard({ ...profile, employee_id: profile.employee_id_display }, names, actions));
+    (profile.role === "admin" ? adminRows : workerRows).append(makeAdminAccountRow(profile, names, actions));
+  }
+  for (const [label, rows] of [["Cuenta Administrador", adminRows], ["Masters y técnicos", workerRows]]) {
+    if (!rows.childElementCount) continue;
+    const group = document.createElement("section");
+    group.className = "admin-account-group";
+    const heading = document.createElement("h4");
+    heading.textContent = label;
+    group.append(heading, rows);
+    target.append(group);
   }
   if (!accounts.length) target.textContent = adminAccounts.length
     ? "No hay cuentas que coincidan con los filtros." : "Aún no hay cuentas de equipo.";
@@ -1758,6 +1844,11 @@ function bindEvents() {
   for (const id of ["adminAccountSearch", "adminAccountRole", "adminAccountTeam", "adminAccountStatus"]) {
     $(id).addEventListener(id === "adminAccountSearch" ? "input" : "change", renderAdminAccounts);
   }
+  document.addEventListener("click", (event) => {
+    for (const menu of document.querySelectorAll("#adminAccounts .admin-account-menu[open]")) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
+  });
   $("clearAdminAccountFilters").addEventListener("click", () => {
     for (const id of ["adminAccountSearch", "adminAccountRole", "adminAccountTeam", "adminAccountStatus"]) $(id).value = "";
     renderAdminAccounts();

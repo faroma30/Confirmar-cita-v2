@@ -4,19 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3ax1">
+  <meta name="app-build" content="3az1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3ax1">
-  <link rel="stylesheet" href="./agenda.css?v=3ax1">
+  <link rel="stylesheet" href="./app.css?v=3az1">
+  <link rel="stylesheet" href="./agenda.css?v=3az1">
+  <link rel="stylesheet" href="./admin-directory.css?v=3az1">
 </head>
 <body>
   <main class="shell">
     <header class="header hero">
       <button id="reportError" class="hero-report hidden" type="button" aria-label="Reportar error" title="Reportar error"><span aria-hidden="true">⚠</span><span class="report-label">Reportar error</span><span id="reportUnreadBadge" class="report-badge hidden" aria-label="Respuestas nuevas"></span></button>
       <div class="hero-inner">
-        <img class="brand-logo" src="./verisure-logo.png?v=3ax1" alt="Verisure" width="210" height="74">
+        <img class="brand-logo" src="./verisure-logo.png?v=3az1" alt="Verisure" width="210" height="74">
         <h1>Confirmar Citas</h1>
       </div>
       <div class="hero-actions">
@@ -116,14 +117,14 @@
         </div>
         <h3 class="list-title">Equipos</h3><div id="adminTeams" class="account-list"></div>
         <h3 class="list-title">Cuentas del módulo</h3>
-        <div class="dashboard-filters" role="group" aria-label="Buscar y filtrar cuentas">
+        <div class="dashboard-filters admin-account-filters" role="group" aria-label="Buscar y filtrar cuentas">
           <label>Nombre o matrícula<input id="adminAccountSearch" type="search" autocomplete="off"></label>
           <label>Rol<select id="adminAccountRole"><option value="">Todos</option><option value="admin">Administrador</option><option value="master">Master</option><option value="technician">Técnico</option></select></label>
           <label>Equipo<select id="adminAccountTeam"><option value="">Todos</option></select></label>
           <label>Estado<select id="adminAccountStatus"><option value="">Todos</option><option value="active">Activos</option><option value="disabled">Desactivados</option></select></label>
           <button id="clearAdminAccountFilters" class="button secondary" type="button">Limpiar filtros</button>
         </div>
-        <div id="adminAccounts" class="account-list"></div>
+        <div id="adminAccounts" class="admin-account-directory"></div>
         <section class="dashboard-section" aria-labelledby="adminActivityTitle">
           <h3 id="adminActivityTitle" class="list-title">Historial de actividad</h3>
           <div id="adminActivity" class="account-list" aria-live="polite"></div>
@@ -293,8 +294,8 @@
       </dialog>
     </section>
   </main>
-  <script src="./config.js?v=3ax1"></script>
-  <script src="./startup-status.js?v=3ax1"></script>
-  <script type="module" src="./app.js?v=3ax1"></script>
+  <script src="./config.js?v=3az1"></script>
+  <script src="./startup-status.js?v=3az1"></script>
+  <script type="module" src="./app.js?v=3az1"></script>
 </body>
 </html>

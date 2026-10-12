@@ -1,0 +1,28 @@
+.admin-account-filters{grid-template-columns:minmax(210px,2fr) repeat(3,minmax(115px,1fr)) auto;gap:10px;align-items:end}
+.admin-account-filters label{display:grid;gap:5px;min-width:0}
+.admin-account-filters input,.admin-account-filters select{margin:0;min-width:0}
+.admin-account-filters .button{min-height:44px;white-space:nowrap}
+.admin-account-directory{display:grid;gap:16px}
+.admin-account-group{min-width:0;border:1px solid var(--line);border-radius:14px;background:#fff}
+.admin-account-group>h4{margin:0;padding:11px 15px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted);font-weight:800}
+.admin-account-rows{display:grid}
+.admin-account-row{display:grid;grid-template-columns:minmax(145px,1.15fr) minmax(200px,1.5fr) minmax(105px,.7fr) auto;align-items:center;gap:12px;min-width:0;padding:11px 15px;border-bottom:1px solid var(--line)}
+.admin-account-row:last-child{border-bottom:0}
+.admin-account-self{background:#fff9f9}
+.admin-account-identity,.admin-account-meta,.admin-account-state{display:grid;gap:3px;min-width:0}
+.admin-account-identity strong{font-size:14px;line-height:1.3;overflow-wrap:anywhere}
+.admin-account-role,.admin-account-meta,.admin-account-activation{font-size:12px;color:var(--muted);line-height:1.35;overflow-wrap:anywhere}
+.admin-account-status{display:inline-flex;width:max-content;max-width:100%;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}
+.admin-account-status.active{color:#176539;background:#e3f5e9}
+.admin-account-status.disabled{color:#991b21;background:#ffe5e5}
+.admin-account-status.pending{color:#745600;background:#fff4ce}
+.admin-account-menu{position:relative;justify-self:end;min-width:105px}
+.admin-account-menu summary{display:flex;align-items:center;justify-content:center;min-height:40px;padding:7px 12px;border:1px solid #cbd1d8;border-radius:9px;background:#fff;cursor:pointer;font-size:12px;font-weight:800;list-style:none}
+.admin-account-menu summary::-webkit-details-marker{display:none}
+.admin-account-menu summary::after{content:"⌄";margin-left:7px;font-size:16px;line-height:1}
+.admin-account-menu summary:focus-visible,.admin-account-menu-option:focus-visible{outline:3px solid #e3061366;outline-offset:2px}
+.admin-account-menu-options{position:absolute;z-index:10;top:calc(100% + 5px);right:0;display:grid;min-width:210px;max-width:min(310px,calc(100vw - 42px));max-height:280px;overflow-y:auto;padding:5px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 10px 28px #0002}
+.admin-account-menu-option{width:100%;min-height:42px;padding:8px 10px;border:0;border-radius:7px;background:#fff;color:inherit;text-align:left;font:inherit;font-size:12px;cursor:pointer;overflow-wrap:anywhere}
+.admin-account-menu-option:hover{background:#f4f5f7}
+@media(max-width:900px){.admin-account-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.admin-account-filters label:first-child{grid-column:1/-1}.admin-account-row{grid-template-columns:minmax(130px,1fr) minmax(150px,1fr) auto;gap:10px}.admin-account-state{grid-column:2;grid-row:2}.admin-account-menu{grid-column:3;grid-row:1/3}}
+@media(max-width:600px){.admin-account-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.admin-account-filters .button{grid-column:1/-1}.admin-account-row{grid-template-columns:minmax(0,1fr) auto;padding:10px 12px;gap:7px 10px}.admin-account-identity{grid-column:1;grid-row:1}.admin-account-meta{grid-column:1;grid-row:2}.admin-account-state{grid-column:1;grid-row:3}.admin-account-menu{grid-column:2;grid-row:1/3;align-self:start}.admin-account-menu-options{max-width:min(280px,calc(100vw - 42px))}}
