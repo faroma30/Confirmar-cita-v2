@@ -4,21 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3bc1">
+  <meta name="app-build" content="3bd2">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3bc1">
-  <link rel="stylesheet" href="./agenda.css?v=3bc1">
-  <link rel="stylesheet" href="./admin-directory.css?v=3bc1">
-  <link rel="stylesheet" href="./tool-categories.css?v=3bc1">
+  <link rel="stylesheet" href="./app.css?v=3bd2">
+  <link rel="stylesheet" href="./agenda.css?v=3bd2">
+  <link rel="stylesheet" href="./admin-directory.css?v=3bd2">
+  <link rel="stylesheet" href="./tool-categories.css?v=3bd2">
 </head>
 <body>
   <main class="shell">
     <header class="header hero">
       <button id="reportError" class="hero-report hidden" type="button" aria-label="Reportar error" title="Reportar error"><span aria-hidden="true">⚠</span><span class="report-label">Reportar error</span><span id="reportUnreadBadge" class="report-badge hidden" aria-label="Respuestas nuevas"></span></button>
       <div class="hero-inner">
-        <img class="brand-logo" src="./verisure-logo.png?v=3bc1" alt="Verisure" width="210" height="74">
+        <img class="brand-logo" src="./verisure-logo.png?v=3bd2" alt="Verisure" width="210" height="74">
         <h1>Confirmar Citas</h1>
       </div>
       <div class="hero-actions">
@@ -233,8 +233,14 @@
         <section id="issueCompose">
           <form id="issueForm">
             <label for="issueCategory">Tipo de problema</label>
-            <select id="issueCategory" required><option value="agenda">Agenda / Oracle</option><option value="whatsapp">WhatsApp / Mensajes</option><option value="login">Inicio de sesión</option><option value="teams">Master / Equipos</option><option value="settings">Ajustes</option><option value="other">Otro problema</option></select>
-            <label for="issueDescription">Descripción del error</label>
+            <select id="issueCategory" required><option value="agenda">Agenda / Oracle</option><option value="whatsapp">WhatsApp / Mensajes</option><option value="login">Inicio de sesión</option><option value="teams">Master / Equipos</option><option value="settings">Ajustes</option><option value="wifi_ocr">Wifi Connect · Error OCR</option><option value="other">Otro problema</option></select>
+            <div id="wifiIssueFields" class="hidden">
+              <label for="wifiIssueProblem">Problema con la etiqueta</label>
+              <select id="wifiIssueProblem"><option value="label_not_recognized">No reconoce la etiqueta</option><option value="ssid_incorrect">SSID incorrecto</option><option value="password_incorrect">Contraseña incorrecta</option><option value="ssid_password_confused">Confunde SSID y contraseña</option><option value="missing_5ghz">No detecta la red de 5 GHz</option><option value="other">Otro problema</option></select>
+              <fieldset id="wifiPhotoConsentBox" class="wifi-report-consent hidden"><legend>Compartir fotografía</legend><p>La imagen puede contener nombres de red, contraseñas WiFi, claves administrativas, direcciones MAC o números de serie. Solo el Administrador y tú podrán verla en este reporte.</p><label><input id="wifiPhotoConsent" type="checkbox"> Confirmo que quiero compartir esta fotografía con el Administrador.</label></fieldset>
+              <fieldset id="wifiSsidConsentBox" class="wifi-report-consent hidden"><legend>Compartir resultado OCR</legend><label><input id="wifiSsidConsent" type="checkbox"> Autorizo compartir el SSID detectado con el Administrador para revisar el error.</label></fieldset>
+            </div>
+            <label id="issueDescriptionLabel" for="issueDescription">Descripción del error</label>
             <textarea id="issueDescription" required minlength="20" maxlength="4000" rows="6" placeholder="Explica qué estabas haciendo y qué ocurrió."></textarea>
             <label for="issueImage">Captura de pantalla (opcional; PNG, JPG o WebP, máximo 5 MB)</label>
             <input id="issueImage" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
@@ -245,7 +251,7 @@
           <p id="issueFormStatus" role="status" aria-live="polite"></p>
         </section>
         <section id="issueMine"><h3>Mis reportes <span id="issueUnreadCount" class="report-badge hidden"></span></h3><div id="issueMineList" class="account-list"></div><div class="dashboard-pagination"><button id="issueMinePrev" class="button secondary" type="button">Anterior</button><span id="issueMinePage"></span><button id="issueMineNext" class="button secondary" type="button">Siguiente</button></div></section>
-        <section id="issueAdminInbox" class="hidden"><h3>Reportes de errores</h3><div class="dashboard-filters"><label>Estado<select id="issueStatusFilter"><option value="">Todos</option><option value="pending">Pendientes</option><option value="reviewing">En revisión</option><option value="resolved">Resueltos</option></select></label><label>Categoría<select id="issueCategoryFilter"><option value="">Todas</option><option value="agenda">Agenda / Oracle</option><option value="whatsapp">WhatsApp / Mensajes</option><option value="login">Inicio de sesión</option><option value="teams">Master / Equipos</option><option value="settings">Ajustes</option><option value="other">Otro problema</option></select></label><label>Buscar<input id="issueSearch" type="search" maxlength="100" placeholder="Trabajador o descripción"></label></div><div id="issueAdminList" class="account-list"></div><div class="dashboard-pagination"><button id="issueAdminPrev" class="button secondary" type="button">Anterior</button><span id="issueAdminPage"></span><button id="issueAdminNext" class="button secondary" type="button">Siguiente</button></div></section>
+        <section id="issueAdminInbox" class="hidden"><h3>Reportes de errores</h3><div class="dashboard-filters"><label>Estado<select id="issueStatusFilter"><option value="">Todos</option><option value="pending">Pendientes</option><option value="reviewing">En revisión</option><option value="resolved">Resueltos</option></select></label><label>Categoría<select id="issueCategoryFilter"><option value="">Todas</option><option value="agenda">Agenda / Oracle</option><option value="whatsapp">WhatsApp / Mensajes</option><option value="login">Inicio de sesión</option><option value="teams">Master / Equipos</option><option value="settings">Ajustes</option><option value="wifi_ocr">Etiquetas WiFi</option><option value="other">Otro problema</option></select></label><label>Buscar<input id="issueSearch" type="search" maxlength="100" placeholder="Trabajador o descripción"></label></div><div id="issueAdminList" class="account-list"></div><div class="dashboard-pagination"><button id="issueAdminPrev" class="button secondary" type="button">Anterior</button><span id="issueAdminPage"></span><button id="issueAdminNext" class="button secondary" type="button">Siguiente</button></div></section>
         <section id="issueDetail" class="subpanel hidden"><button id="issueDetailClose" class="button quiet" type="button">← Listado</button><div id="issueDetailContent"></div><button id="issueLoadAttachment" class="button secondary hidden" type="button">Ver captura</button><img id="issueDetailImage" class="hidden" alt="Captura adjunta al reporte"><div id="issueTimeline"></div><form id="issueAdminAction" class="hidden"><label>Estado<select id="issueNewStatus"><option value="pending">Pendiente</option><option value="reviewing">En revisión</option><option value="resolved">Resuelto</option></select></label><label>Respuesta al trabajador<textarea id="issueReply" maxlength="4000" rows="4"></textarea></label><button class="button primary" type="submit">Guardar estado o respuesta</button></form></section>
       </section>
       <section id="masterSummaryPanel" class="panel hidden">
@@ -301,8 +307,8 @@
       </dialog>
     </section>
   </main>
-  <script src="./config.js?v=3bc1"></script>
-  <script src="./startup-status.js?v=3bc1"></script>
-  <script type="module" src="./app.js?v=3bc1"></script>
+  <script src="./config.js?v=3bd2"></script>
+  <script src="./startup-status.js?v=3bd2"></script>
+  <script type="module" src="./app.js?v=3bd2"></script>
 </body>
 </html>
