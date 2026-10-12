@@ -14,13 +14,12 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  const ssidConflict=Boolean(parsed?.qrConflicts?.ssid),passwordConflict=Boolean(parsed?.qrConflicts?.password);
  const qrTrusted=candidate=>candidate?.source?.startsWith('qr');
  const taggedOcrCandidate=(candidate,field)=>candidate?.score>=90&&candidate?.source!=='qr'&&new RegExp(`Etiqueta ${field==='ssid'?'SSID':'de contraseña Wi-Fi'}`,'i').test(candidate?.reason||'');
- const highConfidenceTaggedOcr=taggedOcrCandidate(primary,'ssid')||primary?.corrected&&primary.correctionConfidence==='high'&&Number(primary.correctionScore)>=7;
+ const highConfidenceTaggedOcr=taggedOcrCandidate(primary,'ssid')&&!primary.bandPeerConflict;
  const highConfidencePassword=taggedOcrCandidate(password,'password');
- const trustedProposal=primary.corrected&&primary.correctionConfidence==='high'&&Number(primary.correctionScore)>=7;
  const ssidUnverified=Boolean(primary.ocrVerification&&!primary.ocrVerification.exactAgreement&&!qrTrusted(primary));
  const passwordUnverified=Boolean(password?.ocrVerification&&!password.ocrVerification.exactAgreement&&!qrTrusted(password));
  const crossFieldContamination=detectCrossFieldContamination(parsed,primary);
- const ssidNeedsReview=Boolean(crossFieldContamination||ssidConflict||ssidUnverified||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary)&&!highConfidenceTaggedOcr&&!trustedProposal);
+ const ssidNeedsReview=Boolean(crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary)&&!highConfidenceTaggedOcr);
  const passwordNeedsReview=parsed?.security?.value!=='Sin contraseña'&&(!password||passwordConflict||passwordUnverified||password.needsReview&&!password.qrAgreement&&!qrTrusted(password)&&!highConfidencePassword);
  const fields=[...(ssidNeedsReview?['ssid']:[]),...(passwordNeedsReview?['password']:[])];
  if(fields.length)return {state:'review',choices:[selected],candidate:selected,fields};
@@ -48,7 +47,7 @@ export function createScannedNetwork(parsed,candidate,qr={}){
  const safePassword=isFieldCandidate(parsed?.password,'password')?parsed.password:null;
  const sameSource=Boolean(safeSsid?.sourceLine&&safePassword?.sourceLine&&safeSsid.sourceLine===safePassword.sourceLine&&safeSsid.sourceLabel===safePassword.sourceLabel);
  const contaminated=Boolean(safeSsid&&safePassword&&safeSsid.value===safePassword.value&&sameSource);
- return {ssid:contaminated?'':safeSsid?.proposedValue||safeSsid?.value||'',password:safePassword?.value||'',security:parsed?.security?.value||'WPA/WPA2',hidden:Boolean(qr.hidden),note:'',source:'router_scan',origin:'router_scan',band:safeSsid?.band||''};
+ return {ssid:contaminated?'':safeSsid?.value||'',password:safePassword?.value||'',security:parsed?.security?.value||'WPA/WPA2',hidden:Boolean(qr.hidden),note:'',source:'router_scan',origin:'router_scan',band:safeSsid?.band||''};
 }
 
 /** Keep the recent write ahead of the Red lista render. */

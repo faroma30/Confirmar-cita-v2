@@ -1,9 +1,9 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createIssuesUI } from "./issues-ui.mjs?v=3ba1";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3ba1";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3ba1";
+import { createIssuesUI } from "./issues-ui.mjs?v=3bc1";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bc1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3bc1";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
@@ -55,7 +55,7 @@ let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3ba1";
+const APP_BUILD = "3bc1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -89,7 +89,7 @@ async function selectTool(tool, { push = true } = {}) {
       if (!wifiLoadPromise) {
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3ba1");
+          const module = await import("./wifi-connect/entry.mjs?v=3bc1");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId);
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) { instance.dispose(); throw new Error("La sesión ha cambiado."); }

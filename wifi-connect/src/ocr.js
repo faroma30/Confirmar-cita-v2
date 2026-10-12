@@ -1,8 +1,13 @@
-import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js';
-import {parseRouterLabel} from './router-parser.js';
+import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3bc1';
+import {parseRouterLabel} from './router-parser.js?v=3bc1';
+import {findSsidFocusRegions} from './ssid-focus.js?v=3bc1';
 
 export const OCR_LANGUAGES='spa+eng';
 export const OCR_ENGINE_VERSION='tesseract.js 7.0.0 / tesseract.js-core 7.0.0';
+function sourceRegion(target,prepared){
+ const x=prepared.sourceWidth/prepared.width,y=prepared.sourceHeight/prepared.height;
+ return {...target,region:{left:Math.floor(target.region.left*x),top:Math.floor(target.region.top*y),width:Math.ceil(target.region.width*x),height:Math.ceil(target.region.height*y)}};
+}
 export function normalizeOcrText(text=''){
  return String(text).normalize('NFC').replace(/\r\n?/g,'\n').split('\n').map(line=>line.replace(/[\t\u00a0 ]{2,}/g,' ').trim()).join('\n').trim();
 }
@@ -12,7 +17,7 @@ const defaultPaths=()=>({workerPath:new URL('../vendor/tesseract/core/worker.min
 export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tesseract.esm.min.js'),preprocess=prepareImageForOcr,paths=defaultPaths}={}){
  return async function recognizeRouterLabel(blob,{signal,onProgress=()=>{},onStage=()=>{},qrResult=null}={}){
   if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/')||!blob.size)throw new TypeError('Selecciona una fotografía válida para analizar.');
-  const started=performance.now();let worker=null,workerPromise=null,terminated=false,prepared=null,alternatePrepared=null,abortHandler=null;
+  const started=performance.now();let worker=null,workerPromise=null,terminated=false,prepared=null,alternatePrepared=null,focusedPrepared=null,abortHandler=null;
   const terminate=async target=>{if(!target||terminated)return;terminated=true;try{await target.terminate();}catch{}};
   try{
    throwIfAborted(signal);onStage('Preparando imagen');const firstPassStarted=performance.now();prepared=await preprocess(blob,{signal,onStage,variant:'color'});throwIfAborted(signal);
@@ -23,11 +28,12 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
    workerPromise=workerPromise.then(instance=>{worker=instance;if(signal?.aborted)void terminate(instance);return instance;});
    if(signal){abortHandler=()=>{if(worker)void terminate(worker);else if(workerPromise)void workerPromise.then(terminate).catch(()=>{});};signal.addEventListener('abort',abortHandler,{once:true});}
    worker=await waitFor(workerPromise,signal);throwIfAborted(signal);
-   const passes=[];let alternatePassError=null;
-   onStage('Detectando texto');const first=await waitFor(worker.recognize(prepared.blob),signal);throwIfAborted(signal);
+   const passes=[];let alternatePassError=null;const focusTargets=[],focusErrors=[],focusLengths=[];let focusAttemptCount=0;
+   onStage('Detectando texto');const first=await waitFor(worker.recognize(prepared.blob,{}, {text:true,blocks:true}),signal);throwIfAborted(signal);
    const firstRaw=String(first?.data?.text??''),firstNormalized=normalizeOcrText(firstRaw),firstConfidence=Number.isFinite(first?.data?.confidence)?first.data.confidence:null;
-   passes.push({id:'color',rawText:firstRaw,normalizedText:firstNormalized,confidence:firstConfidence,durationMs:Math.round(performance.now()-firstPassStarted),image:{width:prepared.width,height:prepared.height,bytes:prepared.blob.size}});
+   passes.push({id:'color',rawText:firstRaw,normalizedText:firstNormalized,confidence:firstConfidence,blockCount:first?.data?.blocks?.length||0,durationMs:Math.round(performance.now()-firstPassStarted),image:{width:prepared.width,height:prepared.height,bytes:prepared.blob.size}});
    const initialParse=parseRouterLabel({rawText:firstRaw,normalizedText:firstNormalized});
+   for(const target of findSsidFocusRegions(first?.data?.blocks,prepared.width,prepared.height,initialParse.ssidCandidates))focusTargets.push({...sourceRegion(target,prepared),blob});
    const expectedBands=new Set([...firstNormalized.matchAll(/(?:^|[^\p{L}\p{N}])SS[i1l]D\s*([12]|[il])\b/giu)].map(match=>String(match[1]).toLowerCase().replace(/[il]/,'1')));
    const parsedBands=new Set(initialParse.ssidCandidates.map(candidate=>String(candidate.sourceLine).match(/(?:^|[^\p{L}\p{N}])SS[i1l]D\s*([12]|[il])\b/i)?.[1]?.toLowerCase().replace(/[il]/,'1')).filter(Boolean));
    const missingExpectedBand=[...expectedBands].some(band=>!parsedBands.has(band));
@@ -48,24 +54,47 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
     throwIfAborted(signal);onStage('Mejorando lectura');const alternateStarted=performance.now();
     try{
      alternatePrepared=await preprocess(blob,{signal,onStage,variant:'grayscale'});throwIfAborted(signal);
-     const alternate=await waitFor(worker.recognize(alternatePrepared.blob),signal);throwIfAborted(signal);
+     const alternate=await waitFor(worker.recognize(alternatePrepared.blob,{}, {text:true,blocks:true}),signal);throwIfAborted(signal);
      const alternateRaw=String(alternate?.data?.text??''),alternateNormalized=normalizeOcrText(alternateRaw),alternateConfidence=Number.isFinite(alternate?.data?.confidence)?alternate.data.confidence:null;
-     passes.push({id:'grayscale-contrast',rawText:alternateRaw,normalizedText:alternateNormalized,confidence:alternateConfidence,durationMs:Math.round(performance.now()-alternateStarted),image:{width:alternatePrepared.width,height:alternatePrepared.height,bytes:alternatePrepared.blob.size}});
+     passes.push({id:'grayscale-contrast',rawText:alternateRaw,normalizedText:alternateNormalized,confidence:alternateConfidence,blockCount:alternate?.data?.blocks?.length||0,durationMs:Math.round(performance.now()-alternateStarted),image:{width:alternatePrepared.width,height:alternatePrepared.height,bytes:alternatePrepared.blob.size}});
+     const alternateParse=parseRouterLabel({rawText:alternateRaw,normalizedText:alternateNormalized});
+     for(const target of findSsidFocusRegions(alternate?.data?.blocks,alternatePrepared.width,alternatePrepared.height,alternateParse.ssidCandidates))if(!focusTargets.some(item=>item.band===target.band))focusTargets.push({...sourceRegion(target,alternatePrepared),blob});
     }catch(error){if(error?.name==='AbortError')throw error;alternatePassError=String(error?.message||'El pase alternativo no está disponible.');}
+   }
+   const beforeFocus=parseRouterLabel({normalizedText:passes.map(pass=>pass.normalizedText).join('\n')});
+   if(focusTargets.length&&(expectedBands.size>1||beforeFocus.ssidCandidates.some(candidate=>candidate.needsReview||candidate.bandPeerConflict||candidate.bandConfidence==='low'))){
+    const prioritized=focusTargets.some(item=>item.band)?focusTargets.filter(item=>item.band):focusTargets;
+    for(const [index,target] of prioritized.slice(0,2).entries()){
+     throwIfAborted(signal);focusAttemptCount++;const focusStarted=performance.now();onStage('Verificando nombre Wi-Fi');
+     try{
+      focusedPrepared=await preprocess(target.blob,{signal,onStage,variant:'ssid-focus',region:target.region});throwIfAborted(signal);
+      const focused=await waitFor(worker.recognize(focusedPrepared.blob),signal);throwIfAborted(signal);
+      const focusedRaw=String(focused?.data?.text??'');let focusedNormalized=normalizeOcrText(focusedRaw);
+      focusLengths.push(focusedNormalized.length);
+      // The crop position was obtained from an OCR line explicitly labelled as an SSID.
+      // Restore only that field label when the tight crop loses it; preserve every
+      // character of the recognized value and leave any disagreement for review.
+      if(focusedNormalized&&!focusedNormalized.includes('\n')&&!/^(?:SS[i1l]D\s*[12il]?|WI[ -]?FI|WLAN|NETWORK|NOMBRE|RED|PASSWORD|KEY|CLAVE)\b/i.test(focusedNormalized)&&/^[\p{L}\p{N}][\p{L}\p{N}_ .-]{3,63}$/u.test(focusedNormalized))focusedNormalized=`SSID${target.band||''}: ${focusedNormalized}`;
+      focusedNormalized=focusedNormalized.split('\n').filter(line=>/^\s*(?:SS[i1l]D\s*[12il]?|(?:WI[ -]?FI|WLAN|NETWORK|WIRELESS)\s+NAME|NOMBRE\s+(?:DE\s+)?(?:WI[ -]?FI|RED)|RED\s+WI[ -]?FI)\b/i.test(line)).join('\n');
+      if(focusedNormalized)passes.push({id:`ssid-focus-${index+1}`,focusBand:target.band,rawText:focusedRaw,normalizedText:focusedNormalized,confidence:Number.isFinite(focused?.data?.confidence)?focused.data.confidence:null,durationMs:Math.round(performance.now()-focusStarted),image:{width:focusedPrepared.width,height:focusedPrepared.height,bytes:focusedPrepared.blob.size}});
+     }catch(error){if(error?.name==='AbortError')throw error;focusErrors.push(error?.name||'Error');}
+     finally{focusedPrepared=null;}
+    }
    }
    onStage('Finalizando');
    const mergedLines=[],seenLines=new Set();
    for(const pass of passes)for(const line of pass.normalizedText.split('\n')){const key=line.trim();if(key&&!seenLines.has(key)){seenLines.add(key);mergedLines.push(key);}}
    const rawText=passes.length===1?passes[0].rawText:passes.map(pass=>`[OCR ${pass.id}]\n${pass.rawText}`).join('\n\n');const normalizedText=mergedLines.join('\n');
-   const confidence=passes.length===1?passes[0].confidence:Math.round(passes.reduce((total,pass)=>total+(pass.confidence??0),0)/passes.length*10)/10;
-   const result={rawText,normalizedText,confidence,durationMs:Math.round(performance.now()-started),languages:OCR_LANGUAGES,engine:OCR_ENGINE_VERSION,passes,alternatePassError,image:{originalBytes:blob.size,sourceWidth:prepared.sourceWidth,sourceHeight:prepared.sourceHeight,processedWidth:prepared.width,processedHeight:prepared.height,processedBytes:prepared.blob.size,wasResized:prepared.wasResized,maxDimension:MAX_OCR_DIMENSION},processedPreviewBlob:prepared.previewBlob};
+   const pagePasses=passes.filter(pass=>!pass.id.startsWith('ssid-focus-'));
+   const confidence=pagePasses.length===1?pagePasses[0].confidence:Math.round(pagePasses.reduce((total,pass)=>total+(pass.confidence??0),0)/pagePasses.length*10)/10;
+   const result={rawText,normalizedText,confidence,durationMs:Math.round(performance.now()-started),languages:OCR_LANGUAGES,engine:OCR_ENGINE_VERSION,passes,alternatePassError,focusRegionCount:focusTargets.length,focusAttemptCount,focusErrors,focusLengths,focusRegions:focusTargets.map(item=>({band:item.band,region:item.region})),image:{originalBytes:blob.size,sourceWidth:prepared.sourceWidth,sourceHeight:prepared.sourceHeight,processedWidth:prepared.width,processedHeight:prepared.height,processedBytes:prepared.blob.size,wasResized:prepared.wasResized,maxDimension:MAX_OCR_DIMENSION},processedPreviewBlob:prepared.previewBlob};
    return result;
   }catch(error){if(error?.name!=='AbortError')console.error('[WiFi Connect OCR] No se pudo reconocer la etiqueta:',error?.message||error);throw error;}
   finally{
    if(signal&&abortHandler)signal.removeEventListener('abort',abortHandler);
    if(worker)await terminate(worker);else if(workerPromise)void workerPromise.then(terminate).catch(()=>{});
    // Drop references to the full processed bitmap/blob. The returned preview is deliberately small.
-   prepared=null;alternatePrepared=null;
+   prepared=null;alternatePrepared=null;focusedPrepared=null;
   }
  };
 }

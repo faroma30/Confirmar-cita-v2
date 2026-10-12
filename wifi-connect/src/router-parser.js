@@ -77,21 +77,20 @@ function annotateSsidBands(candidates){
  for(const candidate of candidates){
   const token=bandToken(candidate.value);if(!token||token.band!=='2.4 GHz')continue;
   const peers=candidates.filter(other=>other!==candidate&&ssidBand(other.sourceLine)&&bandToken(other.value)?.band==='5 GHz');
-  let best=null;
   for(const peer of peers){
-   const peerToken=bandToken(peer.value);const left=candidate.value.slice(0,token.start),right=candidate.value.slice(token.end),rightForMatch=right.replace(/\s+[-–—]+\s*$/,'').replace(/\s+\d\s*$/,''),peerLeft=peer.value.slice(0,peerToken.start),peerRight=peer.value.slice(peerToken.end);
+    const peerToken=bandToken(peer.value);const left=candidate.value.slice(0,token.start),right=candidate.value.slice(token.end),peerLeft=peer.value.slice(0,peerToken.start),peerRight=peer.value.slice(peerToken.end);
    let prefix=0;while(prefix<left.length&&prefix<peerLeft.length&&left[prefix].toLowerCase()===peerLeft[prefix].toLowerCase())prefix++;
-   let suffix=0;while(suffix<rightForMatch.length&&suffix<peerRight.length&&rightForMatch[rightForMatch.length-1-suffix].toLowerCase()===peerRight[peerRight.length-1-suffix].toLowerCase())suffix++;
-   const prefixText=left.slice(0,prefix),suffixText=rightForMatch.slice(rightForMatch.length-suffix);
-    const compatible=prefixText.replace(/[^\p{L}\p{N}]/gu,'').length>=3&&suffixText.replace(/[^\p{L}\p{N}]/gu,'').length>=2;
-   const contextualScore=(token.strength===2?1:2)+(peer.score>=80?2:1)+(compatible?4:0)+(ssidBand(candidate.sourceLine)?1:0);
-   if(compatible&&contextualScore>=7&&(!best||contextualScore>best.score)){
-    const proposedValue=`${prefixText}2.4G${suffixText}`.replace(/\s+$/,'');
-    best={score:contextualScore,peer,proposedValue,prefixText,suffixText,tokenText:token.raw};
-   }
+    const sameFamily=left.slice(0,prefix).replace(/[^\p{L}\p{N}]/gu,'').length>=3&&left.toLowerCase()===peerLeft.toLowerCase();
+    if(!sameFamily)continue;
+    // A 5 GHz network is evidence of a possible OCR discrepancy, never a source
+    // from which to manufacture missing characters in the 2.4 GHz SSID.
+    if(token.strength<3||right.toLowerCase()!==peerRight.toLowerCase()){
+      candidate.needsReview=true;
+      candidate.bandPeerConflict=true;
+      candidate.bandPeerReason='Las dos bandas parecen relacionadas, pero el nombre de 2.4 GHz requiere comprobarse en la etiqueta.';
+    }
   }
-  if(best){candidate.proposedValue=best.proposedValue;candidate.corrected=true;candidate.correctionType='wifi-band-context';candidate.correctionConfidence='high';candidate.correctionScore=best.score;candidate.correctionReason=`SSID emparejada con ${best.peer.value}, que indica 5 GHz y comparte prefijo y sufijo`;candidate.proposedFrom=candidate.value;candidate.correctionDiff=`${best.tokenText} → 2.4G`;candidate.needsReview=true;}
-  else if(/^\s*SS[i1l]D\s*[:=]/i.test(candidate.sourceLine)){candidate.bandConfidence=token.strength===2?'low':'medium';candidate.possibleBand='2.4 GHz';}
+   if(token.strength<3&&/^\s*SS[i1l]D\s*[:=]/i.test(candidate.sourceLine)){candidate.bandConfidence='low';candidate.possibleBand='2.4 GHz';candidate.needsReview=true;}
  }
 }
 function scoreValue(value, base, kind) {
@@ -126,7 +125,8 @@ function editDistanceAtMostTwo(left,right){
 function compareCredentialAcrossPasses(candidate,field,passes){
  if(!passes.length||candidate?.source?.startsWith('qr'))return;
  let exactPassCount=0,mismatchedPassCount=0,missingPassCount=0;
- for(const pass of passes){
+  const relevantPasses=passes.filter(pass=>!pass.id?.startsWith('ssid-focus-')||field==='ssid'&&ssidBand(candidate.sourceLine)===pass.focusBand);
+  for(const pass of relevantPasses){
   const passText=String(pass.normalizedText||pass.rawText||'');
   const passParsed=parseRouterLabel({rawText:pass.rawText??passText,normalizedText:passText,passes:[]});
   const passCandidates=field==='ssid'?passParsed.ssidCandidates:passParsed.passwordCandidates;
@@ -144,8 +144,8 @@ function compareCredentialAcrossPasses(candidate,field,passes){
   });
   if(nearCandidate||nearSsidLine)mismatchedPassCount++;else missingPassCount++;
  }
- const exactAgreement=passes.length>=2&&exactPassCount===passes.length;
- candidate.ocrVerification={passCount:passes.length,exactPassCount,mismatchedPassCount,missingPassCount,exactAgreement};
+  const exactAgreement=relevantPasses.length>=2&&exactPassCount===relevantPasses.length;
+  candidate.ocrVerification={passCount:relevantPasses.length,exactPassCount,mismatchedPassCount,missingPassCount,exactAgreement};
  if(!exactAgreement)candidate.needsReview=true;
 }
 const stopLine = line => {
@@ -283,7 +283,8 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     }
   }
   for(const candidate of [...ssidCandidates,...passwordCandidates])candidate.confidence=Math.min(1,candidate.score/100);
-  ssidCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrSsidConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrSsidConflict))||b.score-a.score||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement)));
+  const focusedValues=new Set((input?.passes||[]).filter(pass=>pass.id?.startsWith('ssid-focus-')).flatMap(pass=>String(pass.normalizedText||'').split(/\r?\n/).map(line=>{const {label,value}=splitLabel(line);return findLabel(label,SSID_LABELS)?cleanCandidate(value):null}).filter(Boolean)));
+  ssidCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrSsidConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrSsidConflict))||Number(focusedValues.has(b.value))-Number(focusedValues.has(a.value))||b.score-a.score||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement)));
   passwordCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrPasswordConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrPasswordConflict))||b.score-a.score);
   ssidCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo SSID':'Alternativa de menor puntuación del campo SSID';});
   passwordCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo contraseña':'Alternativa de menor puntuación del campo contraseña';});
