@@ -1,4 +1,4 @@
-const VIEWS = new Set(["appointments", "routes", "technicians", "create"]);
+const VIEWS = new Set(["appointments", "summary", "routes", "technicians", "create"]);
 const PREFIX = "confirmar-citas-v2-master-navigation:";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -32,4 +32,5 @@ export function createMasterNavigationStorage(storage) {
     },
   };
 }
+
 

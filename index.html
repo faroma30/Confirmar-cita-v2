@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3au2">
+  <meta name="app-build" content="3av1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
-  <link rel="stylesheet" href="./app.css?v=3au2">
-  <link rel="stylesheet" href="./agenda.css?v=3au2">
+  <link rel="stylesheet" href="./app.css?v=3av1">
+  <link rel="stylesheet" href="./agenda.css?v=3av1">
 </head>
 <body>
   <main class="shell">
     <header class="header hero">
       <div class="hero-inner">
-        <img class="brand-logo" src="./verisure-logo.png?v=3au2" alt="Verisure" width="210" height="74">
+        <img class="brand-logo" src="./verisure-logo.png?v=3av1" alt="Verisure" width="210" height="74">
         <h1>Confirmar Citas</h1>
       </div>
       <div class="hero-actions">
@@ -85,6 +85,7 @@
       </section>
       <section id="adminPanel" class="panel hidden">
         <div class="section-heading"><div><p class="eyebrow">SOLO ADMINISTRACIÓN</p><h2>Gestión del sistema</h2></div></div>
+        <div id="adminSummary" class="dashboard-summary" aria-label="Resumen administrativo"></div>
         <div class="admin-grid">
           <section class="subpanel">
             <h3>Crear equipo</h3>
@@ -108,10 +109,24 @@
           </section>
         </div>
         <h3 class="list-title">Equipos</h3><div id="adminTeams" class="account-list"></div>
-        <h3 class="list-title">Cuentas del módulo</h3><div id="adminAccounts" class="account-list"></div>
+        <h3 class="list-title">Cuentas del módulo</h3>
+        <div class="dashboard-filters" role="group" aria-label="Buscar y filtrar cuentas">
+          <label>Nombre o matrícula<input id="adminAccountSearch" type="search" autocomplete="off"></label>
+          <label>Rol<select id="adminAccountRole"><option value="">Todos</option><option value="admin">Administrador</option><option value="master">Master</option><option value="technician">Técnico</option></select></label>
+          <label>Equipo<select id="adminAccountTeam"><option value="">Todos</option></select></label>
+          <label>Estado<select id="adminAccountStatus"><option value="">Todos</option><option value="active">Activos</option><option value="disabled">Desactivados</option></select></label>
+          <button id="clearAdminAccountFilters" class="button secondary" type="button">Limpiar filtros</button>
+        </div>
+        <div id="adminAccounts" class="account-list"></div>
+        <section class="dashboard-section" aria-labelledby="adminActivityTitle">
+          <h3 id="adminActivityTitle" class="list-title">Historial de actividad</h3>
+          <div id="adminActivity" class="account-list" aria-live="polite"></div>
+          <div class="dashboard-pagination"><button id="adminActivityPrevious" class="button secondary" type="button">Anterior</button><span id="adminActivityPage"></span><button id="adminActivityNext" class="button secondary" type="button">Siguiente</button></div>
+        </section>
       </section>
       <nav id="masterViewTabs" class="master-view-tabs hidden" aria-label="Vistas Master">
         <button class="button primary" id="masterOwnTab" type="button">Mis citas</button>
+        <button class="button secondary" id="masterSummaryTab" type="button">Resumen del equipo</button>
         <button class="button secondary" id="masterRouteTab" type="button">Rutas del equipo</button>
         <button class="button secondary" id="masterTechniciansTab" type="button">Mis técnicos</button>
         <button class="button secondary" id="masterCreateTab" type="button">Crear técnico</button>
@@ -173,6 +188,14 @@
             </form>
           </section>
       </section>
+      <section id="masterSummaryPanel" class="panel hidden">
+        <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Resumen del equipo</h2>
+        <div id="masterSummaryDateNav" class="datechips" aria-label="Fecha del resumen"></div>
+        <div id="masterSummaryTotals" class="dashboard-summary"></div>
+        <p class="fine">Contactada significa WhatsApp abierto. Puede coincidir con otro estado; no confirma que se haya enviado el mensaje.</p>
+        <h3 class="list-title">Por técnico</h3>
+        <div id="masterSummaryTechnicians" class="account-list"></div>
+      </section>
       <section id="masterPanel" class="panel hidden">
         <p class="eyebrow">SUPERVISIÓN DE TU EQUIPO</p><h2>Rutas del equipo</h2>
         <div id="masterTeams" class="team-chips"></div>
@@ -218,9 +241,9 @@
       </dialog>
     </section>
   </main>
-  <script src="./config.js?v=3au2"></script>
-  <script src="./startup-status.js?v=3au2"></script>
-  <script type="module" src="./app.js?v=3au2"></script>
+  <script src="./config.js?v=3av1"></script>
+  <script src="./startup-status.js?v=3av1"></script>
+  <script type="module" src="./app.js?v=3av1"></script>
 </body>
 </html>
 

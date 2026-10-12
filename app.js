@@ -1,13 +1,14 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3au2";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3av1";
+import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
 
 const $ = (id) => document.getElementById(id);
-const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminPanel", "masterViewTabs", "appointmentsPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel"];
+const SETTINGS_VIEW_IDS = ["workspaceWelcome", "adminPanel", "masterViewTabs", "appointmentsPanel", "masterSummaryPanel", "masterPanel", "masterTechniciansPanel", "masterCreatePanel"];
 const config = window.CONFIRMAR_CITAS_CONFIG ?? {};
 const configured = typeof config.url === "string"
   && config.url.startsWith("https://")
@@ -19,6 +20,9 @@ let supabase = null;
 let activeUser = null;
 let activeProfile = null;
 let teamsForActor = [];
+let adminAccounts = [];
+let adminActivityOffset = 0;
+const ADMIN_ACTIVITY_PAGE_SIZE = 20;
 let appointmentTeams = [];
 let selectedAppointmentTeam = "";
 let currentAppointments = [];
@@ -40,10 +44,11 @@ let sharedTextConsumed = false;
 let initializedWorkspaceUserId = null;
 let initializedWorkspaceRole = null;
 let masterSelectedTechnicianId = "";
+let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3au2";
+const APP_BUILD = "3av1";
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
 
@@ -105,7 +110,7 @@ function createSupabaseClient() {
 
 function hideWorkspacePanels() {
   ["authPanel", "authDisabled", "activationPanel", "workspace", "adminPanel", "masterPanel",
-    "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel", "workspaceLoading", "adminPanelLoading"].forEach((id) => setVisible(id, false));
+    "masterSummaryPanel", "masterTechniciansPanel", "masterCreatePanel", "appointmentsPanel", "masterViewTabs", "personalSettingsPanel", "workspaceLoading", "adminPanelLoading"].forEach((id) => setVisible(id, false));
   setVisible("signOut", false);
   setVisible("settingsToggle", false);
 }
@@ -157,7 +162,19 @@ function clearWorkspaceAgendaResults() {
   $("appointmentFilters").replaceChildren();
   $("appointmentIgnored").textContent = "";
   $("masterAppointmentList").replaceChildren();
+  $("masterSummaryTotals").replaceChildren();
+  $("masterSummaryTechnicians").replaceChildren();
   setVisible("appointmentNotice", false);
+}
+
+function clearRolePanelResults() {
+  adminAccounts = [];
+  adminActivityOffset = 0;
+  masterTeamTechnicians = new Map();
+  for (const id of ["adminSummary", "adminTeams", "adminAccounts", "adminActivity",
+    "masterSummaryTotals", "masterSummaryTechnicians"]) {
+    $(id).replaceChildren();
+  }
 }
 
 function showWorkspaceLoadFailure(message) {
@@ -200,6 +217,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     if (previousUserId) masterNavigation.clear(previousUserId);
     activeUser = null;
     activeProfile = null;
+    clearRolePanelResults();
     initializedWorkspaceUserId = null;
     initializedWorkspaceRole = null;
     masterSelectedTechnicianId = "";
@@ -232,6 +250,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   }
   if (previousUserId && previousUserId !== verifiedUser.user.id) {
     masterNavigation.clear(previousUserId);
+    clearRolePanelResults();
     initializedWorkspaceUserId = null;
     initializedWorkspaceRole = null;
   }
@@ -409,6 +428,7 @@ function persistMasterNavigation() {
 function setMasterView(view, { persist = true } = {}) {
   const panels = {
     appointments: "appointmentsPanel",
+    summary: "masterSummaryPanel",
     routes: "masterPanel",
     technicians: "masterTechniciansPanel",
     create: "masterCreatePanel",
@@ -417,7 +437,7 @@ function setMasterView(view, { persist = true } = {}) {
   selectedMasterView = view;
   for (const [key, id] of Object.entries(panels)) setVisible(id, key === view);
   for (const [key, id] of Object.entries({
-    appointments: "masterOwnTab", routes: "masterRouteTab",
+    appointments: "masterOwnTab", summary: "masterSummaryTab", routes: "masterRouteTab",
     technicians: "masterTechniciansTab", create: "masterCreateTab",
   })) {
     $(id).className = `button ${key === view ? "primary" : "secondary"}`;
@@ -1088,6 +1108,12 @@ async function loadMasterAppointments() {
     persistMasterNavigation();
     void loadMasterAppointments();
   });
+  renderThreeDaySelector($("masterSummaryDateNav"), date, masterRouteDayOffset, (selected, offset) => {
+    masterRouteDayOffset = offset;
+    masterRouteDate = selected;
+    persistMasterNavigation();
+    void loadMasterAppointments();
+  });
   const technicianId = $("masterTechnicianSelect").value;
   masterSelectedTechnicianId = technicianId || "";
   persistMasterNavigation();
@@ -1095,7 +1121,13 @@ async function loadMasterAppointments() {
   if (requestSequence !== masterAppointmentsRequestSequence) return true;
   const target = $("masterAppointmentList");
   target.replaceChildren();
-  if (error || !Array.isArray(data)) { target.textContent = "No se pudo consultar la supervisión."; return false; }
+  if (error || !Array.isArray(data)) {
+    target.textContent = "No se pudo consultar la supervisión.";
+    $("masterSummaryTotals").textContent = "No se pudo cargar el resumen.";
+    $("masterSummaryTechnicians").replaceChildren();
+    return false;
+  }
+  renderMasterTeamSummary(data);
   const rows = data.filter((row) => technicianId && row.technician_id === technicianId);
   if (!rows.length) { const empty = document.createElement("div"); empty.className = "agenda-empty"; empty.textContent = technicianId ? "Este técnico no tiene citas para esta fecha." : "Selecciona un técnico de tus equipos para consultar su ruta."; target.append(empty); return true; }
   for (const row of rows) {
@@ -1120,6 +1152,49 @@ async function loadMasterAppointments() {
     item.append(content, side); target.append(item);
   }
   return true;
+}
+
+function appendSummaryCounts(target, counts) {
+  for (const [label, value, kind] of [
+    ["Instalaciones", counts.total, "total"], ["Pendientes", counts.pending, "pending"],
+    ["Contactadas", counts.contacted, "contacted"], ["Confirmadas", counts.confirmed, "confirmed"],
+    ["Canceladas", counts.cancelled, "cancelled"],
+  ]) {
+    const card = document.createElement("div");
+    card.className = `dashboard-stat ${kind}`;
+    const number = document.createElement("strong"); number.textContent = String(value);
+    const caption = document.createElement("span"); caption.textContent = label;
+    card.append(number, caption); target.append(card);
+  }
+}
+
+function renderMasterTeamSummary(rows) {
+  const summary = masterTeamSummary(rows);
+  const totals = $("masterSummaryTotals");
+  totals.replaceChildren();
+  appendSummaryCounts(totals, summary.total);
+  const byTechnician = new Map(summary.technicians.map((item) => [item.technicianId, item]));
+  const target = $("masterSummaryTechnicians");
+  target.replaceChildren();
+  for (const [technicianId, name] of masterTeamTechnicians) {
+    const counts = byTechnician.get(technicianId) ?? {
+      total: 0, pending: 0, contacted: 0, confirmed: 0, cancelled: 0,
+    };
+    const card = document.createElement("article"); card.className = "dashboard-technician";
+    const heading = document.createElement("h4"); heading.textContent = name;
+    const stats = document.createElement("div"); stats.className = "dashboard-summary";
+    appendSummaryCounts(stats, counts);
+    const open = document.createElement("button");
+    open.type = "button"; open.className = "button secondary"; open.textContent = "Abrir ruta";
+    open.addEventListener("click", () => {
+      $("masterTechnicianSelect").value = technicianId;
+      masterSelectedTechnicianId = technicianId;
+      setMasterView("routes");
+      void loadMasterAppointments();
+    });
+    card.append(heading, stats, open); target.append(card);
+  }
+  if (!target.childElementCount) target.textContent = "No hay técnicos activos en tus equipos.";
 }
 
 async function saveAppointmentPreferences(event) {
@@ -1200,6 +1275,20 @@ async function loadAdminPanel() {
     return false;
   }
   teamsForActor = Array.isArray(teamsResult.data) ? teamsResult.data : [];
+  adminAccounts = Array.isArray(accountsResult.data) ? accountsResult.data : [];
+  const counts = adminCounts(teamsForActor, adminAccounts);
+  const summary = $("adminSummary");
+  summary.replaceChildren();
+  for (const [label, value] of [
+    ["Equipos", counts.teams], ["Masters activos", counts.activeMasters],
+    ["Técnicos activos", counts.activeTechnicians],
+    ["Técnicos desactivados", counts.disabledTechnicians], ["Usuarios", counts.users],
+  ]) {
+    const card = document.createElement("div"); card.className = "dashboard-stat";
+    const number = document.createElement("strong"); number.textContent = String(value);
+    const caption = document.createElement("span"); caption.textContent = label;
+    card.append(number, caption); summary.append(card);
+  }
   const teamList = $("adminTeams");
   teamList.replaceChildren();
   for (const team of teamsForActor) {
@@ -1247,10 +1336,25 @@ async function loadAdminPanel() {
   if (settingsResult.data?.retention_days != null) {
     $("retentionDays").value = String(settingsResult.data.retention_days);
   }
+  const teamFilter = $("adminAccountTeam");
+  const selectedTeam = teamFilter.value;
+  teamFilter.replaceChildren(new Option("Todos", ""),
+    ...teamsForActor.map((team) => new Option(team.name, team.id)));
+  if (teamsForActor.some((team) => team.id === selectedTeam)) teamFilter.value = selectedTeam;
+  renderAdminAccounts();
+  void loadAdminActivity();
+  return true;
+}
 
+function renderAdminAccounts() {
   const target = $("adminAccounts");
   target.replaceChildren();
-  const accounts = Array.isArray(accountsResult.data) ? accountsResult.data : [];
+  const accounts = filterAdminAccounts(adminAccounts, {
+    text: $("adminAccountSearch").value,
+    role: $("adminAccountRole").value,
+    teamId: $("adminAccountTeam").value,
+    status: $("adminAccountStatus").value,
+  });
   for (const profile of accounts) {
     const memberships = Array.isArray(profile.teams) ? profile.teams : [];
     const names = memberships.map((membership) => `${membership.team_name} (${membership.membership_status})`);
@@ -1310,8 +1414,55 @@ async function loadAdminPanel() {
     }
     target.append(makeAccountCard({ ...profile, employee_id: profile.employee_id_display }, names, actions));
   }
-  if (!accounts.length) target.textContent = "Aún no hay cuentas de equipo.";
-  return true;
+  if (!accounts.length) target.textContent = adminAccounts.length
+    ? "No hay cuentas que coincidan con los filtros." : "Aún no hay cuentas de equipo.";
+}
+
+const ADMIN_AUDIT_LABELS = Object.freeze({
+  account_created: "Cuenta creada", account_status_changed: "Estado de cuenta cambiado",
+  credential_reset_started: "Restablecimiento iniciado",
+  credential_reset_completed: "Restablecimiento completado",
+  team_created: "Equipo creado", team_renamed: "Equipo renombrado",
+  team_activated: "Equipo activado", team_deactivated: "Equipo desactivado",
+  master_team_assigned: "Master asignado", master_team_removed: "Master retirado",
+  technician_team_activated: "Técnico activado en equipo",
+  technician_team_deactivated: "Técnico desactivado en equipo",
+});
+
+async function loadAdminActivity() {
+  const target = $("adminActivity");
+  target.textContent = "Cargando actividad…";
+  const { data, error } = await supabase.rpc("cc_admin_audit_page", {
+    p_limit: ADMIN_ACTIVITY_PAGE_SIZE, p_offset: adminActivityOffset,
+  });
+  if (activeProfile?.role !== "admin") return;
+  target.replaceChildren();
+  if (error || !data || !Array.isArray(data.items)) {
+    target.textContent = "No se pudo cargar el historial de actividad.";
+    $("adminActivityPage").textContent = "";
+    $("adminActivityPrevious").disabled = true;
+    $("adminActivityNext").disabled = true;
+    return;
+  }
+  const total = Math.max(0, Number(data.total) || 0);
+  for (const row of data.items) {
+    const card = document.createElement("article"); card.className = "dashboard-activity";
+    const heading = document.createElement("strong");
+    heading.textContent = ADMIN_AUDIT_LABELS[row.action] ?? "Operación administrativa";
+    const detail = document.createElement("span");
+    detail.textContent = [row.actor ? `Responsable: ${row.actor}` : "",
+      row.target ? `Objetivo: ${row.target}` : "",
+      row.team ? `Equipo: ${row.team}` : ""].filter(Boolean).join(" · ");
+    const date = document.createElement("time");
+    date.textContent = new Date(row.created_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+    card.append(heading, detail, date); target.append(card);
+  }
+  if (!target.childElementCount) target.textContent = "No hay actividad administrativa registrada.";
+  $("adminActivityPage").textContent = total
+    ? `${adminActivityOffset + 1}–${Math.min(adminActivityOffset + data.items.length, total)} de ${total}`
+    : "0 registros";
+  $("adminActivityPrevious").disabled = adminActivityOffset === 0;
+  $("adminActivityNext").disabled = adminActivityOffset + data.items.length >= total;
 }
 
 async function setAdminAccountStatus(userId, status) {
@@ -1369,6 +1520,7 @@ async function loadMasterPanel() {
     if (profile.account_status !== "active" || profile.membership_status !== "active" || profile.must_change_password) continue;
     if (!technicianProfiles.has(profile.technician_id)) technicianProfiles.set(profile.technician_id, profile.display_name);
   }
+  masterTeamTechnicians = new Map([...technicianProfiles].sort((a, b) => a[1].localeCompare(b[1], "es")));
   const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "Selecciona un técnico"; placeholder.disabled = true;
   routeSelect.append(placeholder);
   for (const [technicianId, name] of [...technicianProfiles].sort((a, b) => a[1].localeCompare(b[1], "es"))) {
@@ -1395,7 +1547,7 @@ async function loadMasterPanel() {
       : membershipActive
         ? (profile.must_change_password ? "Pendiente de cambio de contraseña" : "Activo")
         : "Desactivado en este equipo";
-    if (!accountDisabled) {
+    if (profile.account_status !== "disabled") {
       actions.push({
         label: membershipActive ? "Desactivar en el equipo" : "Activar en el equipo",
         run: () => setMasterMembership(profile.team_id, profile.technician_id, !membershipActive),
@@ -1419,6 +1571,11 @@ async function loadMasterPanel() {
   if (!accountTarget.childElementCount) accountTarget.textContent = "No hay técnicos asignados todavía.";
   renderThreeDaySelector($("masterDateNav"), masterRouteDate, masterRouteDayOffset, (date, offset) => {
     masterRouteDate = date; masterRouteDayOffset = offset; void loadMasterAppointments();
+  });
+  renderThreeDaySelector($("masterSummaryDateNav"), masterRouteDate, masterRouteDayOffset, (date, offset) => {
+    masterRouteDate = date; masterRouteDayOffset = offset;
+    persistMasterNavigation();
+    void loadMasterAppointments();
   });
   return true;
 }
@@ -1537,6 +1694,7 @@ function bindEvents() {
   });
   $("signOut").addEventListener("click", async () => {
     hideWorkspacePanels();
+    clearRolePanelResults();
     setVisible("startupStatus", true);
     const { error } = await supabase.auth.signOut();
     if (error) await supabase.auth.signOut({ scope: "local" });
@@ -1544,12 +1702,31 @@ function bindEvents() {
     if (error) notify("Sesión local cerrada. Comprueba la conexión para confirmar el cierre remoto.", "error");
   });
   $("masterOwnTab").addEventListener("click", () => setMasterView("appointments"));
+  $("masterSummaryTab").addEventListener("click", () => {
+    setMasterView("summary");
+    void loadMasterAppointments();
+  });
   $("masterRouteTab").addEventListener("click", () => {
     setMasterView("routes");
     void loadMasterAppointments();
   });
   $("masterTechniciansTab").addEventListener("click", () => setMasterView("technicians"));
   $("masterCreateTab").addEventListener("click", () => setMasterView("create"));
+  for (const id of ["adminAccountSearch", "adminAccountRole", "adminAccountTeam", "adminAccountStatus"]) {
+    $(id).addEventListener(id === "adminAccountSearch" ? "input" : "change", renderAdminAccounts);
+  }
+  $("clearAdminAccountFilters").addEventListener("click", () => {
+    for (const id of ["adminAccountSearch", "adminAccountRole", "adminAccountTeam", "adminAccountStatus"]) $(id).value = "";
+    renderAdminAccounts();
+  });
+  $("adminActivityPrevious").addEventListener("click", () => {
+    adminActivityOffset = Math.max(0, adminActivityOffset - ADMIN_ACTIVITY_PAGE_SIZE);
+    void loadAdminActivity();
+  });
+  $("adminActivityNext").addEventListener("click", () => {
+    adminActivityOffset += ADMIN_ACTIVITY_PAGE_SIZE;
+    void loadAdminActivity();
+  });
   $("appointmentTeam").addEventListener("change", () => { selectedAppointmentTeam = $("appointmentTeam").value; });
   $("importClipboard").addEventListener("click", async () => {
     try {
@@ -1690,12 +1867,18 @@ function refreshMadridDates() {
   renderThreeDaySelector($("masterDateNav"), masterRouteDate, masterRouteDayOffset, (date, offset) => {
     masterRouteDate = date; masterRouteDayOffset = offset; void loadMasterAppointments();
   });
+  renderThreeDaySelector($("masterSummaryDateNav"), masterRouteDate, masterRouteDayOffset, (date, offset) => {
+    masterRouteDate = date; masterRouteDayOffset = offset;
+    persistMasterNavigation();
+    void loadMasterAppointments();
+  });
   if (!activeProfile || activeProfile.role === "admin") return;
   if (activeProfile.role === "technician" || $("appointmentsPanel").classList.contains("hidden") === false) {
     importChangesBySource.clear(); ignoredAppointments = [];
     void loadOwnAppointments(appointmentDate);
   }
-  if (activeProfile.role === "master" && !$("masterPanel").classList.contains("hidden")) void loadMasterAppointments();
+  if (activeProfile.role === "master" &&
+      (!$("masterPanel").classList.contains("hidden") || !$("masterSummaryPanel").classList.contains("hidden"))) void loadMasterAppointments();
 }
 
 async function start() {
