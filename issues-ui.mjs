@@ -9,7 +9,7 @@ const WIFI_PROBLEMS = Object.freeze({
   missing_5ghz: "No detecta la red de 5 GHz", other: "Otro problema",
 });
 const WIFI_FIELDS = Object.freeze({ssid:"SSID",password:"contraseña",both:"SSID y contraseña",ssid_5ghz:"red de 5 GHz",label:"etiqueta",other:"otro campo",unknown:"sin determinar"});
-import { buildWifiOcrReportPayload } from "./wifi-ocr-report.mjs";
+import { createWifiOcrReportSubmitter } from "./wifi-ocr-report-submit.mjs";
 const STATUSES = Object.freeze({
   pending: "Pendiente", reviewing: "En revisión", resolved: "Resuelto",
 });
@@ -64,6 +64,9 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
   const admin = () => active() && getProfile().role === "admin";
   const show = (id, visible) => $(id).classList.toggle("hidden", !visible);
   const rpc = (name, args = {}) => getSupabase().rpc(name, args);
+  const submitWifiOcrReport = createWifiOcrReportSubmitter({
+    rpc, isAuthorized: active, appVersion, fileAsBase64,
+  });
 
   const badge = (id, count) => {
     const node = $(id);
@@ -277,28 +280,31 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
       if (isWifi && file && !$("wifiPhotoConsent").checked) {
         setText($("issueFormStatus"), "Confirma que autorizas compartir la fotografía con el Administrador."); return;
       }
+      if (isWifi) {
+        $("issueSubmit").disabled = true;
+        try {
+          await submitWifiOcrReport({
+            metadata: wifiDiagnostics ?? {}, problem: $("wifiIssueProblem").value,
+            description, photo: file, photoConsent: $("wifiPhotoConsent").checked,
+            shareSsid: $("wifiSsidConsent").checked,
+          });
+          void loadMine().catch(() => {});
+          requestId = null; wifiDiagnostics = null; $("issueForm").reset(); resetPreview(); syncWifiFields();
+          setText($("issueFormStatus"), "Reporte enviado correctamente. El Administrador podrá revisarlo desde su panel.");
+        } catch {
+          setText($("issueFormStatus"), "No se pudo enviar el reporte. Inténtalo de nuevo.");
+        } finally { $("issueSubmit").disabled = false; }
+        return;
+      }
       requestId ??= crypto.randomUUID();
       $("issueSubmit").disabled = true;
       try {
         const base64 = file ? await fileAsBase64(file) : null;
-        const { data, error } = isWifi
-          ? await (async () => {
-            const safe = buildWifiOcrReportPayload({ ...(wifiDiagnostics ?? {}), problem: $("wifiIssueProblem").value }, { shareSsid: $("wifiSsidConsent").checked });
-            return await rpc("cc_create_wifi_ocr_report", {
-              p_problem: safe.problem, p_description: description, p_request_id: requestId,
-              p_photo_base64: $("wifiPhotoConsent").checked ? base64 : null,
-              p_photo_mime: $("wifiPhotoConsent").checked ? file?.type ?? null : null,
-              p_photo_consent: $("wifiPhotoConsent").checked,
-              p_share_ssid: safe.shareSsid, p_ssid_candidate: safe.ssidCandidate,
-              p_failed_field: safe.failedField, p_manufacturer: safe.manufacturer,
-              p_model: safe.model, p_app_version: safe.appVersion || appVersion,
-            });
-          })()
-          : await rpc("cc_create_issue_report", {
-            p_category: $("issueCategory").value, p_description: description,
-            p_request_id: requestId, p_image_base64: base64, p_image_mime: file?.type ?? null,
-            p_app_version: appVersion,
-          });
+        const { data, error } = await rpc("cc_create_issue_report", {
+          p_category: $("issueCategory").value, p_description: description,
+          p_request_id: requestId, p_image_base64: base64, p_image_mime: file?.type ?? null,
+          p_app_version: appVersion,
+        });
         if (error || !data?.id) throw new Error("report failed");
         requestId = null; wifiDiagnostics = null; $("issueForm").reset(); resetPreview(); syncWifiFields();
         setText($("issueFormStatus"), "Reporte enviado correctamente. El Administrador podrá revisarlo desde su panel.");
@@ -349,36 +355,5 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
       });
     }
   }
-  function openWifiOcrReport(payload = {}) {
-    if (!active()) return false;
-    setMode("mine");
-    wifiDiagnostics = payload.metadata && typeof payload.metadata === "object" ? { ...payload.metadata } : {};
-    $("issueForm").reset();
-    resetPreview();
-    $("issueCategory").value = "wifi_ocr";
-    $("wifiIssueProblem").value = wifiDiagnostics.problem && Object.prototype.hasOwnProperty.call(WIFI_PROBLEMS, wifiDiagnostics.problem)
-      ? wifiDiagnostics.problem : "other";
-    $("issueDescription").value = "";
-    $("wifiPhotoConsent").checked = false;
-    $("wifiSsidConsent").checked = false;
-    prefilledPhoto = payload.photo && typeof payload.photo.arrayBuffer === "function" ? payload.photo : null;
-    if (prefilledPhoto) {
-      const fileProblem = validateIssueFile(prefilledPhoto);
-      if (fileProblem) { prefilledPhoto = null; setText($("issueFormStatus"), fileProblem); }
-      else {
-        previewUrl = URL.createObjectURL(prefilledPhoto);
-        $("issuePreviewImage").src = previewUrl;
-        show("issuePreview", true);
-      }
-    }
-    syncWifiFields();
-    setText($("issueFormStatus"), prefilledPhoto
-      ? "La foto del escaneo está lista, pero no se enviará hasta que lo autorices."
-      : "Puedes adjuntar una foto si quieres compartirla.");
-    navigation.open();
-    void loadMine();
-    $("issueCompose").scrollIntoView({ block: "start" });
-    return true;
-  }
-  return { bind, reset, refreshIndicator, openWifiOcrReport };
+  return { bind, reset, refreshIndicator, submitWifiOcrReport };
 }
