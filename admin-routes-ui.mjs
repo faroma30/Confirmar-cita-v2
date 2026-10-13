@@ -1,4 +1,5 @@
 import { dateOffset, madridDate } from "./agenda-parity.mjs";
+import { appendCancellationReason } from "./cancellation-reason.mjs?v=3bi1";
 
 const STATUS = { pending: "Pendiente", confirmed: "Confirmada", cancelled: "Cancelada" };
 const timeText = (value) => value ? new Date(value).toLocaleString("es-ES", { timeZone: "Europe/Madrid" }) : "—";
@@ -94,6 +95,7 @@ export function createAdminRoutesUI({ $, rpc, getProfile, getUser, notify }) {
         el("span", `Estado: ${STATUS[a.status] ?? a.status}`),
         el("span", `WhatsApp abierto: ${timeText(a.contacted_at)}`),
         el("span", `Actualizada: ${timeText(a.updated_at)}`));
+      appendCancellationReason(card, a.status, a.cancellation_reason, "admin-cancellation-reason");
       const button = el("button", "Abrir detalle y corregir", "button secondary"); button.type = "button";
       button.addEventListener("click", () => { void openDetail(a.id); });
       card.append(button); list.append(card);

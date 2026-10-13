@@ -1,6 +1,6 @@
-import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3bh1';
-import {parseRouterLabel} from './router-parser.js?v=3bh1';
-import {findSsidFocusRegions} from './ssid-focus.js?v=3bh1';
+import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3bi1';
+import {parseRouterLabel} from './router-parser.js?v=3bi1';
+import {findSsidFocusRegions} from './ssid-focus.js?v=3bi1';
 
 export const OCR_LANGUAGES='spa+eng';
 export const OCR_ENGINE_VERSION='tesseract.js 7.0.0 / tesseract.js-core 7.0.0';

@@ -1,9 +1,10 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createIssuesUI } from "./issues-ui.mjs?v=3bh1";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bh1";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3bh1";
+import { createIssuesUI } from "./issues-ui.mjs?v=3bi1";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bi1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3bi1";
+import { appendCancellationReason } from "./cancellation-reason.mjs?v=3bi1";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
@@ -55,7 +56,7 @@ let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3bh1";
+const APP_BUILD = "3bi1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -89,7 +90,7 @@ async function selectTool(tool, { push = true } = {}) {
       if (!wifiLoadPromise) {
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3bh1");
+          const module = await import("./wifi-connect/entry.mjs?v=3bi1");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {
             submitReport: (payload) => issuesUI.submitWifiOcrReport(payload),
@@ -1353,6 +1354,7 @@ async function loadMasterAppointments() {
     status.className = "state-badge master-route-status " + row.status;
     status.textContent = humanStatus(row.status);
     content.append(title, meta);
+    appendCancellationReason(content, row.status, row.cancellation_reason, "master-cancellation-reason");
     const side = document.createElement("div");
     side.className = "master-route-indicators";
     side.append(status);

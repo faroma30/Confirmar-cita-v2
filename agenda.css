@@ -10,3 +10,5 @@
 
 .admin-route-card{display:grid;gap:5px;border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}.admin-route-card span{font-size:13px;color:var(--muted)}.admin-route-card .button{justify-self:start;margin-top:7px}.admin-route-history-item{border-bottom:1px solid var(--line);padding:9px 0;overflow-wrap:anywhere}.admin-route-history-item p{margin:4px 0}.app-dialog textarea{min-height:88px}
 .wifi-report-consent{border:1px solid #e1a326;border-radius:10px;padding:12px;margin:12px 0;background:#fff9e9}.wifi-report-consent legend{font-weight:700;padding:0 5px}.wifi-report-consent p{font-size:13px;line-height:1.45;margin:4px 0 9px}.wifi-report-consent label{display:flex;align-items:flex-start;gap:9px}.wifi-report-consent input{margin-top:3px;flex:0 0 auto}
+
+.master-cancellation-reason,.admin-cancellation-reason{white-space:pre-wrap;overflow-wrap:anywhere;color:#7d2020!important;border-left:3px solid #d98a8a;padding:7px 10px;margin:7px 0;background:#fff7f7;border-radius:0 8px 8px 0}
