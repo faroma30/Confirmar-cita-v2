@@ -4,8 +4,10 @@ export function findSsidFocusRegions(blocks,width,height,candidates=[]){
  const found=[];
  for(const block of blocks)for(const paragraph of block?.paragraphs||[])for(const [lineIndex,line] of (paragraph?.lines||[]).entries()){
   const text=String(line?.text||'').trim().replace(/^[^\p{L}\p{N}]+/u,'');
-  // Plain SSID labels are common on stickers where the value is printed below.
-  const label=text.match(/^(?:SS[i1l]D(?:(?:\s+(2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b)|(?:\s*([12il]))?(?=$|[\s:=\-])|(?:WI[ -]?FI|WLAN|NETWORK|WIRELESS)\s+NAME\b|NOMBRE\s+(?:DE\s+)?(?:WI[ -]?FI|RED)\b|RED\s+WI[ -]?FI\b)/i);
+  // The plain "SSID" label is common on router stickers (including labels
+  // where the value is printed on the following line). Accept it as a focus
+  // target too; the old expression only recognized SSID1/SSID2.
+  const label=text.match(/^(?:SS[i1l]D(?:(?:\s+(2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b)|(?:\s*([12il]))?)?(?=$|[\s:=\-])|(?:WI[ -]?FI|WLAN|NETWORK|WIRELESS)\s+NAME\b|NOMBRE\s+(?:DE\s+)?(?:WI[ -]?FI|RED)\b|RED\s+WI[ -]?FI\b)/i);
   const normalized=text.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
   const matched=!label&&!/\b(?:password|key|clave|contrase[nñ]a|admin|username)\b/i.test(text)?candidates.find(candidate=>{
    const prefix=String(candidate.value||'').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'').slice(0,9);
@@ -24,7 +26,8 @@ export function findSsidFocusRegions(blocks,width,height,candidates=[]){
   const left=Math.max(0,Math.floor(contentLeft-lineHeight));
   const top=Math.max(0,Math.floor(box.y0-lineHeight*.45));
   const right=Math.min(width,Math.ceil(contentRight+Math.max(lineHeight*3,lineWidth*.2)));
-  // Bound the crop to the SSID value row, stopping before a later password row.
+  // Include the value immediately below a standalone SSID label, but stop
+  // before a subsequent password line so the focused pass stays narrow.
   const bottom=Math.min(height,Math.ceil((safeNextLine?nextBox.y1:box.y1)+lineHeight*.2));
   if(right-left<20||bottom-top<5)continue;
   const focusBand=label?.[1]?(/^2/.test(label[1])?'1':'2'):label?.[2];
