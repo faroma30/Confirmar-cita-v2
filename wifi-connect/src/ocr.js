@@ -1,6 +1,6 @@
 import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3bi1';
-import {parseRouterLabel} from './router-parser.js?v=3bi1';
-import {findSsidFocusRegions} from './ssid-focus.js?v=3bi1';
+import {parseRouterLabel} from './router-parser.js?v=3bn1';
+import {findSsidFocusRegions} from './ssid-focus.js?v=3bn1';
 
 export const OCR_LANGUAGES='spa+eng';
 export const OCR_ENGINE_VERSION='tesseract.js 7.0.0 / tesseract.js-core 7.0.0';
@@ -75,7 +75,10 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
       // Restore only that field label when the tight crop loses it; preserve every
       // character of the recognized value and leave any disagreement for review.
       if(focusedNormalized&&!focusedNormalized.includes('\n')&&!/^(?:SS[i1l]D\s*[12il]?|WI[ -]?FI|WLAN|NETWORK|NOMBRE|RED|PASSWORD|KEY|CLAVE)\b/i.test(focusedNormalized)&&/^[\p{L}\p{N}][\p{L}\p{N}_ .-]{3,63}$/u.test(focusedNormalized))focusedNormalized=`SSID${target.band||''}: ${focusedNormalized}`;
-      focusedNormalized=focusedNormalized.split('\n').filter(line=>/^\s*(?:SS[i1l]D\s*[12il]?|(?:WI[ -]?FI|WLAN|NETWORK|WIRELESS)\s+NAME|NOMBRE\s+(?:DE\s+)?(?:WI[ -]?FI|RED)|RED\s+WI[ -]?FI)\b/i.test(line)).join('\n');
+      // Preserve the value printed on the line immediately below a standalone
+      // SSID label. The previous filter kept only the label, so this focused
+      // pass could never corroborate that common two-line sticker layout.
+      focusedNormalized=focusedSsidText(focusedNormalized);
       if(focusedNormalized)passes.push({id:`ssid-focus-${index+1}`,focusBand:target.band,rawText:focusedRaw,normalizedText:focusedNormalized,confidence:Number.isFinite(focused?.data?.confidence)?focused.data.confidence:null,durationMs:Math.round(performance.now()-focusStarted),image:{width:focusedPrepared.width,height:focusedPrepared.height,bytes:focusedPrepared.blob.size}});
      }catch(error){if(error?.name==='AbortError')throw error;focusErrors.push(error?.name||'Error');}
      finally{focusedPrepared=null;}
@@ -83,7 +86,8 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
    }
    onStage('Finalizando');
    const mergedLines=[],seenLines=new Set();
-   for(const pass of passes)for(const line of pass.normalizedText.split('\n')){const key=line.trim();if(key&&!seenLines.has(key)){seenLines.add(key);mergedLines.push(key);}}
+   const isStandaloneSsidLabel=line=>/^\s*(?:SS[i1l]D(?:(?:\s+(?:2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b)|(?:\s*[12il]))?|(?:WI[ -]?FI|WLAN|NETWORK|WIRELESS)\s+NAME|NOMBRE\s+(?:DE\s+)?(?:WI[ -]?FI|RED)|RED\s+WI[ -]?FI)\s*[:=：＝]?\s*$/i.test(line);
+   for(const pass of passes)for(const line of pass.normalizedText.split('\n')){const key=line.trim();if(key&&(!seenLines.has(key)||isStandaloneSsidLabel(key))){seenLines.add(key);mergedLines.push(key);}}
    const rawText=passes.length===1?passes[0].rawText:passes.map(pass=>`[OCR ${pass.id}]\n${pass.rawText}`).join('\n\n');const normalizedText=mergedLines.join('\n');
    const pagePasses=passes.filter(pass=>!pass.id.startsWith('ssid-focus-'));
    const confidence=pagePasses.length===1?pagePasses[0].confidence:Math.round(pagePasses.reduce((total,pass)=>total+(pass.confidence??0),0)/pagePasses.length*10)/10;
@@ -100,3 +104,16 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
 }
 export const recognizeRouterLabel=createOcrService();
 function mapStatus(status){const value=String(status).toLowerCase();if(value.includes('core')||value.includes('worker'))return 'Cargando reconocimiento';if(value.includes('language')||value.includes('traineddata')||value.includes('initializ'))return 'Cargando idiomas';if(value.includes('recogniz'))return 'Detectando texto';if(value.includes('load'))return 'Cargando reconocimiento';return 'Procesando resultado';}
+const ssidFocusLabel=/^\s*(?:SS[i1l]D(?:(?:\s+(?:2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b)|(?:\s*[12il]))?(?=$|[\s:=\-])|(?:WI[ -]?FI|WLAN|NETWORK|WIRELESS)\s+NAME\b|NOMBRE\s+(?:DE\s+)?(?:WI[ -]?FI|RED)\b|RED\s+WI[ -]?FI\b)/i;
+const credentialOrAdminLabel=/^\s*(?:WPA|WPS|(?:WI[ -]?FI|WLAN|WIRELESS|NETWORK)\s*(?:KEY|PASSWORD|PASS|CLAVE)|(?:CONTRASE[NÑ]A|CONTRASENYA|CLAVE|PASSWORD|USERNAME|ADMIN|SERIAL|MAC|GATEWAY|IP)\b)/i;
+function focusedSsidText(text){
+ const lines=normalizeOcrText(text).split('\n'),kept=[];
+ for(let index=0;index<lines.length;index++){
+  const line=lines[index];if(!ssidFocusLabel.test(line))continue;
+  kept.push(line);
+  const tail=line.replace(ssidFocusLabel,'').replace(/^\s*[:=]\s*/, '').trim();
+  const next=lines[index+1];
+  if(!tail&&next&&next.length<=64&&!credentialOrAdminLabel.test(next))kept.push(next);
+ }
+ return kept.join('\n');
+}

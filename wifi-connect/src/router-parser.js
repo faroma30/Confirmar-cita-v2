@@ -24,7 +24,10 @@ const PASSWORD_LABELS = [
 ];
 
 const normalizeLabel = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[：＝]/g, ':').replace(/\s+/g, ' ').trim().replace(/\s*[:=]\s*$/, '').trim();
-const cleanCandidate = value => String(value || '').replace(/^\s*[:=\-–—]\s*/, '').replace(/\s+$/, '').trim();
+// Leading hyphens and other punctuation can be real SSID characters; never
+// silently rewrite a network name. Keep the legacy delimiter cleanup only for
+// non-SSID fields where OCR often leaves a separator in the extracted value.
+const cleanCandidate = (value,kind) => kind==='ssid'?String(value||'').trim():String(value||'').replace(/^\s*[:=\-–—]\s*/,'').replace(/\s+$/,'').trim();
 const isMac = value => /^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(value.replace(/\s/g, '')) || /^(?:[0-9a-f]{4}[.]){2}[0-9a-f]{4}$/i.test(value);
 const isIpOrNumericPin = value => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) || /^\d{4,10}$/.test(value);
 const isSerialContext = label => /^(?:s\/?n|sn|serial(?:\s+number)?|serial number)$/i.test(label);
@@ -63,7 +66,7 @@ function embeddedWlanKey(line){
  if(!match)return null;
  return {label:'WLAN Key',value:match[1].trim(),delimiter:/[:=：＝]/.test(match[0])};
 }
-function ssidBand(sourceLine){const match=String(sourceLine).match(/(?:^|[^\p{L}\p{N}])SS[i1l]D\s*([12]|[il])\b/i);return match?String(match[1]).toLowerCase().replace(/[il]/,'1'):null;}
+function ssidBand(sourceLine){const match=String(sourceLine).match(/(?:^|[^\p{L}\p{N}])SS[i1l]D(?:\s+(2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b|\s*([12]|[il])\b)/i);if(!match)return null;if(match[1])return /^2/.test(match[1])?'1':'2';return String(match[2]).toLowerCase().replace(/[il]/,'1');}
 function bandToken(value){
  const text=String(value||'');
  const five=text.match(/(^|[-_ ])(5\s*(?:\.\s*0|,\s*0)?\s*G(?:Hz)?)(?=$|[-_ ])/i);
@@ -104,7 +107,7 @@ function scoreValue(value, base, kind) {
   return Math.max(0, Math.min(100, score));
 }
 function addCandidate(list, value, score, reason, sourceLine, kind, sourceLabel = '') {
-  const candidateValue = cleanCandidate(value);
+  const candidateValue = cleanCandidate(value,kind);
   const explicitPassword = kind === 'password' && /Etiqueta|contexto Wi-Fi|QR Wi-Fi/.test(reason);
   if (!plausible(candidateValue, explicitPassword)) return;
   const old = list.find(item => item.value === candidateValue);
@@ -144,7 +147,11 @@ function compareCredentialAcrossPasses(candidate,field,passes){
   });
   if(nearCandidate||nearSsidLine)mismatchedPassCount++;else missingPassCount++;
  }
-  const exactAgreement=relevantPasses.length>=2&&exactPassCount===relevantPasses.length;
+  const exactFocusedPasses=field==='ssid'?relevantPasses.filter(pass=>pass.id?.startsWith('ssid-focus-')&&String(pass.normalizedText||pass.rawText||'').split(/\r?\n/).some(line=>line.trim()===candidate.sourceLine)&&parseRouterLabel({normalizedText:String(pass.normalizedText||pass.rawText||'')}).ssidCandidates.some(item=>item.value===candidate.value)).length:0;
+  // A focused crop is the strongest evidence for the exact characters in a
+  // two-line SSID. Permit one noisy full-label pass only when a focused pass
+  // and another independent pass agree exactly; never infer or repair glyphs.
+  const exactAgreement=relevantPasses.length>=2&&(exactPassCount===relevantPasses.length||field==='ssid'&&exactFocusedPasses>0&&exactPassCount>=2);
   candidate.ocrVerification={passCount:relevantPasses.length,exactPassCount,mismatchedPassCount,missingPassCount,exactAgreement};
  if(!exactAgreement)candidate.needsReview=true;
 }
@@ -214,7 +221,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
       const networkShaped=/[_-].*\d|\d.*[_-]/u.test(line);
       if(adjacentWifiPassword&&(networkShaped||(/[\p{L}]/u.test(line)&&/\d/u.test(line)&&line.trim().length>=6))) {
         addCandidate(ssidCandidates,line,82,'Nombre de red probable antes de etiqueta de contraseña Wi-Fi',line,'ssid','Proximidad a etiqueta de contraseña Wi-Fi');
-        const candidate=ssidCandidates.find(item=>item.value===cleanCandidate(line));if(candidate)candidate.needsReview=true;
+        const candidate=ssidCandidates.find(item=>item.value===cleanCandidate(line,'ssid'));if(candidate)candidate.needsReview=true;
       } else addCandidate(ssidCandidates, line, 22, 'Cadena plausible sin etiqueta', line, 'ssid','');
     }
   });
@@ -283,7 +290,11 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     }
   }
   for(const candidate of [...ssidCandidates,...passwordCandidates])candidate.confidence=Math.min(1,candidate.score/100);
-  const focusedValues=new Set((input?.passes||[]).filter(pass=>pass.id?.startsWith('ssid-focus-')).flatMap(pass=>String(pass.normalizedText||'').split(/\r?\n/).map(line=>{const {label,value}=splitLabel(line);return findLabel(label,SSID_LABELS)?cleanCandidate(value):null}).filter(Boolean)));
+  const focusedValues=new Set((input?.passes||[]).filter(pass=>pass.id?.startsWith('ssid-focus-')).flatMap(pass=>{
+    const passLines=String(pass.normalizedText||'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean),values=[];
+    passLines.forEach((line,index)=>{const {label,value}=splitLabel(line);if(!findLabel(label,SSID_LABELS))return;if(value)values.push(cleanCandidate(value,'ssid'));else if(passLines[index+1]&&!stopLine(passLines[index+1]))values.push(cleanCandidate(passLines[index+1],'ssid'));});
+    return values.filter(Boolean);
+  }));
   ssidCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrSsidConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrSsidConflict))||Number(focusedValues.has(b.value))-Number(focusedValues.has(a.value))||b.score-a.score||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement)));
   passwordCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrPasswordConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrPasswordConflict))||b.score-a.score);
   ssidCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo SSID':'Alternativa de menor puntuación del campo SSID';});

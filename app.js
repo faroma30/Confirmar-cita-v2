@@ -56,7 +56,7 @@ let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3bi1";
+const APP_BUILD = "3bn1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -90,7 +90,7 @@ async function selectTool(tool, { push = true } = {}) {
       if (!wifiLoadPromise) {
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3bi1");
+          const module = await import("./wifi-connect/entry.mjs?v=3bn1");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {
             submitReport: (payload) => issuesUI.submitWifiOcrReport(payload),
