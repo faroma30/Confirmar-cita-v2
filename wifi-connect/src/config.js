@@ -6,6 +6,8 @@ export const DEV_ACCESS={
   validationHosts:['localhost','127.0.0.1','::1','faroma30.github.io'],
   debugHosts:['localhost','127.0.0.1','::1'],
   validationPaths:{'faroma30.github.io':'/Netlixy/'},
+  ssidDiagnosticHosts:['localhost','127.0.0.1','::1','faroma30.github.io'],
+  ssidDiagnosticPaths:{'faroma30.github.io':'/Confirmar-cita-v2/'},
 };
 const normalizeHost=hostname=>String(hostname||'').toLowerCase().replace(/^\[|\]$/g,'').replace(/\.$/,'');
 const LOCAL_HOSTS=new Set(['localhost','127.0.0.1','::1']);
@@ -31,5 +33,11 @@ export function isValidationAccessAllowed(locationLike,allowedHosts=DEV_ACCESS.v
   const host=normalizeHost(locationLike.hostname);
   if(LOCAL_HOSTS.has(host))return true;
   return pathIsWithinBase(locationLike.pathname,validationPaths?.[host]);
+}
+export function isSsidDiagnosticAccessAllowed(locationLike,allowedHosts=DEV_ACCESS.ssidDiagnosticHosts,diagnosticPaths=DEV_ACCESS.ssidDiagnosticPaths){
+  if(!hasAuthorizedMode(locationLike,'ssidDiagnostics',allowedHosts))return false;
+  const host=normalizeHost(locationLike.hostname);
+  if(LOCAL_HOSTS.has(host))return true;
+  return pathIsWithinBase(locationLike.pathname,diagnosticPaths?.[host]);
 }
 export const isDebugAccessAllowed=(locationLike,allowedHosts=DEV_ACCESS.debugHosts)=>hasAuthorizedMode(locationLike,'debug',allowedHosts);

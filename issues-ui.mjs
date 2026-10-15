@@ -10,6 +10,7 @@ const WIFI_PROBLEMS = Object.freeze({
 });
 const WIFI_FIELDS = Object.freeze({ssid:"SSID",password:"contraseña",both:"SSID y contraseña",ssid_5ghz:"red de 5 GHz",label:"etiqueta",other:"otro campo",unknown:"sin determinar"});
 import { createWifiOcrReportSubmitter } from "./wifi-ocr-report-submit.mjs";
+import { createAdminWifiOcrSource } from "./admin-wifi-ocr-source.mjs";
 const STATUSES = Object.freeze({
   pending: "Pendiente", reviewing: "En revisión", resolved: "Resuelto",
 });
@@ -67,6 +68,7 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
   const submitWifiOcrReport = createWifiOcrReportSubmitter({
     rpc, isAuthorized: active, appVersion, fileAsBase64,
   });
+  const adminWifiOcrSource = createAdminWifiOcrSource({ rpc, getProfile });
 
   const badge = (id, count) => {
     const node = $(id);
@@ -355,5 +357,9 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
       });
     }
   }
-  return { bind, reset, refreshIndicator, submitWifiOcrReport };
+  return {
+    bind, reset, refreshIndicator, submitWifiOcrReport,
+    listAdminWifiOcrPhotos: () => adminWifiOcrSource.list(),
+    loadAdminWifiOcrPhoto: id => adminWifiOcrSource.loadPhoto(id),
+  };
 }

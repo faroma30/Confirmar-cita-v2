@@ -1,8 +1,8 @@
 const styles = ["base", "components", "screens", "theme", "visual-system", "home", "navigation", "report"];
 
 export function renderWifiShell(shadowRoot) {
-  const links = styles.map(name => `<link rel="stylesheet" href="${new URL(`../css/${name}.css?v=3bi1`, import.meta.url)}">`).join("");
-  shadowRoot.innerHTML = `${links}<link rel="stylesheet" href="${new URL("../css/embedded.css?v=3bi1", import.meta.url)}">
+  const links = styles.map(name => `<link rel="stylesheet" href="${new URL(`../css/${name}.css?v=3bt2`, import.meta.url)}">`).join("");
+  shadowRoot.innerHTML = `${links}<link rel="stylesheet" href="${new URL("../css/embedded.css?v=3bt2", import.meta.url)}">
     <div class="app-shell">
       <main id="app" tabindex="-1" aria-live="polite"></main>
       <nav class="bottom-nav" aria-label="Navegación Wifi Connect">

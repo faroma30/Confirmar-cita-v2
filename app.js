@@ -1,10 +1,12 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createIssuesUI } from "./issues-ui.mjs?v=3bi1";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bi1";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3bi1";
-import { appendCancellationReason } from "./cancellation-reason.mjs?v=3bi1";
+import { createIssuesUI } from "./issues-ui.mjs?v=3bu1";
+import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs";
+import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v=3bu1";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bu1";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3bu1";
+import { appendCancellationReason } from "./cancellation-reason.mjs?v=3bu1";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
@@ -55,8 +57,10 @@ let masterSelectedTechnicianId = "";
 let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
+let kpiAvailableUserId = null;
+let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3bn2";
+const APP_BUILD = "3bu1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -69,14 +73,65 @@ function toolOverlayOpen() { return settingsNavigation.isOpen() || issuesNavigat
 function updateToolVisibility() {
   const allowed = Boolean(activeUser?.id && activeProfile?.status === "active" && activeProfile?.activation_verified_at && !activeProfile?.must_change_password);
   const overlay = toolOverlayOpen();
+  const kpiAvailable = allowed && kpiAvailableUserId === activeUser.id;
   setVisible("toolCategories", allowed && !overlay);
+  setVisible("kpiToolTab", kpiAvailable && !overlay);
+  $("toolCategories").classList.toggle("has-kpi", kpiAvailable);
+  if (!kpiAvailable || overlay) setVisible("kpiPopupFallback", false);
   $("workspace").classList.toggle("wifi-active", allowed && !overlay && selectedTool === "wifi");
   setVisible("wifiConnectPanel", allowed && !overlay && selectedTool === "wifi");
-  $("confirmarToolTab").setAttribute("aria-selected", String(selectedTool === "confirmar"));
-  $("wifiToolTab").setAttribute("aria-selected", String(selectedTool === "wifi"));
-  $("confirmarToolTab").tabIndex = selectedTool === "confirmar" ? 0 : -1;
-  $("wifiToolTab").tabIndex = selectedTool === "wifi" ? 0 : -1;
+  $("confirmarToolTab").setAttribute("aria-pressed", String(selectedTool === "confirmar"));
+  $("wifiToolTab").setAttribute("aria-pressed", String(selectedTool === "wifi"));
   if (!allowed || overlay || selectedTool !== "wifi") wifiInstance?.suspend();
+}
+
+async function openKpiDashboard() {
+  const allowed = Boolean(activeUser?.id && activeProfile?.status === "active"
+    && activeProfile?.activation_verified_at && !activeProfile?.must_change_password);
+  const requestedUserId = activeUser?.id;
+  if (!allowed || kpiAvailableUserId !== requestedUserId) {
+    setVisible("kpiPopupFallback", false);
+    return;
+  }
+  const popup = window.open("about:blank", "_blank");
+  if (!popup) {
+    setVisible("kpiPopupFallback", true);
+    return;
+  }
+  popup.opener = null;
+  try {
+    const url = await resolveKpiDashboardUrl(supabase);
+    if (!url || activeUser?.id !== requestedUserId || activeProfile?.status !== "active") {
+      popup.close();
+      setVisible("kpiPopupFallback", false);
+      notify("No se pudo autorizar el acceso al KPI.", "error");
+      return;
+    }
+    popup.location.replace(url);
+    setVisible("kpiPopupFallback", false);
+  } catch {
+    popup.close();
+    setVisible("kpiPopupFallback", false);
+    notify("No se pudo autorizar el acceso al KPI.", "error");
+  }
+}
+
+async function refreshKpiAvailability(userId) {
+  const requestId = ++kpiAvailabilityRequest;
+  kpiAvailableUserId = null;
+  updateToolVisibility();
+  if (!userId || activeUser?.id !== userId || activeProfile?.role !== "technician"
+      || activeProfile?.status !== "active" || !activeProfile?.activation_verified_at
+      || activeProfile?.must_change_password) return;
+  try {
+    const available = await checkKpiAvailability(supabase);
+    if (requestId !== kpiAvailabilityRequest || activeUser?.id !== userId) return;
+    kpiAvailableUserId = available ? userId : null;
+  } catch {
+    if (requestId !== kpiAvailabilityRequest || activeUser?.id !== userId) return;
+    kpiAvailableUserId = null;
+  }
+  updateToolVisibility();
 }
 
 async function selectTool(tool, { push = true } = {}) {
@@ -90,10 +145,13 @@ async function selectTool(tool, { push = true } = {}) {
       if (!wifiLoadPromise) {
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3bn2");
+          const module = await import("./wifi-connect/entry.mjs?v=3bt2");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {
             submitReport: (payload) => issuesUI.submitWifiOcrReport(payload),
+            canRunAdminOcrDiagnostics: isActiveAdminProfile(activeProfile),
+            listAdminWifiOcrPhotos: () => issuesUI.listAdminWifiOcrPhotos(),
+            loadAdminWifiOcrPhoto: (id) => issuesUI.loadAdminWifiOcrPhoto(id),
           });
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) { instance.dispose(); throw new Error("La sesión ha cambiado."); }
           return instance;
@@ -320,6 +378,8 @@ async function fetchOwnProfile() {
 }
 
 async function routeSession({ preserveWorkspace = false } = {}) {
+  kpiAvailabilityRequest += 1;
+  kpiAvailableUserId = null;
   const routeStartedAt = performance.now();
   if (activeLoginAttempt?.sessionInstallStartedAt && activeLoginAttempt.sessionInstallMs == null) {
     activeLoginAttempt.sessionInstallMs = routeStartedAt - activeLoginAttempt.sessionInstallStartedAt;
@@ -436,6 +496,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     setVisible("signOut", true);
     return;
   }
+  void refreshKpiAvailability(activeUser.id);
   diagnostic.permissionValidationMs = performance.now() - permissionValidationStartedAt;
   diagnostic.profileAuthorizationMs = performance.now() - profileCheckStartedAt;
   const resumeLoadedWorkspace = preserveWorkspace
@@ -1924,12 +1985,8 @@ function bindEvents() {
   $("issuesClose").addEventListener("click", () => queueMicrotask(updateToolVisibility));
   $("confirmarToolTab").addEventListener("click", () => { void selectTool("confirmar"); });
   $("wifiToolTab").addEventListener("click", () => { void selectTool("wifi"); });
-  $("toolCategories").addEventListener("keydown", (event) => {
-    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-    event.preventDefault();
-    const next = selectedTool === "wifi" ? "confirmar" : "wifi";
-    void selectTool(next).then(() => $(next === "wifi" ? "wifiToolTab" : "confirmarToolTab").focus());
-  });
+  $("kpiToolTab").addEventListener("click", openKpiDashboard);
+  $("kpiFallbackOpen").addEventListener("click", openKpiDashboard);
   window.addEventListener("popstate", (event) => {
     queueMicrotask(() => {
       if (toolOverlayOpen()) { updateToolVisibility(); return; }
@@ -2159,6 +2216,8 @@ async function start() {
         if (activeUser?.id) masterNavigation.clear(activeUser.id);
         activeUser = null;
         activeProfile = null;
+        kpiAvailableUserId = null;
+        kpiAvailabilityRequest += 1;
         initializedWorkspaceUserId = null;
         initializedWorkspaceRole = null;
         masterSelectedTechnicianId = "";

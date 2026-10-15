@@ -1,7 +1,7 @@
-import {recognizeRouterLabel} from './ocr.js?v=3bn2';
-import {decodeQrPayloadFromImage} from './wifi-qr.js';
-import {parseRouterLabel} from './router-parser.js?v=3bn2';
-import {detectCrossFieldContamination,fieldSource} from './scan-flow.js?v=3bi1';
+import {recognizeRouterLabel} from './ocr.js?v=3bs1';
+import {decodeWifiQrPayloadsFromImage} from './wifi-qr.js?v=3bs2';
+import {parseRouterLabel} from './router-parser.js?v=3bs1';
+import {detectCrossFieldContamination,fieldSource} from './scan-flow.js?v=3bs1';
 
 function passDiagnostics(ocr){
  return (ocr?.passes||[]).map(pass=>{
@@ -15,9 +15,44 @@ function passDiagnostics(ocr){
  });
 }
 
+function explicitWifiBand(ssid){
+ const text=String(ssid||'');
+ if(/(?:^|[-_ ])5\s*(?:\.\s*0|,\s*0)?\s*G(?:Hz)?(?=$|[-_ ])/i.test(text))return '5 GHz';
+ if(/(?:^|[-_ ])2\s*(?:[.,]\s*|\s+)4\s*G(?:Hz)?(?=$|[-_ ])/i.test(text)||/(?:^|[-_ ])24\s*G(?:Hz)?(?=$|[-_ ])/i.test(text))return '2.4 GHz';
+ return '';
+}
+function attachQrNetworkCandidates(parsed,networks){
+ const unique=[];const seen=new Set();
+ for(const network of networks||[]){
+  if(network?.type!=='wifi'||!network.ssid)continue;
+  const key=`${network.ssid}\u0000${network.password||''}\u0000${network.security||''}\u0000${Boolean(network.hidden)}`;
+  if(seen.has(key))continue;seen.add(key);unique.push(network);
+ }
+ unique.forEach((network,index)=>{
+  const networkId=`qr-${index+1}`,band=explicitWifiBand(network.ssid);
+  let candidate=parsed.ssidCandidates.find(item=>item.source?.startsWith('qr')&&item.value===network.ssid&&!item.qrNetworkId);
+  if(!candidate){
+   candidate={value:network.ssid,fieldType:'ssid',source:'qr',sourceLabel:'QR Wi-Fi',sourceLine:`QR Wi-Fi · red ${index+1}`,sourcePasses:[],ocrPasses:[],ocrConfidence:null,score:110,confidence:1,reason:'Credencial obtenida de un QR Wi-Fi válido',needsReview:false};
+   parsed.ssidCandidates.push(candidate);
+  }
+  Object.assign(candidate,{source:candidate.source==='qr+ocr'?'qr+ocr':'qr',sourceLabel:'QR Wi-Fi',sourceLine:`QR Wi-Fi · red ${index+1}`,reason:'Credencial obtenida de un QR Wi-Fi válido',score:110,confidence:1,needsReview:false,qrNetworkId:networkId,qrNetwork:{type:'wifi',ssid:network.ssid,password:network.password||'',security:network.security,hidden:Boolean(network.hidden)},...(band?{band}:{})});
+  if(network.password){
+   const passwordCandidate=parsed.passwordCandidates.find(item=>item.source?.startsWith('qr')&&item.value===network.password&&!item.qrNetworkId);
+   if(passwordCandidate)passwordCandidate.qrNetworkId=networkId;
+   else parsed.passwordCandidates.push({value:network.password,fieldType:'password',source:'qr',sourceLabel:'QR Wi-Fi',sourceLine:`QR Wi-Fi · contraseña de red ${index+1}`,sourcePasses:[],ocrPasses:[],ocrConfidence:null,score:110,confidence:1,reason:'Contraseña emparejada con su QR Wi-Fi válido',needsReview:false,qrNetworkId:networkId});
+  }
+ });
+ parsed.ssidCandidates.sort((a,b)=>Number(Boolean(b.source?.startsWith('qr')))-Number(Boolean(a.source?.startsWith('qr')))||b.score-a.score);
+ parsed.passwordCandidates.sort((a,b)=>Number(Boolean(b.source?.startsWith('qr')))-Number(Boolean(a.source?.startsWith('qr')))||b.score-a.score);
+ parsed.ssid=parsed.ssidCandidates[0]||null;
+ parsed.password=parsed.passwordCandidates[0]||null;
+ parsed.multiQrNetworks=unique.length;
+ return parsed;
+}
+
 /** The single camera, gallery, and fixture pipeline. Image and credentials stay in memory on-device. */
 export async function analyzeRouterImage(blob,options={}){
- const signal=options.signal,onProgress=options.onProgress||(()=>{}),onStage=options.onStage||(()=>{}),onDiagnostics=options.onDiagnostics||(()=>{}),recognize=options.recognize||recognizeRouterLabel,decodeQr=options.decodeQr||decodeQrPayloadFromImage,parse=options.parse||parseRouterLabel;
+ const signal=options.signal,onProgress=options.onProgress||(()=>{}),onStage=options.onStage||(()=>{}),onDiagnostics=options.onDiagnostics||(()=>{}),recognize=options.recognize||recognizeRouterLabel,decodeQr=options.decodeQr||decodeWifiQrPayloadsFromImage,parse=options.parse||parseRouterLabel;
  if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/')||!blob.size)throw new TypeError('Selecciona una fotografía válida para analizar.');
  const started=performance.now();let qr={status:'unavailable'},qrDurationMs=0,ocr=null,ocrError=null;
  const emit=(stage,extra={})=>{try{onDiagnostics({stage,qrFound:qr.status==='wifi',qrWifiValid:qr.status==='wifi',qrHasSsid:Boolean(qr.ssid),qrHasPassword:Boolean(qr.password),qrSource:qr.source||null,qrDurationMs,durationMs:Math.round(performance.now()-started),blob:{type:blob.type,size:blob.size},...extra});}catch{}};
@@ -30,7 +65,9 @@ export async function analyzeRouterImage(blob,options={}){
  catch(error){if(error?.name==='AbortError')throw error;ocrError=String(error?.message||'OCR unavailable');emit('ocr-failed',{ocrError:true,errorCode:error?.name==='EncodingError'?'IMAGE_DECODE':error?.name==='NetworkError'?'OCR_ASSET_LOAD':'OCR_RUNTIME',ocrPasses:[{id:'color',executed:attemptedPasses.color},{id:'grayscale-contrast',executed:attemptedPasses.grayscale}],finalPasswordAvailable:qr.status==='wifi'&&Boolean(qr.password),passwordSource:qr.status==='wifi'&&qr.password?'QR':'ninguno'});if(qr.status!=='wifi')throw error;ocr={rawText:'',normalizedText:'',confidence:null,durationMs:0,passes:[],languages:'spa+eng',error:ocrError};}
  if(signal?.aborted){const error=new Error('Análisis cancelado.');error.name='AbortError';throw error;}
  emit('ocr-complete',{ocrPassCount:ocr.passes?.length||0,ocrSsidDetected:Boolean(passDiagnostics(ocr).some(pass=>pass.ssidDetected)),ocrPasswordDetected:Boolean(passDiagnostics(ocr).some(pass=>pass.passwordDetected)),ocrDurationMs:ocr.durationMs??null});
- const parsed=parse({...ocr,qr:qr.status==='wifi'?qr:null});
+ const qrNetworks=qr.status==='wifi'?(Array.isArray(qr.networks)&&qr.networks.length?qr.networks:[qr]):[];
+ const parsed=parse({...ocr,qr:qrNetworks.length===1?qrNetworks[0]:null});
+ if(qrNetworks.length)attachQrNetworkCandidates(parsed,qrNetworks);
  const qrHasPassword=Boolean(qr.status==='wifi'&&qr.password),password=parsed.password;
  const passwordSource=password?.source?.startsWith('qr')?(password.source==='qr+ocr'?'QR + OCR':'QR'):password?.sourcePasses?.length>1?'OCR A + B':password?.sourcePasses?.[0]?.pass==='grayscale-contrast'?'OCR B':password?.sourcePasses?.[0]?'OCR A':password?'OCR fusionado':'ninguno';
  const ocrPassDiagnostics=passDiagnostics(ocr),qrOcrConflict=Boolean(parsed.warnings?.some(item=>/QR Wi-Fi y el texto OCR no coinciden/i.test(item))),ocrSsidDetected=ocrPassDiagnostics.some(pass=>pass.ssidDetected),ocrPasswordDetected=ocrPassDiagnostics.some(pass=>pass.passwordDetected);

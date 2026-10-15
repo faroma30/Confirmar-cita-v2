@@ -4,12 +4,19 @@ const isFieldCandidate=(candidate,field)=>candidate?.fieldType===field&&!(field=
 export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  const candidates=(parsed?.ssidCandidates||[]).filter(candidate=>isFieldCandidate(candidate,'ssid')&&candidate.score>=60&&candidate.source!=='password');
  const password=isFieldCandidate(parsed?.password,'password')?parsed.password:null;
+ const qrNetworks=[];const seenQr=new Set();
+ for(const candidate of candidates){if(!candidate.qrNetworkId||!candidate.qrNetwork)continue;if(seenQr.has(candidate.qrNetworkId))continue;seenQr.add(candidate.qrNetworkId);qrNetworks.push(candidate);}
+ if(qrNetworks.length>1&&!isFieldCandidate(selectedCandidate,'ssid'))return {state:'choose-band',choices:qrNetworks.map((candidate,index)=>({...candidate,selectionLabel:candidate.band||`Red detectada ${index+1}`})),fields:[]};
+ const activeCandidate=isFieldCandidate(selectedCandidate,'ssid')?selectedCandidate:candidates.find(candidate=>candidate.value===parsed?.ssid?.value)||candidates[0]||null;
+ const selectedQr=activeCandidate?.qrNetwork||null;
+ const activePassword=selectedQr?(selectedQr.password?{value:selectedQr.password,fieldType:'password',source:'qr',sourceLabel:'QR Wi-Fi',sourceLine:'QR Wi-Fi emparejado',score:110,confidence:1,qrNetworkId:activeCandidate.qrNetworkId}:null):password;
+ const activeSecurity=selectedQr?.security||parsed?.security?.value;
  const bands=new Map();
  for(const candidate of candidates){if(!candidate.band)continue;const list=bands.get(candidate.band)||[];list.push(candidate);bands.set(candidate.band,list);}
  const choices=[...bands.entries()].filter(([,items])=>items.length).map(([band,items])=>({...items.sort((a,b)=>Number(Boolean(b.corrected))-Number(Boolean(a.corrected))||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement))||b.score-a.score)[0],band}));
  if(choices.length>1&&!isFieldCandidate(selectedCandidate,'ssid'))return {state:'choose-band',choices};
- const primary=isFieldCandidate(selectedCandidate,'ssid')?selectedCandidate:candidates.find(candidate=>candidate.value===parsed?.ssid?.value)||candidates[0]||null;
- if(!primary){if(!password&&parsed?.security?.value!=='Sin contraseña')return {state:'error',choices:[]};return {state:'review',choices:[],candidate:null,fields:['ssid']};}
+ const primary=activeCandidate;
+ if(!primary){if(!activePassword&&activeSecurity!=='Sin contraseña')return {state:'error',choices:[]};return {state:'review',choices:[],candidate:null,fields:['ssid']};}
  const selected={...primary,selectionReason:primary.source?.startsWith('qr')?'Credencial SSID de QR Wi-Fi':`Mejor candidato tipado SSID: ${primary.reason||'sin motivo adicional'}`};
  const ssidConflict=Boolean(parsed?.qrConflicts?.ssid),passwordConflict=Boolean(parsed?.qrConflicts?.password);
  const qrTrusted=candidate=>candidate?.source?.startsWith('qr');
@@ -17,10 +24,10 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  const highConfidenceTaggedOcr=taggedOcrCandidate(primary,'ssid')&&!primary.bandPeerConflict;
  const highConfidencePassword=taggedOcrCandidate(password,'password');
  const ssidUnverified=Boolean(primary.ocrVerification&&!primary.ocrVerification.exactAgreement&&!qrTrusted(primary));
- const passwordUnverified=Boolean(password?.ocrVerification&&!password.ocrVerification.exactAgreement&&!qrTrusted(password));
+ const passwordUnverified=Boolean(activePassword?.ocrVerification&&!activePassword.ocrVerification.exactAgreement&&!qrTrusted(activePassword));
  const crossFieldContamination=detectCrossFieldContamination(parsed,primary);
  const ssidNeedsReview=Boolean(crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary)&&!highConfidenceTaggedOcr);
- const passwordNeedsReview=parsed?.security?.value!=='Sin contraseña'&&(!password||passwordConflict||passwordUnverified||password.needsReview&&!password.qrAgreement&&!qrTrusted(password)&&!highConfidencePassword);
+ const passwordNeedsReview=activeSecurity!=='Sin contraseña'&&(!activePassword||passwordConflict||passwordUnverified||activePassword.needsReview&&!activePassword.qrAgreement&&!qrTrusted(activePassword)&&!highConfidencePassword);
  const fields=[...(ssidNeedsReview?['ssid']:[]),...(passwordNeedsReview?['password']:[])];
  if(fields.length)return {state:'review',choices:[selected],candidate:selected,fields};
  return {state:'ready',choices:[selected],candidate:selected,fields:[]};
@@ -44,6 +51,7 @@ export function fieldSource(parsed,field){
 
 export function createScannedNetwork(parsed,candidate,qr={}){
  const safeSsid=isFieldCandidate(candidate,'ssid')&&candidate?.source!=='password'?candidate:null;
+ if(safeSsid?.qrNetwork){const network=safeSsid.qrNetwork;return {ssid:network.ssid,password:network.password||'',security:network.security||'WPA/WPA2',hidden:Boolean(network.hidden),note:'',source:'router_scan',origin:'router_scan',band:safeSsid.band||''};}
  const safePassword=isFieldCandidate(parsed?.password,'password')?parsed.password:null;
  const sameSource=Boolean(safeSsid?.sourceLine&&safePassword?.sourceLine&&safeSsid.sourceLine===safePassword.sourceLine&&safeSsid.sourceLabel===safePassword.sourceLabel);
  const contaminated=Boolean(safeSsid&&safePassword&&safeSsid.value===safePassword.value&&sameSource);
