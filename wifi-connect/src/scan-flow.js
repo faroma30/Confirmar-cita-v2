@@ -20,13 +20,17 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  const selected={...primary,selectionReason:primary.source?.startsWith('qr')?'Credencial SSID de QR Wi-Fi':`Mejor candidato tipado SSID: ${primary.reason||'sin motivo adicional'}`};
  const ssidConflict=Boolean(parsed?.qrConflicts?.ssid),passwordConflict=Boolean(parsed?.qrConflicts?.password);
  const qrTrusted=candidate=>candidate?.source?.startsWith('qr');
- const taggedOcrCandidate=(candidate,field)=>candidate?.score>=90&&candidate?.source!=='qr'&&new RegExp(`Etiqueta ${field==='ssid'?'SSID':'de contraseña Wi-Fi'}`,'i').test(candidate?.reason||'');
- const highConfidenceTaggedOcr=taggedOcrCandidate(primary,'ssid')&&!primary.bandPeerConflict;
- const highConfidencePassword=taggedOcrCandidate(password,'password');
- const ssidUnverified=Boolean(primary.ocrVerification&&!primary.ocrVerification.exactAgreement&&!qrTrusted(primary));
- const passwordUnverified=Boolean(activePassword?.ocrVerification&&!activePassword.ocrVerification.exactAgreement&&!qrTrusted(activePassword));
+ // `score` is parser/ranking evidence, not an OCR confidence. Only the OCR
+ // engine's pass confidence may satisfy this automatic-use threshold.
+ // Preserve the existing password-review threshold; this phase changes SSID
+ // review coherence only. Password payloads are never part of diagnostics.
+ const highConfidencePassword=Number(password?.score)>=90&&password?.source!=='qr'&&/Etiqueta de contraseña Wi-Fi/i.test(password?.reason||'');
+ const ocrConfidenceNeedsReview=candidate=>Boolean(candidate&& !candidate.source?.startsWith('qr')&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90));
+ const passStatus=candidate=>candidate?.ocrVerification?.status||(candidate?.ocrVerification?.mismatchedPassCount>0?'disagreement':candidate?.ocrVerification?.exactAgreement?'agreement':'insufficient');
+ const ssidUnverified=Boolean(primary.ocrVerification&&passStatus(primary)==='disagreement'&&!qrTrusted(primary));
+ const passwordUnverified=Boolean(activePassword?.ocrVerification&&passStatus(activePassword)==='disagreement'&&!qrTrusted(activePassword));
  const crossFieldContamination=detectCrossFieldContamination(parsed,primary);
- const ssidNeedsReview=Boolean(crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary)&&!highConfidenceTaggedOcr);
+ const ssidNeedsReview=Boolean(crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||ocrConfidenceNeedsReview(primary)||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary));
  const passwordNeedsReview=activeSecurity!=='Sin contraseña'&&(!activePassword||passwordConflict||passwordUnverified||activePassword.needsReview&&!activePassword.qrAgreement&&!qrTrusted(activePassword)&&!highConfidencePassword);
  const fields=[...(ssidNeedsReview?['ssid']:[]),...(passwordNeedsReview?['password']:[])];
  if(fields.length)return {state:'review',choices:[selected],candidate:selected,fields};

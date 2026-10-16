@@ -119,41 +119,32 @@ function addCandidate(list, value, score, reason, sourceLine, kind, sourceLabel 
   }
   list.push(candidate);
 }
-function editDistanceAtMostTwo(left,right){
- const a=String(left||''),b=String(right||'');if(a===b)return 0;if(Math.abs(a.length-b.length)>2)return 3;
- let previous=Array.from({length:b.length+1},(_,index)=>index);
- for(let row=1;row<=a.length;row++){const current=[row];let min=row;for(let col=1;col<=b.length;col++){const value=Math.min(current[col-1]+1,previous[col]+1,previous[col-1]+(a[row-1]===b[col-1]?0:1));current.push(value);min=Math.min(min,value);}if(min>2)return 3;previous=current;}
- return previous[b.length];
-}
 function compareCredentialAcrossPasses(candidate,field,passes){
  if(!passes.length||candidate?.source?.startsWith('qr'))return;
  let exactPassCount=0,mismatchedPassCount=0,missingPassCount=0;
   const relevantPasses=passes.filter(pass=>!pass.id?.startsWith('ssid-focus-')||field==='ssid'&&ssidBand(candidate.sourceLine)===pass.focusBand);
+  const labelKey=normalizeLabel(String(candidate.sourceLabel||''));
   for(const pass of relevantPasses){
   const passText=String(pass.normalizedText||pass.rawText||'');
   const passParsed=parseRouterLabel({rawText:pass.rawText??passText,normalizedText:passText,passes:[]});
-  const passCandidates=field==='ssid'?passParsed.ssidCandidates:passParsed.passwordCandidates;
+  const allPassCandidates=field==='ssid'?passParsed.ssidCandidates:passParsed.passwordCandidates;
+  // Compare like-labelled fields only. SSID1 and SSID2 (or two separate
+  // networks) are not contradictory merely because their values differ.
+  const passCandidates=allPassCandidates.filter(item=>normalizeLabel(String(item.sourceLabel||''))===labelKey);
   const exact=passCandidates.some(item=>item.value===candidate.value);
   if(exact){exactPassCount++;continue;}
-  const nearCandidate=passCandidates.some(item=>editDistanceAtMostTwo(item.value,candidate.value)<=2);
-  // SSIDs can be present as unlabelled lines and missed by a parser pass (for example when
-  // OCR adds punctuation or replaces an underscore with a space). Nearness is only evidence
-  // of uncertainty; it never rewrites the detected value.
-  const nearSsidLine=field==='ssid'&&passText.split(/\r?\n/).some(line=>{
-   const value=line.trim();if(value.length<4||value.length>64||/\b(?:ssid|contrasenya|password|clave|wpa|mac|serial|username|admin|wps)\b/i.test(value))return false;
-   const candidateLike=/[\p{L}\p{N}]/u.test(value)&&/[\p{L}\p{N}_-]/u.test(value);
-   const compared=value.replace(/^[^\p{L}\p{N}]+/u,'');
-   return candidateLike&&compared!==candidate.value&&editDistanceAtMostTwo(compared,candidate.value)<=2;
-  });
-  if(nearCandidate||nearSsidLine)mismatchedPassCount++;else missingPassCount++;
+  // Any different reading for the same explicit label is incompatible. Do not
+  // treat a distant OCR suffix (for example nearby security text) as absence.
+  if(passCandidates.length)mismatchedPassCount++;else missingPassCount++;
  }
   const exactFocusedPasses=field==='ssid'?relevantPasses.filter(pass=>pass.id?.startsWith('ssid-focus-')&&String(pass.normalizedText||pass.rawText||'').split(/\r?\n/).some(line=>line.trim()===candidate.sourceLine)&&parseRouterLabel({normalizedText:String(pass.normalizedText||pass.rawText||'')}).ssidCandidates.some(item=>item.value===candidate.value)).length:0;
-  // A focused crop is the strongest evidence for the exact characters in a
-  // two-line SSID. Permit one noisy full-label pass only when a focused pass
-  // and another independent pass agree exactly; never infer or repair glyphs.
-  const exactAgreement=relevantPasses.length>=2&&(exactPassCount===relevantPasses.length||field==='ssid'&&exactFocusedPasses>0&&exactPassCount>=2);
-  candidate.ocrVerification={passCount:relevantPasses.length,exactPassCount,mismatchedPassCount,missingPassCount,exactAgreement};
- if(!exactAgreement)candidate.needsReview=true;
+  // A missing candidate is not a conflicting reading. Two independent exact
+  // readings are enough to establish agreement; only an incompatible reading
+  // for the same label establishes disagreement.
+  const exactAgreement=exactPassCount>=2&&mismatchedPassCount===0;
+  const status=mismatchedPassCount>0?'disagreement':exactAgreement?'agreement':exactPassCount>0?'insufficient':'no_candidate';
+  candidate.ocrVerification={status,passCount:relevantPasses.length,exactPassCount,mismatchedPassCount,missingPassCount,exactFocusedPassCount:exactFocusedPasses,exactAgreement};
+ if(mismatchedPassCount>0)candidate.needsReview=true;
 }
 const stopLine = line => {
   const { label } = splitLabel(line);
@@ -290,12 +281,25 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     }
   }
   for(const candidate of [...ssidCandidates,...passwordCandidates])candidate.confidence=Math.min(1,candidate.score/100);
+  const passRecords=Array.isArray(input?.passes)?input.passes:[];
+  for(const candidate of ssidCandidates)compareCredentialAcrossPasses(candidate,'ssid',passRecords);
+  for(const candidate of passwordCandidates)compareCredentialAcrossPasses(candidate,'password',passRecords);
+  for(const candidate of [...ssidCandidates,...passwordCandidates]){
+    const labelKey=normalizeLabel(String(candidate.sourceLabel||''));
+    const sources=passRecords.filter(pass=>!pass.id?.startsWith('ssid-focus-')||candidate.fieldType==='ssid'&&ssidBand(candidate.sourceLine)===pass.focusBand).filter(pass=>{
+      const passText=String(pass.normalizedText||pass.rawText||'');
+      const passParsed=parseRouterLabel({rawText:pass.rawText??passText,normalizedText:passText,passes:[]});
+      const passCandidates=candidate.fieldType==='ssid'?passParsed.ssidCandidates:passParsed.passwordCandidates;
+      return passCandidates.some(item=>normalizeLabel(String(item.sourceLabel||''))===labelKey&&item.value===candidate.value);
+    }).map(pass=>({pass:pass.id,text:candidate.sourceLine,score:Number.isFinite(pass.confidence)?pass.confidence:null}));
+    if(sources.length){candidate.sourcePasses=sources;candidate.ocrPasses=sources.map(item=>item.pass);const passScores=sources.map(item=>item.score).filter(Number.isFinite);candidate.ocrConfidence=passScores.length?Math.min(...passScores):null;candidate.ocrScore=candidate.ocrConfidence;candidate.sourceText=candidate.sourceLine;if(candidate.fieldType==='ssid'&&(candidate.ocrScore===null||candidate.ocrScore<90))candidate.needsReview=true;}
+  }
   const focusedValues=new Set((input?.passes||[]).filter(pass=>pass.id?.startsWith('ssid-focus-')).flatMap(pass=>{
     const passLines=String(pass.normalizedText||'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean),values=[];
     passLines.forEach((line,index)=>{const {label,value}=splitLabel(line);if(!findLabel(label,SSID_LABELS))return;if(value)values.push(cleanCandidate(value,'ssid'));else if(passLines[index+1]&&!stopLine(passLines[index+1]))values.push(cleanCandidate(passLines[index+1],'ssid'));});
     return values.filter(Boolean);
   }));
-  ssidCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrSsidConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrSsidConflict))||Number(focusedValues.has(b.value))-Number(focusedValues.has(a.value))||b.score-a.score||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement)));
+  ssidCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrSsidConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrSsidConflict))||(b.ocrVerification?.exactPassCount||0)-(a.ocrVerification?.exactPassCount||0)||Number(focusedValues.has(b.value))-Number(focusedValues.has(a.value))||b.score-a.score||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement)));
   passwordCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrPasswordConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrPasswordConflict))||b.score-a.score);
   ssidCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo SSID':'Alternativa de menor puntuación del campo SSID';});
   passwordCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo contraseña':'Alternativa de menor puntuación del campo contraseña';});
@@ -305,21 +309,15 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
   const ssid = ssidCandidates[0] ? { ...ssidCandidates[0], confidence: Math.min(1, ssidCandidates[0].score / 100) } : null;
   const password = passwordCandidates[0] ? { ...passwordCandidates[0], confidence: Math.min(1, passwordCandidates[0].score / 100) } : null;
   const warnings = [];
-  const passRecords=Array.isArray(input?.passes)?input.passes:[];
-  for(const candidate of ssidCandidates)compareCredentialAcrossPasses(candidate,'ssid',passRecords);
-  for(const candidate of passwordCandidates)compareCredentialAcrossPasses(candidate,'password',passRecords);
-  if(ssidCandidates.some(candidate=>candidate.ocrVerification&&!candidate.ocrVerification.exactAgreement))warnings.push('El SSID no coincide exactamente entre pases OCR; requiere revisión.');
-  if(passwordCandidates.some(candidate=>candidate.ocrVerification&&!candidate.ocrVerification.exactAgreement))warnings.push('La contraseña no coincide exactamente entre pases OCR; requiere revisión.');
-  for(const candidate of [...ssidCandidates,...passwordCandidates]){
-    const sources=passRecords.filter(pass=>String(pass.normalizedText||'').split(/\r?\n/).some(source=>source.trim()===candidate.sourceLine)).map(pass=>({pass:pass.id,text:candidate.sourceLine,score:Number.isFinite(pass.confidence)?pass.confidence:null}));
-    if(sources.length){candidate.sourcePasses=sources;candidate.ocrPasses=sources.map(item=>item.pass);candidate.ocrConfidence=Math.max(...sources.map(item=>item.score??0));candidate.ocrScore=candidate.ocrConfidence;candidate.sourceText=candidate.sourceLine;if(candidate.ocrScore<72)candidate.needsReview=true;}
-  }
+  if(ssidCandidates.some(candidate=>candidate.ocrVerification?.status==='disagreement'))warnings.push('El SSID no coincide exactamente entre pases OCR; requiere revisión.');
+  if(passwordCandidates.some(candidate=>candidate.ocrVerification?.status==='disagreement'))warnings.push('La contraseña no coincide exactamente entre pases OCR; requiere revisión.');
   if(ssid&&ssidCandidates[0])Object.assign(ssid,ssidCandidates[0],{confidence:Math.min(1,ssidCandidates[0].score/100)});
   if(password&&passwordCandidates[0])Object.assign(password,passwordCandidates[0],{confidence:Math.min(1,passwordCandidates[0].score/100)});
   const bandCandidates=new Map();
   for(const candidate of ssidCandidates){const band=ssidBand(candidate.sourceLine);if(band){const items=bandCandidates.get(band)||[];items.push(candidate);bandCandidates.set(band,items);}}
   for(const candidates of bandCandidates.values())if(new Set(candidates.map(candidate=>candidate.value)).size>1)for(const candidate of candidates)candidate.needsReview=true;
   annotateSsidBands(ssidCandidates);
+  if(ssid&&ssidCandidates[0])Object.assign(ssid,ssidCandidates[0],{confidence:Math.min(1,ssidCandidates[0].score/100)});
   if (ssidCandidates.filter(c => c.score >= 70).length > 1) warnings.push('Se han encontrado varios SSID; selecciona el correcto.');
   if (!ssid) warnings.push('No se ha podido identificar el nombre Wi-Fi.');
   if (!password && security.value !== 'Sin contraseña') warnings.push('No se ha podido identificar la contraseña Wi-Fi.');
