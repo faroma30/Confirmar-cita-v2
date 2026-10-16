@@ -1,7 +1,7 @@
-import {recognizeRouterLabel} from './ocr.js?v=3cc1';
+import {recognizeRouterLabel} from './ocr.js?v=3ce1';
 import {decodeWifiQrPayloadsFromImage} from './wifi-qr.js?v=3bv1';
-import {parseRouterLabel} from './router-parser.js?v=3cc1';
-import {detectCrossFieldContamination,fieldSource} from './scan-flow.js?v=3cc1';
+import {parseRouterLabel} from './router-parser.js?v=3ce1';
+import {detectCrossFieldContamination,fieldSource} from './scan-flow.js?v=3ce1';
 
 function passDiagnostics(ocr){
  return (ocr?.passes||[]).map(pass=>{
@@ -77,5 +77,6 @@ export async function analyzeRouterImage(blob,options={}){
  emit('analysis-complete',{ocrPassCount:ocr.passes?.length||0,ocrSsidDetected:diagnostics.ocrPasses.some(pass=>pass.ssidDetected),ocrPasswordDetected:diagnostics.ocrPasses.some(pass=>pass.passwordDetected),finalPasswordAvailable:Boolean(password),ssidSource:diagnostics.ssidSource,passwordSource:diagnostics.passwordSource,crossFieldContaminationDetected:diagnostics.crossFieldContaminationDetected,qrOcrConflict:diagnostics.fusion.qrOcrConflict,parser:parserDiagnostics});
  return {qr,qrDurationMs,ocr,ocrError,parsed,diagnostics,durationMs:Math.round(performance.now()-started),source:qr.status==='wifi'?(parsed.qrAgreement?'qr+ocr':'qr'):'ocr'};
 }
+
 
 
