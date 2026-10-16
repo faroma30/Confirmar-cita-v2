@@ -23,7 +23,7 @@ const PASSWORD_LABELS = [
   [/^key$/, 58, 'Etiqueta genérica Key con contexto Wi-Fi']
 ];
 
-const normalizeLabel = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[：＝]/g, ':').replace(/\s+/g, ' ').trim().replace(/\s*[:=]\s*$/, '').trim();
+const normalizeLabel = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[：＝]/g, ':').replace(/\s+/g, ' ').trim().replace(/\s*[:=]\s*$/, '').trim().replace(/^[\s"'`“”‘’]+|[\s"'`“”‘’]+$/g, '').trim();
 // Leading hyphens and other punctuation can be real SSID characters; never
 // silently rewrite a network name. Keep the legacy delimiter cleanup only for
 // non-SSID fields where OCR often leaves a separator in the extracted value.
@@ -79,27 +79,36 @@ function bandToken(value){
 function annotateSsidBands(candidates){
  for(const candidate of candidates){const token=bandToken(candidate.value);if(token)candidate.band=token.band;}
  for(const candidate of candidates){
-  const token=bandToken(candidate.value);if(!token||token.band!=='2.4 GHz')continue;
-  // SSID1 and SSID2 are independent networks. A matched 2.4/5 GHz pair can
-  // provide narrow structural evidence that OCR dropped the decimal point in
-  // the SSID1 band token; it never verifies the reconstructed value.
-  const peers=explicitSsidIndex(candidate)==='1'
-    ? candidates.filter(other=>other!==candidate&&explicitSsidIndex(other)==='2'&&bandToken(other.value)?.band==='5 GHz')
+  const token=bandToken(candidate.value);if(!token)continue;
+  // Explicit SSID1/SSID2 labels identify separate bands. Matching family and
+  // suffix support only a narrow proposal for an OCR-damaged band/separator.
+  const peerIndex=explicitSsidIndex(candidate)==='1'?'2':explicitSsidIndex(candidate)==='2'?'1':null;
+  const opposite=token.band==='2.4 GHz'?'5 GHz':'2.4 GHz';
+  const peers=peerIndex
+    ? candidates.filter(other=>other!==candidate&&explicitSsidIndex(other)===peerIndex&&bandToken(other.value)?.band===opposite)
     : [];
   for(const peer of peers){
     const peerToken=bandToken(peer.value);const left=candidate.value.slice(0,token.start),right=candidate.value.slice(token.end),peerLeft=peer.value.slice(0,peerToken.start),peerRight=peer.value.slice(peerToken.end);
-    const sameFamily=left.replace(/[^\p{L}\p{N}]/gu,'').length>=3&&left.toLowerCase()===peerLeft.toLowerCase()&&right.toLowerCase()===peerRight.toLowerCase();
-    if(!sameFamily||token.strength>=3)continue;
-    candidate.proposedValue=`${candidate.value.slice(0,token.start)}2.4G${candidate.value.slice(token.end)}`;
+    const comparable=value=>String(value).toLowerCase().replace(/(?:\s*[-–—]\s*)+/g,'-').replace(/\s+/g,' ').trim();
+    const sameFamily=comparable(left).replace(/[^\p{L}\p{N}]/gu,'').length>=3&&comparable(left)===comparable(peerLeft)&&comparable(right)===comparable(peerRight);
+    if(!sameFamily)continue;
+    const canonicalEdges=value=>({left:value.slice(0,token.start).replace(/(?:\s*[-–—]\s*)+$/,'-'),right:value.slice(token.end).replace(/^(?:\s*[-–—]\s*)+/,'-')});
+    // The paired SSID labels and matching family/suffix provide structural
+    // evidence for repairing only separator noise around the recognized band.
+    // This remains a proposal and always requires a human confirmation.
+    const edges=canonicalEdges(candidate.value);
+    const proposed=`${edges.left}${token.standard}${edges.right}`;
+    if(proposed===candidate.value)continue;
+    candidate.proposedValue=proposed;
     candidate.proposedFrom=candidate.value;
     candidate.corrected=true;
-    candidate.correctionReason='Propuesta de punto decimal basada en SSID1/SSID2 con prefijo y sufijo coincidentes; confirma el valor en la etiqueta.';
-    candidate.correctionDiff='El OCR leyó «2 4G»; la estructura de ambas etiquetas sugiere «2.4G».';
+    candidate.correctionReason=`Propuesta de formato de banda basada en SSID1/SSID2 con prefijo y sufijo coincidentes; confirma el valor en la etiqueta.`;
+    candidate.correctionDiff=`El OCR leyó «${token.raw}» con separadores dudosos; la estructura de ambas etiquetas sugiere «${token.standard}».`;
     candidate.bandConfidence='moderate';
     candidate.needsReview=true;
     break;
   }
-  if(token.strength<3){candidate.bandConfidence=candidate.bandConfidence||'low';candidate.possibleBand='2.4 GHz';candidate.needsReview=true;}
+  if(token.band==='2.4 GHz'&&token.strength<3){candidate.bandConfidence=candidate.bandConfidence||'low';candidate.possibleBand='2.4 GHz';candidate.needsReview=true;}
  }
 }
 function scoreValue(value, base, kind) {
@@ -147,10 +156,11 @@ function compareCredentialAcrossPasses(candidate,field,passes){
   // A missing candidate is not a conflicting reading. Two independent exact
   // readings are enough to establish agreement; only an incompatible reading
   // for the same label establishes disagreement.
-  const exactAgreement=exactPassCount>=2&&mismatchedPassCount===0;
-  const status=mismatchedPassCount>0?'disagreement':exactAgreement?'agreement':exactPassCount>0?'insufficient':'no_candidate';
+  const explicitlyBandLabelledSsid=field==='ssid'&&explicitSsidIndex(candidate)!==null;
+  const exactAgreement=exactPassCount>=2&&exactPassCount>mismatchedPassCount&&!(explicitlyBandLabelledSsid&&mismatchedPassCount>0);
+  const status=exactAgreement?'agreement':mismatchedPassCount>0?'disagreement':exactPassCount>0?'insufficient':'no_candidate';
   candidate.ocrVerification={status,passCount:relevantPasses.length,exactPassCount,mismatchedPassCount,missingPassCount,exactFocusedPassCount:exactFocusedPasses,exactAgreement};
- if(mismatchedPassCount>0)candidate.needsReview=true;
+ if(mismatchedPassCount>0&&!exactAgreement)candidate.needsReview=true;
 }
 const stopLine = line => {
   const { label } = splitLabel(line);
@@ -161,6 +171,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
   const rawText = input?.rawText ?? '';
   const text = String(input?.normalizedText !== undefined ? input.normalizedText : rawText);
   const lines = text.replace(/\r\n?/g, '\n').split('\n').map(line => line.trim()).filter(Boolean);
+  const hasWifiContext=/\b(?:wi[ -]?fi|wlan|ssid[12]?|wpa)\b/i.test(text);
   const ssidCandidates = [];
   const passwordCandidates = [];
   const excluded = [];
@@ -169,9 +180,11 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
   // Values immediately following a password label belong only to that field,
   // even when their shape resembles an SSID.
   const passwordValueLines = new Set();
+  const ssidValueLines = new Set();
   lines.forEach((line,index)=>{
     const embedded=embeddedWlanKey(line),split=splitLabel(line),{label,value}=embedded||split;
     if(findLabel(label,PASSWORD_LABELS)&&!value&&lines[index+1]&&!stopLine(lines[index+1]))passwordValueLines.add(index+1);
+    if(findLabel(label,SSID_LABELS)&&!value&&lines[index+1]&&!stopLine(lines[index+1]))ssidValueLines.add(index+1);
   });
 
   lines.forEach((line, index) => {
@@ -182,6 +195,10 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     const normalizedLabel = normalizeLabel(label);
     const ssidLabel = findLabel(label, SSID_LABELS);
     let passwordLabel = findLabel(label, PASSWORD_LABELS);
+    // “Key” alone is ambiguous. Accept it as a credential label only when
+    // the same label includes explicit Wi-Fi context; the normalized label is
+    // still a boundary for preventing the preceding SSID value from consuming it.
+    if(normalizedLabel==='key'&&!hasWifiContext)passwordLabel=null;
     if(embeddedKey&&passwordLabel&&!embeddedKey.delimiter)passwordLabel=[passwordLabel[0],Math.min(passwordLabel[1],50),passwordLabel[2]];
 
     if (isSerialContext(normalizedLabel) || /^mac(?:\s+address)?$/i.test(normalizedLabel) || isWpsContext(normalizedLabel) || isAdminContext(normalizedLabel, lines, index)) {
@@ -212,7 +229,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     }
 
     // Preserve plausible unlabelled SSID-like values as low-score diagnostic candidates.
-    if (!ssidLabel && !passwordLabel && !value && !passwordValueLines.has(index) && /^[\p{L}\p{N}][\p{L}\p{N}_ .-]{2,63}$/u.test(line) && !stopLine(line) && !/\b(?:router|model|gateway|internet|security|encryption|wifi|wi-fi|wlan|ssid|password|serial|mac|pin|contrasenya|clave|contraseña|clau)\b/i.test(line)) {
+    if (!ssidLabel && !passwordLabel && !value && !passwordValueLines.has(index) && !ssidValueLines.has(index) && !ssidCandidates.some(candidate=>candidate.value===line) && /^[\p{L}\p{N}][\p{L}\p{N}_ .-]{2,63}$/u.test(line) && !stopLine(line) && !/\b(?:router|model|gateway|internet|security|encryption|wifi|wi-fi|wlan|ssid|password|serial|mac|pin|contrasenya|clave|contraseña|clau)\b/i.test(line)) {
       const nextLines=lines.slice(index+1,index+3);
       const adjacentWifiPassword=nextLines.some(nextLine=>{const {label:nextLabel}=splitLabel(nextLine);const match=findLabel(nextLabel,PASSWORD_LABELS);return Boolean(match&&/Wi-Fi|catalana|WPA/i.test(match[2]));});
       const networkShaped=/[_-].*\d|\d.*[_-]/u.test(line);
@@ -298,7 +315,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
       const passCandidates=candidate.fieldType==='ssid'?passParsed.ssidCandidates:passParsed.passwordCandidates;
       return passCandidates.some(item=>normalizeLabel(String(item.sourceLabel||''))===labelKey&&item.value===candidate.value);
     }).map(pass=>({pass:pass.id,text:candidate.sourceLine,score:Number.isFinite(pass.confidence)?pass.confidence:null}));
-    if(sources.length){candidate.sourcePasses=sources;candidate.ocrPasses=sources.map(item=>item.pass);const passScores=sources.map(item=>item.score).filter(Number.isFinite);candidate.ocrConfidence=passScores.length?Math.min(...passScores):null;candidate.ocrScore=candidate.ocrConfidence;candidate.sourceText=candidate.sourceLine;if(candidate.fieldType==='ssid'&&(candidate.ocrScore===null||candidate.ocrScore<90))candidate.needsReview=true;}
+    if(sources.length){candidate.sourcePasses=sources;candidate.ocrPasses=sources.map(item=>item.pass);const passScores=sources.map(item=>item.score).filter(Number.isFinite);candidate.ocrConfidence=passScores.length?Math.min(...passScores):null;candidate.ocrScore=candidate.ocrConfidence;candidate.sourceText=candidate.sourceLine;if(candidate.fieldType==='ssid'&&(candidate.ocrScore===null||candidate.ocrScore<90)&&candidate.ocrVerification?.exactAgreement!==true)candidate.needsReview=true;}
   }
   const focusedValues=new Set((input?.passes||[]).filter(pass=>pass.id?.startsWith('ssid-focus-')).flatMap(pass=>{
     const passLines=String(pass.normalizedText||'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean),values=[];
@@ -354,3 +371,4 @@ function detectSecurity(lines) {
   if (wpa2 || wpa) return { value: 'WPA/WPA2', detected: wpa2 ? 'WPA2' : 'WPA', inferred: false, confidence: 0.86, fieldType:'security', sourceLabel:'WPA/WPA2', sourceLine:lines.find(line=>/\bWPA\s*[- ]?2|WPA2|\bWPA\b/i.test(line))||'', reason: 'Texto WPA detectado' };
   return { value: 'WPA/WPA2', detected: null, inferred: true, confidence: 0.4, fieldType:'security', sourceLabel:'', sourceLine:'', reason: 'Seguridad predeterminada; no detectada' };
 }
+
