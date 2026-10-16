@@ -60,7 +60,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3cf1";
+const APP_BUILD = "3cg1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -143,10 +143,12 @@ async function selectTool(tool, { push = true } = {}) {
     $("wifiConnectPanel").textContent = "Preparando Wifi Connect…";
     try {
       if (!wifiLoadPromise) {
+        let wifiLoadStage = "import";
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3cf1");
+          const module = await import("./wifi-connect/entry.mjs?v=3cg1");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
+          wifiLoadStage = "mount";
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {
             submitReport: (payload) => issuesUI.submitWifiOcrReport(payload),
             canRunAdminOcrDiagnostics: isActiveAdminProfile(activeProfile),
@@ -157,6 +159,14 @@ async function selectTool(tool, { push = true } = {}) {
           return instance;
         });
         wifiMountQueue = mount.catch(() => {});
+        mount.catch((error) => {
+          const message = String(error?.message || "").replace(/https?:\/\/\S+/g, "[url]").slice(0, 180);
+          console.error("[Wifi Connect] Error al cargar el módulo", {
+            stage: wifiLoadStage,
+            name: String(error?.name || "Error").slice(0, 40),
+            message,
+          });
+        });
         wifiLoadPromise = mount;
       }
       const instance = await wifiLoadPromise;
