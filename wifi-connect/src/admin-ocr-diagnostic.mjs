@@ -1,4 +1,4 @@
-import { buildSafeSsidReport, compareSsidPasses, explicitCandidatesFromPass } from "./ssid-diagnostic-report.js?v=3by1";
+import { buildSafeSsidReport, compareSsidPasses, explicitCandidatesFromPass } from "./ssid-diagnostic-report.js?v=3ca1";
 const PASS_IDS = new Set(["color", "grayscale-contrast", "ssid-focus-1", "ssid-focus-2"]);
 const STAGES = new Set(["qr", "ocr", "parser", "review"]);
 const REASONS = new Set([
@@ -122,6 +122,9 @@ export function buildAdminOcrDiagnostic(analysis, { stage = "review", elapsedMs 
   if (candidates.some(candidate => candidate.requiresReview)) reasons.add("candidate_requires_review");
   if (candidates.some(candidate => candidate.source === "OCR" && (candidate.confidencePct === null || candidate.confidencePct < 90))) reasons.add("below_auto_confidence_threshold");
   const requested = Boolean(safeReview?.requested || reasons.size || candidates.some(item => item.requiresReview));
+  // Keep the summary internally consistent: a requested review must always
+  // carry an explicit, safe reason instead of being reported as undetermined.
+  if (requested && !reasons.size) reasons.add("review_required_by_flow");
   return {
     format: "wifi-connect-admin-ocr-diagnostic/v3",
     pipeline: "production-router-image-analysis",
@@ -161,7 +164,7 @@ export function buildAdminOcrDiagnostic(analysis, { stage = "review", elapsedMs 
     review: {
       requested,
       reasons: [...reasons],
-      cause: reasons.length ? "identified" : analysis ? "undetermined" : "not_reached",
+      cause: reasons.size ? "identified" : analysis ? "undetermined" : "not_reached",
       verifiedThrough: STAGES.has(stage) ? stage : "review",
     },
   };

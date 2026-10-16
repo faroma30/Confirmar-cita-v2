@@ -1,5 +1,5 @@
-import {parseRouterLabel} from './router-parser.js?v=3by1';
-import {buildScanPlan, detectCrossFieldContamination} from './scan-flow.js?v=3by1';
+import {parseRouterLabel} from './router-parser.js?v=3ca1';
+import {buildScanPlan, detectCrossFieldContamination} from './scan-flow.js?v=3ca1';
 
 const LABELS = new Map([
   ['ssid', 'SSID'], ['ssid 1', 'SSID1'], ['ssid1', 'SSID1'], ['ssid 2', 'SSID2'], ['ssid2', 'SSID2'],
@@ -164,7 +164,18 @@ function safeReasons(analysis, candidates, plan, passComparison) {
   if (candidates.some(item => item.confidencePct === null || item.confidencePct < 90)) reasons.add('below_auto_confidence_threshold');
   if (passComparison.status === 'disagreement' || (parsed.ssidCandidates || []).some(item => item.ocrVerification?.status === 'disagreement' || item.ocrVerification?.mismatchedPassCount > 0)) reasons.add('ocr_pass_disagreement');
   if (candidates.some(item => item.needsReview) || (parsed.ssidCandidates || []).some(item => item.needsReview && !item.ocrVerification?.status)) reasons.add('candidate_requires_review');
-  if ((parsed.ssidCandidates || []).some(item => item.bandPeerConflict)) reasons.add('wifi_band_conflict');
+  // A 2.4 GHz SSID1 alongside a 5 GHz SSID2 is a valid pair. Report a band
+  // conflict only when readings for the same label occurrence disagree on
+  // which band they contain.
+  const hasSameLabelBandConflict = [...passComparison.groups.values()].some(group => {
+    const bands = new Set([...group.valuesByPass.values()].map(value => {
+      if (/(^|[-_ ])2\s*(?:[.,]\s*|\s+)4\s*G(?:Hz)?(?=$|[-_ ])/i.test(value) || /(^|[-_ ])24\s*G(?:Hz)?(?=$|[-_ ])/i.test(value)) return '2.4';
+      if (/(^|[-_ ])5\s*(?:\.\s*0|,\s*0)?\s*G(?:Hz)?(?=$|[-_ ])/i.test(value)) return '5';
+      return null;
+    }).filter(Boolean));
+    return bands.size > 1;
+  });
+  if (hasSameLabelBandConflict) reasons.add('wifi_band_conflict');
   if (parsed.qrConflicts?.ssid) reasons.add('qr_ssid_conflict');
   const chosen = (parsed.ssidCandidates || []).find(item => item.fieldType === 'ssid' && canonicalLabel(item.sourceLabel));
   if (chosen && detectCrossFieldContamination(parsed, chosen)) reasons.add('field_contamination');

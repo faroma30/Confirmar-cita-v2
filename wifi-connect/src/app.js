@@ -7,17 +7,17 @@ import {createCameraSession} from './camera.js';
 import {isLabMode,buildLabDiagnostic,buildLabText,characterDifferences} from './lab-diagnostics.js';
 import {APP_VERSION,VALIDATION_SECTIONS,VALIDATION_FAILURE_CATEGORIES,VALIDATION_STATUS,VALIDATION_STORAGE_KEY,isValidationMode,createChecklist,loadChecklist,saveChecklist,updateChecklistEntry,collectCapabilities,createValidationExport,createReadableReport} from './validation.js?v=1.21.11';
 import {formatRecentExpiry} from './network-lifecycle.js';
-import {analyzeRouterImage} from './router-image-analysis.js?v=3by1';
-import {parseRouterLabel} from './router-parser.js?v=3by1';
-import {buildScanPlan,createScannedNetwork,persistRecentBeforeReady,fieldSource,detectCrossFieldContamination} from './scan-flow.js?v=3by1';
+import {analyzeRouterImage} from './router-image-analysis.js?v=3ca1';
+import {parseRouterLabel} from './router-parser.js?v=3ca1';
+import {buildScanPlan,createScannedNetwork,persistRecentBeforeReady,fieldSource,detectCrossFieldContamination} from './scan-flow.js?v=3ca1';
 import {renderWifiShell} from './shell.mjs';
 import {ensureWifiReportButton} from './report-button.mjs?v=3bi1';
 import {renderWifiReportScreen} from './report-screen.mjs?v=3bi1';
 import {createWifiReportNavigation} from './report-navigation.mjs?v=3bi1';
-import {isSsidDiagnosticAccessAllowed} from './config.js?v=3by1';
-import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3by1';
-import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3by1';
-import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3by1';
+import {isSsidDiagnosticAccessAllowed} from './config.js?v=3ca1';
+import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3ca1';
+import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3ca1';
+import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3ca1';
 
 export async function mountWifiConnect(shadowRoot,userId,{submitReport=null,canRunAdminOcrDiagnostics=false,listAdminWifiOcrPhotos=null,loadAdminWifiOcrPhoto=null}={}){
 storage.setStorageUser(userId);
@@ -120,7 +120,7 @@ function addWifiReportButton(){
 }
 const wifiReportObserver=new MutationObserver(()=>addWifiReportButton());
 wifiReportObserver.observe(root,{childList:true});
-async function detectWifiData(){const text=root.querySelector('#ocr-editable-text')?.value??ocrResult?.normalizedText??'';try{const {parseRouterLabel}=await import('./router-parser.js?v=3by1');parserResult={...parseRouterLabel({rawText:ocrResult?.rawText||'',normalizedText:text,passes:ocrResult?.passes||[],qr:ocrResult?.qr?.status==='wifi'?ocrResult.qr:null}),inputText:text};showSecret=false;route='parser-review';await render();}catch(error){console.error('[WiFi Connect parser] Error:',error?.message||error);toast('No se pudieron analizar los datos. Puedes introducirlos manualmente.');}}
+async function detectWifiData(){const text=root.querySelector('#ocr-editable-text')?.value??ocrResult?.normalizedText??'';try{const {parseRouterLabel}=await import('./router-parser.js?v=3ca1');parserResult={...parseRouterLabel({rawText:ocrResult?.rawText||'',normalizedText:text,passes:ocrResult?.passes||[],qr:ocrResult?.qr?.status==='wifi'?ocrResult.qr:null}),inputText:text};showSecret=false;route='parser-review';await render();}catch(error){console.error('[WiFi Connect parser] Error:',error?.message||error);toast('No se pudieron analizar los datos. Puedes introducirlos manualmente.');}}
 async function beginOcr(){
  const photo=camera.getConfirmedImage();if(!photo){toast('No hay una foto confirmada para analizar.');return;}
  clearOcrResult();scanChoices=[];scanReview=null;const controller=new AbortController();activeOcrController=controller;const run=++ocrRunSequence;ocrProgress={status:'Analizando router',progress:null};route='ocr-progress';await render();

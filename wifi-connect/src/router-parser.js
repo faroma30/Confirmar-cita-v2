@@ -67,6 +67,7 @@ function embeddedWlanKey(line){
  return {label:'WLAN Key',value:match[1].trim(),delimiter:/[:=：＝]/.test(match[0])};
 }
 function ssidBand(sourceLine){const match=String(sourceLine).match(/(?:^|[^\p{L}\p{N}])SS[i1l]D(?:\s+(2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b|\s*([12]|[il])\b)/i);if(!match)return null;if(match[1])return /^2/.test(match[1])?'1':'2';return String(match[2]).toLowerCase().replace(/[il]/,'1');}
+function explicitSsidIndex(candidate){const label=normalizeLabel(candidate?.sourceLabel||'');const match=label.match(/^ssid\s*([12])$/);return match?.[1]||null;}
 function bandToken(value){
  const text=String(value||'');
  const five=text.match(/(^|[-_ ])(5\s*(?:\.\s*0|,\s*0)?\s*G(?:Hz)?)(?=$|[-_ ])/i);
@@ -79,21 +80,26 @@ function annotateSsidBands(candidates){
  for(const candidate of candidates){const token=bandToken(candidate.value);if(token)candidate.band=token.band;}
  for(const candidate of candidates){
   const token=bandToken(candidate.value);if(!token||token.band!=='2.4 GHz')continue;
-  const peers=candidates.filter(other=>other!==candidate&&ssidBand(other.sourceLine)&&bandToken(other.value)?.band==='5 GHz');
+  // SSID1 and SSID2 are independent networks. A matched 2.4/5 GHz pair can
+  // provide narrow structural evidence that OCR dropped the decimal point in
+  // the SSID1 band token; it never verifies the reconstructed value.
+  const peers=explicitSsidIndex(candidate)==='1'
+    ? candidates.filter(other=>other!==candidate&&explicitSsidIndex(other)==='2'&&bandToken(other.value)?.band==='5 GHz')
+    : [];
   for(const peer of peers){
     const peerToken=bandToken(peer.value);const left=candidate.value.slice(0,token.start),right=candidate.value.slice(token.end),peerLeft=peer.value.slice(0,peerToken.start),peerRight=peer.value.slice(peerToken.end);
-   let prefix=0;while(prefix<left.length&&prefix<peerLeft.length&&left[prefix].toLowerCase()===peerLeft[prefix].toLowerCase())prefix++;
-    const sameFamily=left.slice(0,prefix).replace(/[^\p{L}\p{N}]/gu,'').length>=3&&left.toLowerCase()===peerLeft.toLowerCase();
-    if(!sameFamily)continue;
-    // A 5 GHz network is evidence of a possible OCR discrepancy, never a source
-    // from which to manufacture missing characters in the 2.4 GHz SSID.
-    if(token.strength<3||right.toLowerCase()!==peerRight.toLowerCase()){
-      candidate.needsReview=true;
-      candidate.bandPeerConflict=true;
-      candidate.bandPeerReason='Las dos bandas parecen relacionadas, pero el nombre de 2.4 GHz requiere comprobarse en la etiqueta.';
-    }
+    const sameFamily=left.replace(/[^\p{L}\p{N}]/gu,'').length>=3&&left.toLowerCase()===peerLeft.toLowerCase()&&right.toLowerCase()===peerRight.toLowerCase();
+    if(!sameFamily||token.strength>=3)continue;
+    candidate.proposedValue=`${candidate.value.slice(0,token.start)}2.4G${candidate.value.slice(token.end)}`;
+    candidate.proposedFrom=candidate.value;
+    candidate.corrected=true;
+    candidate.correctionReason='Propuesta de punto decimal basada en SSID1/SSID2 con prefijo y sufijo coincidentes; confirma el valor en la etiqueta.';
+    candidate.correctionDiff='El OCR leyó «2 4G»; la estructura de ambas etiquetas sugiere «2.4G».';
+    candidate.bandConfidence='moderate';
+    candidate.needsReview=true;
+    break;
   }
-   if(token.strength<3&&/^\s*SS[i1l]D\s*[:=]/i.test(candidate.sourceLine)){candidate.bandConfidence='low';candidate.possibleBand='2.4 GHz';candidate.needsReview=true;}
+  if(token.strength<3){candidate.bandConfidence=candidate.bandConfidence||'low';candidate.possibleBand='2.4 GHz';candidate.needsReview=true;}
  }
 }
 function scoreValue(value, base, kind) {
@@ -301,7 +307,13 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
   }));
   ssidCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrSsidConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrSsidConflict))||(b.ocrVerification?.exactPassCount||0)-(a.ocrVerification?.exactPassCount||0)||Number(focusedValues.has(b.value))-Number(focusedValues.has(a.value))||b.score-a.score||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement)));
   passwordCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrPasswordConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrPasswordConflict))||b.score-a.score);
-  ssidCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo SSID':'Alternativa de menor puntuación del campo SSID';});
+  const leadingPassCount=Math.max(0,...ssidCandidates.map(candidate=>candidate.ocrVerification?.exactPassCount||0));
+  ssidCandidates.forEach((candidate,index)=>{
+    const supported=candidate.ocrVerification?.exactPassCount||0;
+    candidate.selectionReason=index===0&&supported>0&&supported===leadingPassCount
+      ? `Prioridad por coincidencia en ${supported} pasada${supported===1?'':'s'} OCR; requiere revisión si las lecturas discrepan.`
+      : index===0?'Candidato mejor puntuado del campo SSID':'Alternativa de menor puntuación del campo SSID';
+  });
   passwordCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo contraseña':'Alternativa de menor puntuación del campo contraseña';});
   let security = detectSecurity(lines);
   if(qrSecurityConflict)security.needsReview=true;
