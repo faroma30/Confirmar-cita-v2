@@ -1,5 +1,5 @@
 import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3bi1';
-import {parseRouterLabel} from './router-parser.js?v=3cc1';
+import {parseRouterLabel} from './router-parser.js?v=3ce1';
 import {findSsidFocusRegions} from './ssid-focus.js?v=3bn2';
 
 export const OCR_LANGUAGES='spa+eng';
@@ -62,7 +62,8 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
     }catch(error){if(error?.name==='AbortError')throw error;alternatePassError=String(error?.message||'El pase alternativo no está disponible.');}
    }
    const beforeFocus=parseRouterLabel({normalizedText:passes.map(pass=>pass.normalizedText).join('\n')});
-   if(focusTargets.length&&(expectedBands.size>1||beforeFocus.ssidCandidates.some(candidate=>candidate.needsReview||candidate.bandPeerConflict||candidate.bandConfidence==='low'))){
+   const namedSsidDisagreement=[...new Map(beforeFocus.ssidCandidates.filter(candidate=>candidate.score>=40&&candidate.sourceLabel&&!candidate.sourceLabel.startsWith('Proximidad')).map(candidate=>[candidate.sourceLabel,beforeFocus.ssidCandidates.filter(other=>other.score>=40&&other.sourceLabel===candidate.sourceLabel).map(other=>other.value)])).values()].some(values=>new Set(values).size>1);
+   if(focusTargets.length&&(expectedBands.size>1||namedSsidDisagreement||beforeFocus.ssidCandidates.some(candidate=>candidate.needsReview||candidate.bandPeerConflict||candidate.bandConfidence==='low'))){
     const prioritized=focusTargets.some(item=>item.band)?focusTargets.filter(item=>item.band):focusTargets;
     for(const [index,target] of prioritized.slice(0,2).entries()){
      throwIfAborted(signal);focusAttemptCount++;const focusStarted=performance.now();onStage('Verificando nombre Wi-Fi');
@@ -117,3 +118,4 @@ function focusedSsidText(text){
  }
  return kept.join('\n');
 }
+
