@@ -3,7 +3,7 @@ async function ensureQrGenerator() {
   if (typeof window.qrcode === "function") return;
   qrScriptPromise ??= new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = new URL("./vendor/qrcode-generator.js?v=3cc1", import.meta.url).href;
+    script.src = new URL("./vendor/qrcode-generator.js?v=3ce1", import.meta.url).href;
     script.onload = () => typeof window.qrcode === "function" ? resolve() : reject(new Error("QR no disponible"));
     script.onerror = () => reject(new Error("No se pudo cargar el generador QR"));
     document.head.append(script);
@@ -14,6 +14,7 @@ async function ensureQrGenerator() {
 export async function mountWifiConnect(host, userId, options = {}) {
   await ensureQrGenerator();
   const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-  const { mountWifiConnect: mountOriginal } = await import("./src/app.js?v=3cc1");
+  const { mountWifiConnect: mountOriginal } = await import("./src/app.js?v=3ce1");
   return mountOriginal(shadowRoot, userId, options);
 }
+
