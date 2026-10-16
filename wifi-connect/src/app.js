@@ -3,23 +3,23 @@ import {renderQR} from './qr.js';
 import {shareNetwork} from './share.js';
 import {pasteClipboardText} from './clipboard.js';
 import {validateNetwork,makeId,formatDate,esc} from './utils.js';
-import {createCameraSession} from './camera.js?v=3ch1';
+import {createCameraSession} from './camera.js?v=3ci1';
 import {isLabMode,buildLabDiagnostic,buildLabText,characterDifferences} from './lab-diagnostics.js';
 import {APP_VERSION,VALIDATION_SECTIONS,VALIDATION_FAILURE_CATEGORIES,VALIDATION_STATUS,VALIDATION_STORAGE_KEY,isValidationMode,createChecklist,loadChecklist,saveChecklist,updateChecklistEntry,collectCapabilities,createValidationExport,createReadableReport} from './validation.js?v=1.21.11';
 import {formatRecentExpiry} from './network-lifecycle.js';
-import {analyzeRouterImage} from './router-image-analysis.js?v=3ch1';
-import {parseRouterLabel} from './router-parser.js?v=3ch1';
-import {buildScanPlan,buildRecoverableScanReview,createScannedNetwork,persistRecentBeforeReady,fieldSource,detectCrossFieldContamination,isSafeSsidCandidate,isSafePasswordCandidate} from './scan-flow.js?v=3ch1';
-import {renderScanReviewScreen} from './scan-review-screen.mjs?v=3ch1';
-import {runScanLifecycle} from './scan-lifecycle.mjs?v=3ch1';
+import {analyzeRouterImage,disposeRouterImageAnalysis} from './router-image-analysis.js?v=3ci1';
+import {parseRouterLabel} from './router-parser.js?v=3ci1';
+import {buildScanPlan,buildRecoverableScanReview,createScannedNetwork,persistRecentBeforeReady,fieldSource,detectCrossFieldContamination,isSafeSsidCandidate,isSafePasswordCandidate} from './scan-flow.js?v=3ci1';
+import {renderScanReviewScreen} from './scan-review-screen.mjs?v=3ci1';
+import {runScanLifecycle} from './scan-lifecycle.mjs?v=3ci1';
 import {renderWifiShell} from './shell.mjs';
-import {ensureWifiReportButton} from './report-button.mjs?v=3bi1';
-import {renderWifiReportScreen} from './report-screen.mjs?v=3bi1';
-import {createWifiReportNavigation} from './report-navigation.mjs?v=3bi1';
-import {isSsidDiagnosticAccessAllowed} from './config.js?v=3ch1';
-import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3ch1';
-import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3ch1';
-import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3ch1';
+import {ensureWifiReportButton} from './report-button.mjs?v=3ci1';
+import {renderWifiReportScreen} from './report-screen.mjs?v=3ci1';
+import {createWifiReportNavigation} from './report-navigation.mjs?v=3ci1';
+import {isSsidDiagnosticAccessAllowed} from './config.js?v=3ci1';
+import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3ci1';
+import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3ci1';
+import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3ci1';
 
 export async function mountWifiConnect(shadowRoot,userId,{submitReport=null,canRunAdminOcrDiagnostics=false,listAdminWifiOcrPhotos=null,loadAdminWifiOcrPhoto=null}={}){
 storage.setStorageUser(userId);
@@ -122,10 +122,10 @@ function addWifiReportButton(){
 }
 const wifiReportObserver=new MutationObserver(()=>addWifiReportButton());
 wifiReportObserver.observe(root,{childList:true});
-async function detectWifiData(){const text=root.querySelector('#ocr-editable-text')?.value??ocrResult?.normalizedText??'';try{const {parseRouterLabel}=await import('./router-parser.js?v=3ch1');parserResult={...parseRouterLabel({rawText:ocrResult?.rawText||'',normalizedText:text,passes:ocrResult?.passes||[],qr:ocrResult?.qr?.status==='wifi'?ocrResult.qr:null}),inputText:text};showSecret=false;route='parser-review';await render();}catch(error){console.error('[WiFi Connect parser] Error:',error?.message||error);toast('No se pudieron analizar los datos. Puedes introducirlos manualmente.');}}
+async function detectWifiData(){const text=root.querySelector('#ocr-editable-text')?.value??ocrResult?.normalizedText??'';try{const {parseRouterLabel}=await import('./router-parser.js?v=3ci1');parserResult={...parseRouterLabel({rawText:ocrResult?.rawText||'',normalizedText:text,passes:ocrResult?.passes||[],qr:ocrResult?.qr?.status==='wifi'?ocrResult.qr:null}),inputText:text};showSecret=false;route='parser-review';await render();}catch(error){console.error('[WiFi Connect parser] Error:',error?.message||error);toast('No se pudieron analizar los datos. Puedes introducirlos manualmente.');}}
 async function beginOcr(){
  const photo=camera.getConfirmedImage();if(!photo){toast('No hay una foto confirmada para analizar.');return;}
- clearOcrResult();scanChoices=[];scanReview=null;const controller=new AbortController();activeOcrController=controller;const run=++ocrRunSequence;ocrProgress={status:'Analizando router',progress:null};route='ocr-progress';
+ const run=++ocrRunSequence;activeOcrController?.abort();clearOcrResult();scanChoices=[];scanReview=null;const controller=new AbortController();activeOcrController=controller;ocrProgress={status:'Analizando router',progress:null};route='ocr-progress';
  const cameraContext={source:photo.source==='camera'?'Cámara':'Galería',permission:photo.source==='camera'?'concedido al capturar':'no solicitado',photoWidth:photo.width||null,photoHeight:photo.height||null};
  await runScanLifecycle({
   isCurrent:()=>run===ocrRunSequence,
@@ -155,7 +155,7 @@ async function beginOcr(){
    ocrErrorMessage=String(error?.message||'');route='ocr-error';try{await render();}catch{root.innerHTML=ocrErrorScreen();}
   },
   settle:async()=>{
-   activeOcrController=null;
+   if(activeOcrController===controller)activeOcrController=null;
    if(route==='ocr-progress'||root.querySelector('.scan-wait-screen')){route='ocr-error';if(!ocrErrorMessage)ocrErrorMessage='No se pudo completar el análisis.';try{await render();}catch{root.innerHTML=ocrErrorScreen();}}
   }
  });
@@ -207,8 +207,8 @@ window.addEventListener('popstate',onWifiReportPopState);
 try{await storage.cleanupExpiredRecents();await render();}
 catch{root.innerHTML='<div class="card">No se pudo iniciar el almacenamiento local.</div>';}
 return {
-  suspend(){cameraViewSequence++;ocrRunSequence++;activeOcrController?.abort();activeOcrController=null;camera.stop();if(['camera','ocr-progress','image-review','image-prepared'].includes(route)){camera.clearConfirmedImage();clearOcrResult();route='home';shell.classList.remove('camera-mode');}},
+  suspend(){cameraViewSequence++;ocrRunSequence++;activeOcrController?.abort();activeOcrController=null;disposeRouterImageAnalysis();camera.stop();if(['camera','ocr-progress','image-review','image-prepared'].includes(route)){camera.clearConfirmedImage();clearOcrResult();route='home';shell.classList.remove('camera-mode');}},
   resume(){if(route==='home')void render();},
-  dispose(){cameraViewSequence++;ocrRunSequence++;activeOcrController?.abort();activeOcrController=null;adminOcrRun++;adminOcrController?.abort();adminOcrController=null;adminOcrImage=null;adminOcrReports=[];camera.stop();camera.clearConfirmedImage();clearOcrResult();current=null;parserResult=null;scanReview=null;if(reportPhotoUrl)URL.revokeObjectURL(reportPhotoUrl);try{if(modal.open)modal.close();}catch{}document.removeEventListener('visibilitychange',onVisibilityChange);window.removeEventListener('pagehide',onPageHide);window.removeEventListener('pageshow',onPageShow);window.removeEventListener('popstate',onWifiReportPopState);shadowRoot.replaceChildren();storage.closeStorage();}
+  dispose(){cameraViewSequence++;ocrRunSequence++;activeOcrController?.abort();activeOcrController=null;disposeRouterImageAnalysis();adminOcrRun++;adminOcrController?.abort();adminOcrController=null;adminOcrImage=null;adminOcrReports=[];camera.stop();camera.clearConfirmedImage();clearOcrResult();current=null;parserResult=null;scanReview=null;if(reportPhotoUrl)URL.revokeObjectURL(reportPhotoUrl);try{if(modal.open)modal.close();}catch{}document.removeEventListener('visibilitychange',onVisibilityChange);window.removeEventListener('pagehide',onPageHide);window.removeEventListener('pageshow',onPageShow);window.removeEventListener('popstate',onWifiReportPopState);shadowRoot.replaceChildren();storage.closeStorage();}
 };
 }

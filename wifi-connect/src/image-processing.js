@@ -17,7 +17,7 @@ async function decodeBlob(blob,urlApi,signal){
   throwIfAborted(signal);return {image,close:false};
  }finally{urlApi.revokeObjectURL(url);}
 }
-export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMENSION,previewMaxDimension=PREVIEW_MAX_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas'),onStage=()=>{},variant='color',region=null}={}){
+export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMENSION,previewMaxDimension=PREVIEW_MAX_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas'),onStage=()=>{},variant='color',region=null,includePreview=variant==='color'}={}){
  if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/'))throw new TypeError('Se necesita una fotografía válida para analizar.');
  if(!blob.size)throw new TypeError('La fotografía está vacía.');
  throwIfAborted(signal);onStage('Preparando imagen');
@@ -39,9 +39,10 @@ export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMEN
    context.putImageData(pixels,0,0);
   }
   throwIfAborted(signal);onStage('Imagen preparada');const outputType=variant==='ssid-focus'?'image/png':'image/jpeg';const processedBlob=await canvasToBlob(canvas,outputType,0.96);throwIfAborted(signal);
-  const previewScale=Math.min(1,previewMaxDimension/Math.max(width,height));const previewWidth=Math.max(1,Math.round(width*previewScale)),previewHeight=Math.max(1,Math.round(height*previewScale));
-  previewCanvas=canvasFactory();previewCanvas.width=previewWidth;previewCanvas.height=previewHeight;const previewContext=previewCanvas.getContext('2d',{alpha:false});if(!previewContext)throw new Error('No se pudo crear la vista comparativa.');
-  previewContext.drawImage(canvas,0,0,previewWidth,previewHeight);const previewBlob=await canvasToBlob(previewCanvas,'image/jpeg',0.88);throwIfAborted(signal);
+  let previewBlob=null;
+  if(includePreview){const previewScale=Math.min(1,previewMaxDimension/Math.max(width,height));const previewWidth=Math.max(1,Math.round(width*previewScale)),previewHeight=Math.max(1,Math.round(height*previewScale));
+   previewCanvas=canvasFactory();previewCanvas.width=previewWidth;previewCanvas.height=previewHeight;const previewContext=previewCanvas.getContext('2d',{alpha:false});if(!previewContext)throw new Error('No se pudo crear la vista comparativa.');
+   previewContext.drawImage(canvas,0,0,previewWidth,previewHeight);previewBlob=await canvasToBlob(previewCanvas,'image/jpeg',0.88);throwIfAborted(signal);}
   return {blob:processedBlob,previewBlob,sourceWidth,sourceHeight,width,height,wasResized:scale<1,orientationNormalized:true,mimeType:outputType};
  }finally{
   if(decoded.close)try{decoded.image.close();}catch{}
