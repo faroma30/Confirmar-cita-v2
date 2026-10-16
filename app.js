@@ -60,7 +60,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3ca1";
+const APP_BUILD = "3cb1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -145,7 +145,7 @@ async function selectTool(tool, { push = true } = {}) {
       if (!wifiLoadPromise) {
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3ca1");
+          const module = await import("./wifi-connect/entry.mjs?v=3cb1");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {
             submitReport: (payload) => issuesUI.submitWifiOcrReport(payload),
@@ -2263,3 +2263,4 @@ start().catch(() => {
     console.error("[Confirmar Citas] Error de inicialización (CC_INIT_FAILED)");
   }
 });
+

@@ -2,7 +2,11 @@
 const passwordOrigin=/^(?:wlan\s*k|wi[\s-]?fi\s*(?:password|key)|(?:contrasenya|contrase[nñ]a|clau|clave|password|passvvord)\b)/iu;
 const isFieldCandidate=(candidate,field)=>candidate?.fieldType===field&&!(field==='ssid'&&passwordOrigin.test(String(candidate.sourceLabel||'')));
 export function buildScanPlan(parsed,{selectedCandidate=null}={}){
- const candidates=(parsed?.ssidCandidates||[]).filter(candidate=>isFieldCandidate(candidate,'ssid')&&candidate.score>=60&&candidate.source!=='password');
+ // Keep plausible but weak OCR candidates available for human review. The
+ // former >=60 gate could discard every SSID while the diagnostic still had
+ // candidates, turning a recoverable scan into the generic "could not read"
+ // screen. Scores below 60 may never be used without an explicit review.
+ const candidates=(parsed?.ssidCandidates||[]).filter(candidate=>isFieldCandidate(candidate,'ssid')&&candidate.score>=40&&candidate.source!=='password');
  const password=isFieldCandidate(parsed?.password,'password')?parsed.password:null;
  const qrNetworks=[];const seenQr=new Set();
  for(const candidate of candidates){if(!candidate.qrNetworkId||!candidate.qrNetwork)continue;if(seenQr.has(candidate.qrNetworkId))continue;seenQr.add(candidate.qrNetworkId);qrNetworks.push(candidate);}
@@ -26,12 +30,13 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  // review coherence only. Password payloads are never part of diagnostics.
  const highConfidencePassword=Number(password?.score)>=90&&password?.source!=='qr'&&/Etiqueta de contraseña Wi-Fi/i.test(password?.reason||'');
  const ocrConfidenceNeedsReview=candidate=>Boolean(candidate&& !candidate.source?.startsWith('qr')&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90));
+ const passwordOcrConfidenceNeedsReview=candidate=>Boolean(candidate&&!qrTrusted(candidate)&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90)&&candidate.ocrVerification?.exactAgreement!==true);
  const passStatus=candidate=>candidate?.ocrVerification?.status||(candidate?.ocrVerification?.mismatchedPassCount>0?'disagreement':candidate?.ocrVerification?.exactAgreement?'agreement':'insufficient');
  const ssidUnverified=Boolean(primary.ocrVerification&&passStatus(primary)==='disagreement'&&!qrTrusted(primary));
  const passwordUnverified=Boolean(activePassword?.ocrVerification&&passStatus(activePassword)==='disagreement'&&!qrTrusted(activePassword));
  const crossFieldContamination=detectCrossFieldContamination(parsed,primary);
- const ssidNeedsReview=Boolean(crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||ocrConfidenceNeedsReview(primary)||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary));
- const passwordNeedsReview=activeSecurity!=='Sin contraseña'&&(!activePassword||passwordConflict||passwordUnverified||activePassword.needsReview&&!activePassword.qrAgreement&&!qrTrusted(activePassword)&&!highConfidencePassword);
+ const ssidNeedsReview=Boolean(primary.score<60||crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||ocrConfidenceNeedsReview(primary)||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary));
+ const passwordNeedsReview=activeSecurity!=='Sin contraseña'&&(!activePassword||passwordConflict||passwordUnverified||passwordOcrConfidenceNeedsReview(activePassword)||activePassword.needsReview&&!activePassword.qrAgreement&&!qrTrusted(activePassword)&&!highConfidencePassword);
  const fields=[...(ssidNeedsReview?['ssid']:[]),...(passwordNeedsReview?['password']:[])];
  if(fields.length)return {state:'review',choices:[selected],candidate:selected,fields};
  return {state:'ready',choices:[selected],candidate:selected,fields:[]};
@@ -59,7 +64,30 @@ export function createScannedNetwork(parsed,candidate,qr={}){
  const safePassword=isFieldCandidate(parsed?.password,'password')?parsed.password:null;
  const sameSource=Boolean(safeSsid?.sourceLine&&safePassword?.sourceLine&&safeSsid.sourceLine===safePassword.sourceLine&&safeSsid.sourceLabel===safePassword.sourceLabel);
  const contaminated=Boolean(safeSsid&&safePassword&&safeSsid.value===safePassword.value&&sameSource);
- return {ssid:contaminated?'':safeSsid?.value||'',password:safePassword?.value||'',security:parsed?.security?.value||'WPA/WPA2',hidden:Boolean(qr.hidden),note:'',source:'router_scan',origin:'router_scan',band:safeSsid?.band||''};
+ // Structural OCR proposals are useful defaults for an editable review, but
+ // are never promoted to verified data: buildScanPlan forces review first.
+ return {ssid:contaminated?'':safeSsid?.proposedValue||safeSsid?.value||'',password:safePassword?.value||'',security:parsed?.security?.value||'WPA/WPA2',hidden:Boolean(qr.hidden),note:'',source:'router_scan',origin:'router_scan',band:safeSsid?.band||''};
+}
+
+/** Build a safe review fallback if analysis completed but normal presentation failed. */
+export function buildRecoverableScanReview(parsed){
+ const candidates=(parsed?.ssidCandidates||[]).filter(item=>isFieldCandidate(item,'ssid')&&typeof item.value==='string'&&item.value.trim().length>0&&item.value.length<=64&&Number(item.score)>=40);
+ const candidate=candidates.find(item=>item.value===parsed?.ssid?.value)||candidates[0];
+ if(!candidate)return null;
+ const network=createScannedNetwork(parsed,candidate);
+ const fields=['ssid'];
+ const password=parsed?.password;
+ const passwordNeedsReview=parsed?.security?.value!=='Sin contraseña'&&(
+  !isFieldCandidate(password,'password')
+  ||password.source!=='qr'&&(
+   Number(password.score)<60
+   ((!Number.isFinite(password.ocrConfidence)||password.ocrConfidence<90)&&password.ocrVerification?.exactAgreement!==true)
+   ||password.needsReview
+   ||password.ocrVerification?.status==='disagreement'
+  )
+ );
+ if(passwordNeedsReview)fields.push('password');
+ return {network,fields,candidate,reason:'El análisis produjo un candidato SSID; se requiere revisión antes de continuar.'};
 }
 
 /** Keep the recent write ahead of the Red lista render. */
@@ -68,3 +96,4 @@ export async function persistRecentBeforeReady(network,{saveRecent,showReady}){
  await showReady(recent);
  return recent;
 }
+

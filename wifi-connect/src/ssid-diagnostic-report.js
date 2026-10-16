@@ -1,5 +1,5 @@
-import {parseRouterLabel} from './router-parser.js?v=3ca1';
-import {buildScanPlan, detectCrossFieldContamination} from './scan-flow.js?v=3ca1';
+import {parseRouterLabel} from './router-parser.js?v=3cb1';
+import {buildScanPlan, detectCrossFieldContamination} from './scan-flow.js?v=3cb1';
 
 const LABELS = new Map([
   ['ssid', 'SSID'], ['ssid 1', 'SSID1'], ['ssid1', 'SSID1'], ['ssid 2', 'SSID2'], ['ssid2', 'SSID2'],
@@ -284,3 +284,4 @@ export function serializeSafeSsidReport(report) {
   if (serialized.length > 20000) throw new RangeError('El informe supera el límite seguro.');
   return serialized;
 }
+

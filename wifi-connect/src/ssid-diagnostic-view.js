@@ -1,4 +1,4 @@
-import {validateSafeSsidReport} from './ssid-diagnostic-report.js?v=3ca1';
+import {validateSafeSsidReport} from './ssid-diagnostic-report.js?v=3cb1';
 
 const REASONS={
   no_explicit_ssid_candidate:'No se encontró un valor asociado a una etiqueta SSID.',
@@ -20,3 +20,4 @@ export function renderSsidDiagnosticScreen(report){
   const comparison={agreement:'Acuerdo: varias pasadas reconocen el mismo SSID.',disagreement:'Desacuerdo: pasadas con la misma etiqueta reconocen valores incompatibles.',insufficient:'Evidencia insuficiente: no hay dos lecturas comparables para confirmar el candidato.',no_candidate:'Sin candidato SSID etiquetado.'}[report.passComparison];
   return `<section class="screen"><div class="eyebrow">Diagnóstico local · solo SSID</div><h1 class="page-heading">Lecturas de nombre Wi-Fi</h1><p class="muted">Se muestran únicamente valores asociados a etiquetas SSID. No se incluye fotografía, texto OCR ni ningún campo de contraseña.</p>${passes||'<p class="muted">No se generaron pasadas OCR.</p>'}<section class="card"><h2>Comparación</h2><p>${comparison}</p><p><strong>Revisión manual:</strong> ${report.manualReview.requested?'Sí':'No'}</p>${reasons.length?`<ul>${reasons.map(reason=>`<li>${escapeHtml(reason)}</li>`).join('')}</ul>`:'<p class="muted">No se registró motivo adicional de revisión.</p>'}</section><div class="button-row"><button class="secondary" data-action="ssid-diagnostic-copy">Copiar informe SSID</button><button class="soft-button" data-action="ssid-diagnostic-repeat">Repetir fotografía</button></div><button class="primary full" data-action="ssid-diagnostic-finish">Finalizar diagnóstico</button></section>`;
 }
+
