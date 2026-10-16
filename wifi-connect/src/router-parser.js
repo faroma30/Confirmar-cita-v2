@@ -31,8 +31,10 @@ const cleanCandidate = (value,kind) => kind==='ssid'?String(value||'').trim():St
 const isMac = value => /^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(value.replace(/\s/g, '')) || /^(?:[0-9a-f]{4}[.]){2}[0-9a-f]{4}$/i.test(value);
 const isIpOrNumericPin = value => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) || /^\d{4,10}$/.test(value);
 const isSerialContext = label => /^(?:s\/?n|sn|serial(?:\s+number)?|serial number)$/i.test(label);
+const isIdentifierContext = label => /^(?:mac(?:\s+address)?|bssid|imei|model|product\s+(?:id|name)|device\s+(?:id|name)|serial(?:\s+(?:number|no\.?))?|s\/?n|sn|ip(?:\s+address)?|gateway|barcode|bar\s+code|pin)$/i.test(label);
+const isSerialLikeValue = value => /^[A-Z]{2,8}\d{8,}$/i.test(String(value||'').replace(/[\s-]/g,''));
 const isAdminContext = (label, lines, index) => {
- if ((/\b(?:admin|administrator|web|router|login)\b/.test(label) && /\b(?:password|pass|key|credential|contrase[nñ]a|clave|pin)\b/.test(label)) || /^(?:admin|administrator|web|login)$/i.test(label)) return true;
+ if (/^(?:admin|administrator|web|router|login|access)(?:\s+login)?\s+(?:password|pass|key|credential|contrase[nñ]a|clave|pin)$/i.test(label) || /^(?:admin|administrator|web|login)$/i.test(label)) return true;
  if (!/^(?:password|passvvord|passw[o0]rd|contrase[nñ]a|contrasenya|clave)$/i.test(label)) return false;
  const context=lines.slice(Math.max(0,index-4),index).join(' ');
  const userContext=/^(?:username|user name|user|login|account|usuario)\s*[:=]/i.test(lines[index-1]||'')||/\b(?:username|user\s*name|1semame|usename|root|admin|login)\b/i.test(context);
@@ -40,6 +42,7 @@ const isAdminContext = (label, lines, index) => {
  return userContext || (managementIp && /\badmin/i.test(splitLabel(lines[index])[1]||''));
 };
 const isWpsContext = label => /\bwps\b/.test(label);
+const isWpsFieldLabel = label => /^(?:wps|wps\s+pin)$/i.test(label);
 const plausible = (value, allowNumericPin = false) => value.length > 0 && value.length <= 2048 && !isMac(value) && (!isIpOrNumericPin(value) || (allowNumericPin && /^\d{4,10}$/.test(value))) && !/^https?:\/\//i.test(value);
 
 function findLabel(label, table) {
@@ -47,18 +50,65 @@ function findLabel(label, table) {
   return table.find(([pattern]) => pattern.test(key));
 }
 function splitLabel(line) {
+  const protectedValue=String(line||'').match(/^\s*(mac(?:\s+address)?|bssid|imei|model|product\s+(?:id|name)|device\s+(?:id|name)|serial(?:\s+(?:number|no\.?))?|s\/?n|sn|ip(?:\s+address)?|gateway|barcode|bar\s+code|pin|wps(?:\s+pin)?)\s*(?::|=)?\s+(.+?)\s*$/i);
+  if(protectedValue)return {label:protectedValue[1].trim(),value:protectedValue[2].trim()};
   const match = line.match(/^\s*(.{1,64}?)\s*[:=：＝]\s*(.*?)\s*$/);
   if (!match) {
     const text=String(line||'').trim();
-    if(findLabel(text,SSID_LABELS)||findLabel(text,PASSWORD_LABELS))return {label:text,value:''};
+    const protectedLabel=label=>isAdminContext(label,[],0)||isWpsFieldLabel(label)||isIdentifierContext(label);
+    if(findLabel(text,SSID_LABELS)||findLabel(text,PASSWORD_LABELS)||protectedLabel(text))return {label:text,value:''};
     const boundaries=[...text.matchAll(/\s+/g)].map(item=>item.index).reverse();
     for(const boundary of boundaries){
       const label=text.slice(0,boundary).trim(),value=text.slice(boundary).trim();
-      if(value&&(findLabel(label,SSID_LABELS)||findLabel(label,PASSWORD_LABELS)))return {label,value};
+      if(value&&(findLabel(label,SSID_LABELS)||findLabel(label,PASSWORD_LABELS)||protectedLabel(label)))return {label,value};
     }
     return {label:text,value:''};
   }
   return { label: match[1].trim(), value: match[2].trim() };
+}
+function splitInlineFieldLines(line) {
+  // OCR sometimes joins adjacent columns/rows (for example `SSID: name WLAN
+  // Key" value`). Split only when the suffix itself parses as a known field
+  // label; ordinary SSID words such as “Key” or “Password” remain untouched.
+  const source=String(line||'');
+  const parts=[];
+  let remainder=source;
+  for(let depth=0;depth<4;depth++){
+    if(depth>0){
+      const leading=splitLabel(remainder);
+      if(findLabel(leading.label,SSID_LABELS)||findLabel(leading.label,PASSWORD_LABELS)
+        ||isAdminContext(leading.label,[remainder],0)||isWpsContext(normalizeLabel(leading.label))
+        ||isIdentifierContext(normalizeLabel(leading.label)))break;
+    }
+    // Restrict inline splitting to text after an explicit first-field
+    // delimiter. Otherwise “Admin Password” could be mistaken for a trailing
+    // generic “Password” label, and ordinary SSID words could be fragmented.
+    const firstDelimiter=remainder.match(/^\s*.{1,64}?\s*[:=：＝]\s*/);
+    if(!firstDelimiter)break;
+    const valueStart=firstDelimiter[0].length;
+    let boundary=-1;
+    for(const match of remainder.matchAll(/\s+(?=\S)/g)){
+      const position=match.index+match[0].length;
+      if(position<valueStart)continue;
+      const suffix=remainder.slice(position).trim();
+      if(!suffix)continue;
+      const parsed=splitLabel(suffix);
+      const label=normalizeLabel(parsed.label);
+      const explicitDelimiter=/^.{1,64}?\s*[:=：＝]\s*/.test(suffix);
+      const quotedKey=/^(?:wlan\s+)?key\s*["'`“”‘’]/i.test(suffix);
+      const compoundCredential=/^(?:wlan|wi[ -]?fi|wireless|network)\s*(?:key|password|pass|clave|contrase[nñ]a)|^(?:wpa[23]?\s*(?:key|psk|clave)|(?:contrasenya|contrase[nñ]a)\s+wpa[23]?|clau\s+(?:wi[ -]?fi|xarxa)|clave\s+(?:wi[ -]?fi|red))$/i.test(parsed.label);
+      const ssidBoundary=Boolean(findLabel(parsed.label,SSID_LABELS))&&explicitDelimiter;
+      const credentialBoundary=Boolean(findLabel(parsed.label,PASSWORD_LABELS))&&(explicitDelimiter||quotedKey||compoundCredential);
+      const protectedBoundary=isAdminContext(parsed.label,[suffix],0)||isWpsFieldLabel(parsed.label)||isIdentifierContext(label);
+      const known=Boolean(ssidBoundary||credentialBoundary||protectedBoundary);
+      if(known&&parsed.value){boundary=position;break;}
+    }
+    if(boundary<0)break;
+    parts.push(remainder.slice(0,boundary).trim());
+    remainder=remainder.slice(boundary).trim();
+  }
+  if(remainder.trim())parts.push(remainder.trim());
+  return parts.length?parts:[source];
 }
 function embeddedWlanKey(line){
  if(String(line).length>180)return null;
@@ -88,6 +138,9 @@ function annotateSsidBands(candidates){
     ? candidates.filter(other=>other!==candidate&&explicitSsidIndex(other)===peerIndex&&bandToken(other.value)?.band===opposite)
     : [];
   for(const peer of peers){
+    const candidatePasses=new Set((candidate.sourcePasses||[]).map(item=>item.pass).filter(Boolean));
+    const peerPasses=new Set((peer.sourcePasses||[]).map(item=>item.pass).filter(Boolean));
+    if(candidatePasses.size&&peerPasses.size&&![...candidatePasses].some(id=>peerPasses.has(id)))continue;
     const peerToken=bandToken(peer.value);const left=candidate.value.slice(0,token.start),right=candidate.value.slice(token.end),peerLeft=peer.value.slice(0,peerToken.start),peerRight=peer.value.slice(peerToken.end);
     const comparable=value=>String(value).toLowerCase().replace(/(?:\s*[-–—]\s*)+/g,'-').replace(/\s+/g,' ').trim();
     const sameFamily=comparable(left).replace(/[^\p{L}\p{N}]/gu,'').length>=3&&comparable(left)===comparable(peerLeft)&&comparable(right)===comparable(peerRight);
@@ -137,7 +190,7 @@ function addCandidate(list, value, score, reason, sourceLine, kind, sourceLabel 
 function compareCredentialAcrossPasses(candidate,field,passes){
  if(!passes.length||candidate?.source?.startsWith('qr'))return;
  let exactPassCount=0,mismatchedPassCount=0,missingPassCount=0;
-  const relevantPasses=passes.filter(pass=>!pass.id?.startsWith('ssid-focus-')||field==='ssid'&&ssidBand(candidate.sourceLine)===pass.focusBand);
+  const relevantPasses=[...new Map(passes.filter(pass=>!pass.id?.startsWith('ssid-focus-')||field==='ssid'&&ssidBand(candidate.sourceLine)===pass.focusBand).map((pass,index)=>[pass.id||`anonymous-${index}`,pass])).values()];
   const labelKey=normalizeLabel(String(candidate.sourceLabel||''));
   for(const pass of relevantPasses){
   const passText=String(pass.normalizedText||pass.rawText||'');
@@ -162,15 +215,24 @@ function compareCredentialAcrossPasses(candidate,field,passes){
   candidate.ocrVerification={status,passCount:relevantPasses.length,exactPassCount,mismatchedPassCount,missingPassCount,exactFocusedPassCount:exactFocusedPasses,exactAgreement};
  if(mismatchedPassCount>0&&!exactAgreement)candidate.needsReview=true;
 }
-const stopLine = line => {
+const stopLine = (line, lines=[], index=0) => {
   const { label } = splitLabel(line);
-  return Boolean(findLabel(label, SSID_LABELS) || findLabel(label, PASSWORD_LABELS) || /^(?:security|encryption|wpa[23]?|wep|mac(?: address)?|wps(?: pin)?|s\/?n|sn|serial(?: number)?|pin|ip|gateway|username)$/i.test(normalizeLabel(label)));
+  const normalized=normalizeLabel(label);
+  return Boolean(findLabel(label, SSID_LABELS) || findLabel(label, PASSWORD_LABELS)
+    || isAdminContext(normalized,lines,index) || isWpsContext(normalized) || isIdentifierContext(normalized)
+    || /^(?:security|encryption|wpa[23]?|wep|mac(?: address)?|bssid|imei|model|product\s+(?:id|name)|device\s+(?:id|name)|wps(?: pin)?|s\/?n|sn|serial(?:\s+(?:number|no\.?))?|pin|ip(?:\s+address)?|gateway|username|barcode|bar\s+code)$/i.test(normalized));
 };
 
 export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled = true} = {}) {
   const rawText = input?.rawText ?? '';
   const text = String(input?.normalizedText !== undefined ? input.normalizedText : rawText);
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').map(line => line.trim()).filter(Boolean);
+  const lines=[];const inlineBoundaryLines=new Set();
+  for(const rawLine of text.replace(/\r\n?/g,'\n').split('\n')){
+    const parts=splitInlineFieldLines(rawLine).map(line=>line.trim()).filter(Boolean);
+    if(parts.length>1)for(const part of parts)inlineBoundaryLines.add(part);
+    lines.push(...parts);
+  }
+  const passRecords=Array.isArray(input?.passes)?input.passes:[];
   const hasWifiContext=/\b(?:wi[ -]?fi|wlan|ssid[12]?|wpa)\b/i.test(text);
   const ssidCandidates = [];
   const passwordCandidates = [];
@@ -183,8 +245,8 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
   const ssidValueLines = new Set();
   lines.forEach((line,index)=>{
     const embedded=embeddedWlanKey(line),split=splitLabel(line),{label,value}=embedded||split;
-    if(findLabel(label,PASSWORD_LABELS)&&!value&&lines[index+1]&&!stopLine(lines[index+1]))passwordValueLines.add(index+1);
-    if(findLabel(label,SSID_LABELS)&&!value&&lines[index+1]&&!stopLine(lines[index+1]))ssidValueLines.add(index+1);
+    if(findLabel(label,PASSWORD_LABELS)&&!value&&lines[index+1]&&!stopLine(lines[index+1],lines,index+1))passwordValueLines.add(index+1);
+    if(findLabel(label,SSID_LABELS)&&!value&&lines[index+1]&&!stopLine(lines[index+1],lines,index+1))ssidValueLines.add(index+1);
   });
 
   lines.forEach((line, index) => {
@@ -201,25 +263,25 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     if(normalizedLabel==='key'&&!hasWifiContext)passwordLabel=null;
     if(embeddedKey&&passwordLabel&&!embeddedKey.delimiter)passwordLabel=[passwordLabel[0],Math.min(passwordLabel[1],50),passwordLabel[2]];
 
-    if (isSerialContext(normalizedLabel) || /^mac(?:\s+address)?$/i.test(normalizedLabel) || isWpsContext(normalizedLabel) || isAdminContext(normalizedLabel, lines, index)) {
+    if (isIdentifierContext(normalizedLabel) || isWpsContext(normalizedLabel) || isAdminContext(normalizedLabel, lines, index)) {
       if (value) excluded.push({ value, sourceLine: line, reason: isWpsContext(normalizedLabel) ? 'WPS PIN excluido' : isAdminContext(normalizedLabel, lines, index) ? 'Credencial administrativa excluida' : 'Identificador excluido' });
       else if (lines[index + 1]) excludedValueLines.add(index + 1);
       return;
     }
 
     if (ssidLabel) {
-      if (value) addCandidate(ssidCandidates, value, ssidLabel[1], `${ssidLabel[2]}: valor en la misma línea`, line, 'ssid',label);
+      if (value) {addCandidate(ssidCandidates, value, ssidLabel[1], `${ssidLabel[2]}: valor en la misma línea`, line, 'ssid',label);if(inlineBoundaryLines.has(line)){const candidate=ssidCandidates.find(item=>item.value===cleanCandidate(value,'ssid'));if(candidate)candidate.needsReview=true;}}
       else {
         const next = lines[index + 1];
-        if (next && !stopLine(next)) addCandidate(ssidCandidates, next, Math.max(68, ssidLabel[1] - 28), `${ssidLabel[2]}: valor en la línea siguiente`, line, 'ssid',label);
+        if (next && !stopLine(next,lines,index+1)) addCandidate(ssidCandidates, next, Math.max(68, ssidLabel[1] - 28), `${ssidLabel[2]}: valor en la línea siguiente`, line, 'ssid',label);
       }
     }
 
     if (passwordLabel) {
-      if (value) addCandidate(passwordCandidates, value, passwordLabel[1], `${passwordLabel[2]}: valor en la misma línea`, line, 'password',label);
+      if (value) {addCandidate(passwordCandidates, value, passwordLabel[1], `${passwordLabel[2]}: valor en la misma línea`, line, 'password',label);if(inlineBoundaryLines.has(line)){const candidate=passwordCandidates.find(item=>item.value===cleanCandidate(value,'password'));if(candidate)candidate.needsReview=true;}}
       else {
         const next = lines[index + 1];
-        if (next && !stopLine(next)) addCandidate(passwordCandidates, next, Math.max(62, passwordLabel[1] - 28), `${passwordLabel[2]}: valor en la línea siguiente`, line, 'password',label);
+        if (next && !stopLine(next,lines,index+1)) addCandidate(passwordCandidates, next, Math.max(62, passwordLabel[1] - 28), `${passwordLabel[2]}: valor en la línea siguiente`, line, 'password',label);
       }
     }
 
@@ -228,17 +290,39 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
       addCandidate(passwordCandidates, value, 58, 'Key con contexto Wi-Fi', line, 'password',label);
     }
 
-    // Preserve plausible unlabelled SSID-like values as low-score diagnostic candidates.
+    // Recover a label-less SSID only when it is immediately followed by an
+    // explicit Wi-Fi password field; keep it review-only because proximity is
+    // structural evidence, not confirmation. Generic plausible strings are not
+    // classified as SSIDs.
     if (!ssidLabel && !passwordLabel && !value && !passwordValueLines.has(index) && !ssidValueLines.has(index) && !ssidCandidates.some(candidate=>candidate.value===line) && /^[\p{L}\p{N}][\p{L}\p{N}_ .-]{2,63}$/u.test(line) && !stopLine(line) && !/\b(?:router|model|gateway|internet|security|encryption|wifi|wi-fi|wlan|ssid|password|serial|mac|pin|contrasenya|clave|contraseña|clau)\b/i.test(line)) {
-      const nextLines=lines.slice(index+1,index+3);
-      const adjacentWifiPassword=nextLines.some(nextLine=>{const {label:nextLabel}=splitLabel(nextLine);const match=findLabel(nextLabel,PASSWORD_LABELS);return Boolean(match&&/Wi-Fi|catalana|WPA/i.test(match[2]));});
-      const networkShaped=/[_-].*\d|\d.*[_-]/u.test(line);
-      if(adjacentWifiPassword&&(networkShaped||(/[\p{L}]/u.test(line)&&/\d/u.test(line)&&line.trim().length>=6))) {
+      const nextLine=lines[index+1];
+      const nextField=nextLine?splitLabel(nextLine):{label:'',value:''};
+      const adjacentWifiPassword=Boolean(nextLine&&findLabel(nextField.label,PASSWORD_LABELS)&&/Wi-Fi|catalana|WPA/i.test(findLabel(nextField.label,PASSWORD_LABELS)?.[2]||''));
+      const networkShaped=/[_-].*\d|\d.*[_-]/u.test(line)||(/[\p{L}]/u.test(line)&&/\d/u.test(line)&&/\s/u.test(line));
+      const serialShaped=isSerialLikeValue(line);
+      if(adjacentWifiPassword&&!serialShaped&&(networkShaped||(/[\p{L}]/u.test(line)&&/\d/u.test(line)&&line.trim().length>=6))) {
         addCandidate(ssidCandidates,line,82,'Nombre de red probable antes de etiqueta de contraseña Wi-Fi',line,'ssid','Proximidad a etiqueta de contraseña Wi-Fi');
         const candidate=ssidCandidates.find(item=>item.value===cleanCandidate(line,'ssid'));if(candidate)candidate.needsReview=true;
-      } else addCandidate(ssidCandidates, line, 22, 'Cadena plausible sin etiqueta', line, 'ssid','');
+      }
     }
   });
+
+  // Do not let the merge of OCR passes create a field association that never
+  // occurred in any individual pass. Duplicate pass IDs are one observation,
+  // not extra corroboration. QR-derived candidates are added separately from
+  // validated Wi-Fi payloads below.
+  if(passRecords.length){
+    const uniquePasses=[...new Map(passRecords.map((pass,index)=>[pass.id||`anonymous-${index}`,pass])).values()];
+    const parsedPasses=uniquePasses.map(pass=>{
+      const passText=String(pass.normalizedText??pass.rawText??'');
+      return parseRouterLabel({rawText:pass.rawText??passText,normalizedText:passText,passes:[]},{operatorProfiles:false});
+    });
+    const existsInOnePass=(candidate,listName)=>parsedPasses.some(parsed=>parsed[listName].some(item=>
+      item.value===candidate.value&&normalizeLabel(String(item.sourceLabel||''))===normalizeLabel(String(candidate.sourceLabel||''))));
+    for(const [list,listName] of [[ssidCandidates,'ssidCandidates'],[passwordCandidates,'passwordCandidates']]){
+      for(let index=list.length-1;index>=0;index--)if(!existsInOnePass(list[index],listName))list.splice(index,1);
+    }
+  }
 
   const explicitWlanKey=passwordCandidates.find(candidate=>/\bWLAN\s*K(?:ey|ev|cy)\b/i.test(candidate.sourceLine));
   if(explicitWlanKey){
@@ -304,18 +388,18 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     }
   }
   for(const candidate of [...ssidCandidates,...passwordCandidates])candidate.confidence=Math.min(1,candidate.score/100);
-  const passRecords=Array.isArray(input?.passes)?input.passes:[];
   for(const candidate of ssidCandidates)compareCredentialAcrossPasses(candidate,'ssid',passRecords);
   for(const candidate of passwordCandidates)compareCredentialAcrossPasses(candidate,'password',passRecords);
   for(const candidate of [...ssidCandidates,...passwordCandidates]){
     const labelKey=normalizeLabel(String(candidate.sourceLabel||''));
-    const sources=passRecords.filter(pass=>!pass.id?.startsWith('ssid-focus-')||candidate.fieldType==='ssid'&&ssidBand(candidate.sourceLine)===pass.focusBand).filter(pass=>{
+    const uniquePasses=[...new Map(passRecords.map((pass,index)=>[pass.id||`anonymous-${index}`,pass])).values()];
+    const sources=uniquePasses.filter(pass=>!pass.id?.startsWith('ssid-focus-')||candidate.fieldType==='ssid'&&ssidBand(candidate.sourceLine)===pass.focusBand).filter(pass=>{
       const passText=String(pass.normalizedText||pass.rawText||'');
       const passParsed=parseRouterLabel({rawText:pass.rawText??passText,normalizedText:passText,passes:[]});
       const passCandidates=candidate.fieldType==='ssid'?passParsed.ssidCandidates:passParsed.passwordCandidates;
       return passCandidates.some(item=>normalizeLabel(String(item.sourceLabel||''))===labelKey&&item.value===candidate.value);
     }).map(pass=>({pass:pass.id,text:candidate.sourceLine,score:Number.isFinite(pass.confidence)?pass.confidence:null}));
-    if(sources.length){candidate.sourcePasses=sources;candidate.ocrPasses=sources.map(item=>item.pass);const passScores=sources.map(item=>item.score).filter(Number.isFinite);candidate.ocrConfidence=passScores.length?Math.min(...passScores):null;candidate.ocrScore=candidate.ocrConfidence;candidate.sourceText=candidate.sourceLine;if(candidate.fieldType==='ssid'&&(candidate.ocrScore===null||candidate.ocrScore<90)&&candidate.ocrVerification?.exactAgreement!==true)candidate.needsReview=true;}
+    if(sources.length){candidate.sourcePasses=sources;candidate.ocrPasses=sources.map(item=>item.pass);const passScores=sources.map(item=>item.score).filter(Number.isFinite);candidate.ocrConfidence=passScores.length?Math.min(...passScores):null;candidate.ocrScore=candidate.ocrConfidence;candidate.sourceText=candidate.sourceLine;if(candidate.ocrScore===null||candidate.ocrScore<90)candidate.needsReview=true;}
   }
   const focusedValues=new Set((input?.passes||[]).filter(pass=>pass.id?.startsWith('ssid-focus-')).flatMap(pass=>{
     const passLines=String(pass.normalizedText||'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean),values=[];
@@ -371,4 +455,3 @@ function detectSecurity(lines) {
   if (wpa2 || wpa) return { value: 'WPA/WPA2', detected: wpa2 ? 'WPA2' : 'WPA', inferred: false, confidence: 0.86, fieldType:'security', sourceLabel:'WPA/WPA2', sourceLine:lines.find(line=>/\bWPA\s*[- ]?2|WPA2|\bWPA\b/i.test(line))||'', reason: 'Texto WPA detectado' };
   return { value: 'WPA/WPA2', detected: null, inferred: true, confidence: 0.4, fieldType:'security', sourceLabel:'', sourceLine:'', reason: 'Seguridad predeterminada; no detectada' };
 }
-

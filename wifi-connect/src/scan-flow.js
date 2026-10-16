@@ -1,6 +1,20 @@
 /** Select the smallest safe next step for the production scan UX. */
-const passwordOrigin=/^(?:wlan\s*k|wi[\s-]?fi\s*(?:password|key)|(?:contrasenya|contrase[nñ]a|clau|clave|password|passvvord)\b)/iu;
-const isFieldCandidate=(candidate,field)=>candidate?.fieldType===field&&!(field==='ssid'&&passwordOrigin.test(String(candidate.sourceLabel||'')));
+const passwordOrigin=/\b(?:password|passvvord|contrase[nñ]a|contrasenya|clau|clave|wlan\s*k(?:ey|ev|cy)?|wi[\s-]?fi\s*(?:key|password)|wireless\s*(?:key|password)|network\s*(?:key|password)|admin|administrator|router|login|access|wps|serial|s\/?n|mac|bssid|imei|model|gateway|barcode|bar\s+code|pin)\b/iu;
+const explicitSsidOrigin=/^(?:ssid(?:\s*(?:[12]|[il])|\s+(?:2\s*[.,]?\s*4\s*(?:ghz|g)?|5\s*(?:ghz|g)?))?|(?:red\s+)?wi[ -]?f[i1l](?:\s+red)?|nombre\s+(?:de\s+)?wi[ -]?f[i1l]|(?:nom\s+(?:de\s+)?(?:xarxa|wi[ -]?f[i1l])|xarxa\s+wi[ -]?f[i1l])|(?:wi[ -]?fi|wlan)\s*(?:name|nombre)|(?:wireless|network)\s+name|nombre\s+(?:de\s+)?(?:wi[ -]?fi|red)|red\s+(?:wi[ -]?fi|wlan))$/iu;
+const proximityOrigin='Proximidad a etiqueta de contrasena Wi-Fi';
+export function isSafeSsidCandidate(candidate){
+ if(candidate?.fieldType!=='ssid'||candidate?.source==='password'||typeof candidate.value!=='string'||!candidate.value.trim()||candidate.value.length>64)return false;
+ const label=String(candidate.sourceLabel||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+ if(label===proximityOrigin)return candidate.needsReview===true&&/contraseña wi-fi/i.test(candidate.reason||'');
+ if(candidate.source?.startsWith('qr'))return label==='QR Wi-Fi'&&Boolean(candidate.value);
+ if(passwordOrigin.test(label))return false;
+ return explicitSsidOrigin.test(label);
+}
+export function isSafePasswordCandidate(candidate){
+ if(candidate?.fieldType!=='password'||candidate?.source==='ssid'||typeof candidate.value!=='string'||!candidate.value.trim())return false;
+ return !/^(?:admin|administrator|router|login|access)(?:\s+login)?\s+(?:password|pass|key|credential|contrase[nñ]a|clave|pin)$/iu.test(String(candidate.sourceLabel||'').trim());
+}
+const isFieldCandidate=(candidate,field)=>field==='ssid'?isSafeSsidCandidate(candidate):field==='password'?isSafePasswordCandidate(candidate):candidate?.fieldType===field;
 export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  // Keep plausible but weak OCR candidates available for human review. The
  // former >=60 gate could discard every SSID while the diagnostic still had
@@ -29,8 +43,10 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  // Preserve the existing password-review threshold; this phase changes SSID
  // review coherence only. Password payloads are never part of diagnostics.
  const highConfidencePassword=Number(password?.score)>=90&&password?.source!=='qr'&&/Etiqueta de contraseña Wi-Fi/i.test(password?.reason||'');
- const ocrConfidenceNeedsReview=candidate=>Boolean(candidate&& !candidate.source?.startsWith('qr')&&candidate.ocrVerification?.exactAgreement!==true&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90));
- const passwordOcrConfidenceNeedsReview=candidate=>Boolean(candidate&&!qrTrusted(candidate)&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90)&&candidate.ocrVerification?.exactAgreement!==true);
+ // Matching OCR strings are useful comparison data, but repeated page passes
+ // alone are correlated evidence and must not bypass the confidence threshold.
+ const ocrConfidenceNeedsReview=candidate=>Boolean(candidate&& !candidate.source?.startsWith('qr')&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90));
+ const passwordOcrConfidenceNeedsReview=candidate=>Boolean(candidate&&!qrTrusted(candidate)&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90));
  const passStatus=candidate=>candidate?.ocrVerification?.status||(candidate?.ocrVerification?.mismatchedPassCount>0?'disagreement':candidate?.ocrVerification?.exactAgreement?'agreement':'insufficient');
  const ssidUnverified=Boolean(primary.ocrVerification&&passStatus(primary)==='disagreement'&&!qrTrusted(primary));
  const passwordUnverified=Boolean(activePassword?.ocrVerification&&passStatus(activePassword)==='disagreement'&&!qrTrusted(activePassword));
@@ -81,7 +97,7 @@ export function buildRecoverableScanReview(parsed){
   !isFieldCandidate(password,'password')
   ||password.source!=='qr'&&(
     Number(password.score)<60
-    || ((!Number.isFinite(password.ocrConfidence)||password.ocrConfidence<90)&&password.ocrVerification?.exactAgreement!==true)
+    || (!Number.isFinite(password.ocrConfidence)||password.ocrConfidence<90)
    ||password.needsReview
    ||password.ocrVerification?.status==='disagreement'
   )
@@ -96,4 +112,3 @@ export async function persistRecentBeforeReady(network,{saveRecent,showReady}){
  await showReady(recent);
  return recent;
 }
-
