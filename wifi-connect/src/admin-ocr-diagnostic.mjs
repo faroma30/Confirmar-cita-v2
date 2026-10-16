@@ -113,27 +113,40 @@ export function buildAdminOcrDiagnostic(analysis, { stage = "review", elapsedMs 
   const distinct = new Set(candidates.map(item => item.ssid));
   const comparison = distinct.size > 1 ? "disagreement" : distinct.size === 1 ? "agreement" : "insufficient";
   return {
-    format: "wifi-connect-admin-ocr-diagnostic/v1",
+    format: "wifi-connect-admin-ocr-diagnostic/v2",
     pipeline: "production-router-image-analysis",
     status: analysis ? "completed" : "failed",
     lastStage: STAGES.has(stage) ? stage : "review",
     failureCode: ["IMAGE_DECODE", "OCR_ASSET_LOAD", "OCR_RUNTIME", "PARSER_FAILURE", "CANCELLED", "TIMEOUT", "UNKNOWN"].includes(failureCode) ? failureCode : null,
     elapsedMs: Number.isFinite(elapsedMs) ? Math.max(0, Math.round(elapsedMs)) : null,
     qr: {
-      completed: Boolean(analysis?.qr),
-      outcome: analysis?.qr?.status === "wifi" ? "wifi_found" : analysis?.qr?.status === "ignored" ? "other_qr_found" : analysis?.qr?.status === "not-found" ? "not_found" : analysis?.qr ? "unavailable" : "not_run",
+      completed: Boolean(analysis?.qr && !["timeout", "cancelled", "worker-error", "worker-unavailable", "decode-failed"].includes(analysis.qr.reason)),
+      outcome: analysis?.qr?.status === "wifi" ? "wifi_found" : analysis?.qr?.status === "ignored" ? "other_qr_found" : analysis?.qr?.status === "not-found" ? "not_found" : analysis?.qr?.reason === "timeout" ? "timeout" : analysis?.qr?.reason === "cancelled" ? "cancelled" : ["worker-error", "worker-unavailable", "decode-failed", "decoder-error"].includes(analysis?.qr?.reason) ? "failed" : analysis?.qr ? "unavailable" : "not_run",
       validWifiQrCount: wifiQrCount,
+      durationMs: Number.isFinite(analysis?.qrDurationMs) ? Math.max(0, Math.round(analysis.qrDurationMs)) : null,
+      blockedStage: ["image-decode", "barcode-detect", "barcode-complete", "jsqr-full-frame", "jsqr-region", "worker-start"].includes(analysis?.qr?.blockedStage) ? analysis.qr.blockedStage : null,
+      attempts: (analysis?.qr?.attempts ?? []).slice(0, 40).map(item => ({
+        engine: item.engine === "BarcodeDetector" ? "BarcodeDetector" : "jsQR",
+        durationMs: Number.isFinite(item.durationMs) ? Math.max(0, Math.round(item.durationMs)) : null,
+        found: Boolean(item.found),
+        count: Number.isInteger(item.count) ? Math.max(0, Math.min(20, item.count)) : null,
+        width: Number.isInteger(item.width) ? Math.max(0, Math.min(10000, item.width)) : null,
+        height: Number.isInteger(item.height) ? Math.max(0, Math.min(10000, item.height)) : null,
+        region: ["left", "right", "top", "bottom"].includes(item.region) ? item.region : null,
+      })),
     },
     ocr: {
       completed: Boolean(analysis?.ocr && !analysis?.ocrError),
       passes,
       ssidLabelDetected: passes.some(pass => pass.ssidLabelDetected),
+      durationMs: Number.isFinite(analysis?.diagnostics?.ocrDurationMs) ? Math.max(0, Math.round(analysis.diagnostics.ocrDurationMs)) : Number.isFinite(analysis?.ocr?.durationMs) ? Math.max(0, Math.round(analysis.ocr.durationMs)) : null,
     },
     parser: {
       completed: Boolean(analysis?.parsed),
       candidates,
       labelAssociations: dedupeAssociations(candidates),
       passComparison: comparison,
+      durationMs: Number.isFinite(analysis?.diagnostics?.parserDurationMs) ? Math.max(0, Math.round(analysis.diagnostics.parserDurationMs)) : null,
     },
     review: {
       requested: Boolean(reasons.length || safeReview?.requested),
@@ -171,15 +184,23 @@ function dedupeAssociations(items) {
 
 export function validateAdminOcrDiagnostic(report) {
   const root = ["format", "pipeline", "status", "lastStage", "failureCode", "elapsedMs", "qr", "ocr", "parser", "review"];
-  if (!exactKeys(report, root) || report.format !== "wifi-connect-admin-ocr-diagnostic/v1"
+  if (!exactKeys(report, root) || report.format !== "wifi-connect-admin-ocr-diagnostic/v2"
       || report.pipeline !== "production-router-image-analysis"
       || !["completed", "failed"].includes(report.status) || !STAGES.has(report.lastStage)) return false;
   if (report.failureCode !== null && !["IMAGE_DECODE", "OCR_ASSET_LOAD", "OCR_RUNTIME", "PARSER_FAILURE", "CANCELLED", "TIMEOUT", "UNKNOWN"].includes(report.failureCode)) return false;
   if (report.elapsedMs !== null && (!Number.isInteger(report.elapsedMs) || report.elapsedMs < 0 || report.elapsedMs > 600000)) return false;
-  if (!exactKeys(report.qr, ["completed", "outcome", "validWifiQrCount"]) || typeof report.qr.completed !== "boolean"
-      || !["wifi_found", "other_qr_found", "not_found", "unavailable", "not_run"].includes(report.qr.outcome)
-      || !Number.isInteger(report.qr.validWifiQrCount) || report.qr.validWifiQrCount < 0 || report.qr.validWifiQrCount > 20) return false;
-  if (!exactKeys(report.ocr, ["completed", "passes", "ssidLabelDetected"]) || typeof report.ocr.completed !== "boolean"
+  const timeValid = value => value === null || Number.isInteger(value) && value >= 0 && value <= 600000;
+  if (!exactKeys(report.qr, ["completed", "outcome", "validWifiQrCount", "durationMs", "blockedStage", "attempts"]) || typeof report.qr.completed !== "boolean"
+      || !["wifi_found", "other_qr_found", "not_found", "unavailable", "not_run", "timeout", "cancelled", "failed"].includes(report.qr.outcome)
+      || !Number.isInteger(report.qr.validWifiQrCount) || report.qr.validWifiQrCount < 0 || report.qr.validWifiQrCount > 20
+      || !timeValid(report.qr.durationMs) || (report.qr.blockedStage !== null && !["image-decode", "barcode-detect", "barcode-complete", "jsqr-full-frame", "jsqr-region", "worker-start"].includes(report.qr.blockedStage)) || !Array.isArray(report.qr.attempts) || report.qr.attempts.length > 40
+      || !report.qr.attempts.every(item => exactKeys(item, ["engine", "durationMs", "found", "count", "width", "height", "region"])
+        && ["BarcodeDetector", "jsQR"].includes(item.engine) && timeValid(item.durationMs) && typeof item.found === "boolean"
+        && (item.count === null || Number.isInteger(item.count) && item.count >= 0 && item.count <= 20)
+        && [item.width, item.height].every(value => value === null || Number.isInteger(value) && value >= 0 && value <= 10000)
+        && (item.region === null || ["left", "right", "top", "bottom"].includes(item.region)))) return false;
+  if (!exactKeys(report.ocr, ["completed", "passes", "ssidLabelDetected", "durationMs"]) || typeof report.ocr.completed !== "boolean"
+      || !timeValid(report.ocr.durationMs)
       || typeof report.ocr.ssidLabelDetected !== "boolean" || !Array.isArray(report.ocr.passes) || report.ocr.passes.length > PASS_IDS.size) return false;
   const candidateValid = item => exactKeys(item, ["ssid", "label", "source", "relation", "confidencePct", "passIds", "requiresReview"])
     && isSafeSsid(item.ssid) && [...LABELS.values(), "SSID"].includes(item.label)
@@ -194,8 +215,9 @@ export function validateAdminOcrDiagnostic(report) {
         || (pass.durationMs !== null && (!Number.isInteger(pass.durationMs) || pass.durationMs < 0 || pass.durationMs > 600000))
         || !Array.isArray(pass.candidates) || !pass.candidates.every(candidateValid)) return false;
   }
-  if (!exactKeys(report.parser, ["completed", "candidates", "labelAssociations", "passComparison"])
+  if (!exactKeys(report.parser, ["completed", "candidates", "labelAssociations", "passComparison", "durationMs"])
       || typeof report.parser.completed !== "boolean" || !Array.isArray(report.parser.candidates)
+      || !timeValid(report.parser.durationMs)
       || report.parser.candidates.length > 100 || !report.parser.candidates.every(candidateValid)
       || !Array.isArray(report.parser.labelAssociations) || report.parser.labelAssociations.length > 100
       || !report.parser.labelAssociations.every(value => exactKeys(value, ["label", "relation"])
@@ -220,11 +242,13 @@ export function serializeAdminOcrDiagnostic(report) {
 export function renderAdminOcrDiagnostic(report) {
   if (!validateAdminOcrDiagnostic(report)) return "<section class=\"screen\"><h1>Diagnóstico no disponible</h1><p>El informe no supera la validación de privacidad.</p></section>";
   const stageNames = { qr: "Detección QR", ocr: "Reconocimiento OCR", parser: "Asociación de campos", review: "Revisión" };
-  const qrNames = { wifi_found: "QR Wi-Fi válido", other_qr_found: "QR no Wi-Fi detectado", not_found: "sin QR", unavailable: "no disponible", not_run: "no iniciada" };
+  const qrNames = { wifi_found: "QR Wi-Fi válido", other_qr_found: "QR no Wi-Fi detectado", not_found: "sin QR", unavailable: "no disponible", not_run: "no iniciada", timeout: "cancelada por límite de tiempo", cancelled: "cancelada", failed: "falló; continuó el OCR" };
+  const qrStageNames = { "image-decode": "decodificación de imagen", "barcode-detect": "BarcodeDetector", "barcode-complete": "respuesta de BarcodeDetector", "jsqr-full-frame": "búsqueda completa jsQR", "jsqr-region": "búsqueda por regiones jsQR", "worker-start": "inicio del lector QR" };
   const reasons = report.review.reasons.map(reason => REASON_LABELS[reason]).filter(Boolean);
   const candidates = report.parser.candidates.map(item => `<li><strong>${escapeHtml(item.ssid)}</strong><br><small>${escapeHtml(item.source)} · etiqueta ${escapeHtml(item.label)} · ${item.relation === "next_line" ? "valor en línea siguiente" : item.relation === "same_line" ? "valor en la misma línea" : "valor asociado"} · ${item.confidencePct === null ? "confianza no disponible" : `confianza ${item.confidencePct}%`}${item.requiresReview ? " · requiere revisión" : ""}</small></li>`).join("");
+  const qrAttempts = report.qr.attempts.map(item => `<li>${escapeHtml(item.engine)}${item.region ? ` · ${escapeHtml(item.region)}` : ""} · ${item.durationMs === null ? "sin tiempo" : `${item.durationMs} ms`} · ${item.found ? "código detectado" : "sin código"}${item.count === null ? "" : ` · ${item.count}`} </li>`).join("");
   const passRows = report.ocr.passes.map(pass => `<li>${escapeHtml(pass.id)} · ${pass.completed ? "completada" : "no completada"} · ${pass.confidencePct === null ? "confianza no disponible" : `${pass.confidencePct}%`}</li>`).join("");
-  return `<section class="screen admin-ocr-screen"><div class="wifi-report-heading"><button class="wifi-report-back" type="button" data-action="admin-ocr-back">‹ <span>Volver a Wifi Connect</span></button><h1>Diagnóstico OCR</h1></div><p class="wifi-report-privacy">Análisis en el dispositivo. El informe contiene únicamente candidatos SSID y metadatos técnicos permitidos. No incluye fotografía, texto OCR ni contraseñas.</p><section class="wifi-report-card"><h2>Fuente de imagen</h2><label class="wifi-report-field"><span>Fotografía local</span><input type="file" accept="image/png,image/jpeg,image/webp" data-admin-ocr-file></label><div class="admin-ocr-report-picker"><button type="button" class="wifi-report-secondary" data-action="admin-ocr-load-reports">Cargar reportes con autorización de fotografía</button><select aria-label="Reporte autorizado" data-admin-ocr-report><option value="">Selecciona un reporte autorizado</option></select><button type="button" class="wifi-report-secondary" data-action="admin-ocr-use-report">Usar fotografía del reporte</button></div><button type="button" class="wifi-report-primary" data-action="admin-ocr-run" ${report.status === "completed" ? "disabled" : ""}>Analizar con el flujo de producción</button><button type="button" class="wifi-report-secondary" data-action="admin-ocr-cancel">Cancelar análisis</button></section><section class="wifi-report-card" aria-live="polite"><h2>Resultado</h2><p>Etapa verificada: ${escapeHtml(stageNames[report.lastStage])}</p><p>${report.failureCode ? `Análisis detenido (${escapeHtml(report.failureCode)}).` : report.status === "completed" ? "Análisis completado." : "Causa no determinada; verificación disponible hasta la etapa indicada."}</p><p>Detección QR: ${escapeHtml(qrNames[report.qr.outcome])} · QR Wi-Fi válidos: ${report.qr.validWifiQrCount}</p><p>OCR: ${report.ocr.completed ? "completado" : "sin completar"} · etiquetas SSID: ${report.ocr.ssidLabelDetected ? "detectadas" : "no detectadas"}</p><p>Parser: ${report.parser.completed ? "completado" : "sin completar"} · comparación: ${report.parser.passComparison === "agreement" ? "coincidencia" : report.parser.passComparison === "disagreement" ? "discrepancia" : "sin lecturas suficientes"}</p><p>Tiempo: ${report.elapsedMs === null ? "no disponible" : `${report.elapsedMs} ms`}</p><ul>${passRows}</ul><h3>Candidatos SSID</h3>${candidates ? `<ul>${candidates}</ul>` : "<p>No se obtuvo un candidato SSID seguro.</p>"}<p>Revisión manual: ${report.review.requested ? "sí" : "no"}${reasons.length ? ` · ${reasons.map(escapeHtml).join("; ")}` : ""}</p><button type="button" class="wifi-report-secondary" data-action="admin-ocr-copy">Copiar informe sanitizado</button></section></section>`;
+  return `<section class="screen admin-ocr-screen"><div class="wifi-report-heading"><button class="wifi-report-back" type="button" data-action="admin-ocr-back">‹ <span>Volver a Wifi Connect</span></button><h1>Diagnóstico OCR</h1></div><p class="wifi-report-privacy">Análisis en el dispositivo. El informe contiene únicamente candidatos SSID y metadatos técnicos permitidos. No incluye fotografía, texto OCR ni contraseñas.</p><section class="wifi-report-card"><h2>Fuente de imagen</h2><label class="wifi-report-field"><span>Fotografía local</span><input type="file" accept="image/png,image/jpeg,image/webp" data-admin-ocr-file></label><div class="admin-ocr-report-picker"><button type="button" class="wifi-report-secondary" data-action="admin-ocr-load-reports">Cargar reportes con autorización de fotografía</button><select aria-label="Reporte autorizado" data-admin-ocr-report><option value="">Selecciona un reporte autorizado</option></select><button type="button" class="wifi-report-secondary" data-action="admin-ocr-use-report">Usar fotografía del reporte</button></div><button type="button" class="wifi-report-primary" data-action="admin-ocr-run" ${report.status === "completed" ? "disabled" : ""}>Analizar con el flujo de producción</button><button type="button" class="wifi-report-secondary" data-action="admin-ocr-cancel">Cancelar análisis</button></section><section class="wifi-report-card" aria-live="polite"><h2>Resultado</h2><p>Etapa verificada: ${escapeHtml(stageNames[report.lastStage])}</p><p>${report.failureCode ? `Análisis detenido (${escapeHtml(report.failureCode)}).` : report.status === "completed" ? "Análisis completado." : "Causa no determinada; verificación disponible hasta la etapa indicada."}</p><p>Detección QR: ${escapeHtml(qrNames[report.qr.outcome])} · QR Wi-Fi válidos: ${report.qr.validWifiQrCount} · ${report.qr.durationMs === null ? "tiempo no disponible" : `${report.qr.durationMs} ms`}${report.qr.blockedStage ? ` · etapa: ${escapeHtml(qrStageNames[report.qr.blockedStage])}` : ""}</p>${qrAttempts ? `<ul>${qrAttempts}</ul>` : ""}<p>OCR: ${report.ocr.completed ? "completado" : "sin completar"} · etiquetas SSID: ${report.ocr.ssidLabelDetected ? "detectadas" : "no detectadas"} · ${report.ocr.durationMs === null ? "tiempo no disponible" : `${report.ocr.durationMs} ms`}</p><p>Parser: ${report.parser.completed ? "completado" : "sin completar"} · ${report.parser.durationMs === null ? "tiempo no disponible" : `${report.parser.durationMs} ms`} · comparación: ${report.parser.passComparison === "agreement" ? "coincidencia" : report.parser.passComparison === "disagreement" ? "discrepancia" : "sin lecturas suficientes"}</p><p>Tiempo total: ${report.elapsedMs === null ? "no disponible" : `${report.elapsedMs} ms`}</p><ul>${passRows}</ul><h3>Candidatos SSID</h3>${candidates ? `<ul>${candidates}</ul>` : "<p>No se obtuvo un candidato SSID seguro.</p>"}<p>Revisión manual: ${report.review.requested ? "sí" : "no"}${reasons.length ? ` · ${reasons.map(escapeHtml).join("; ")}` : ""}</p><button type="button" class="wifi-report-secondary" data-action="admin-ocr-copy">Copiar informe sanitizado</button></section></section>`;
 }
 
 function escapeHtml(value) {

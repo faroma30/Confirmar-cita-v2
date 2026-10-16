@@ -7,7 +7,7 @@ import {createCameraSession} from './camera.js';
 import {isLabMode,buildLabDiagnostic,buildLabText,characterDifferences} from './lab-diagnostics.js';
 import {APP_VERSION,VALIDATION_SECTIONS,VALIDATION_FAILURE_CATEGORIES,VALIDATION_STATUS,VALIDATION_STORAGE_KEY,isValidationMode,createChecklist,loadChecklist,saveChecklist,updateChecklistEntry,collectCapabilities,createValidationExport,createReadableReport} from './validation.js?v=1.21.11';
 import {formatRecentExpiry} from './network-lifecycle.js';
-import {analyzeRouterImage} from './router-image-analysis.js?v=3bs2';
+import {analyzeRouterImage} from './router-image-analysis.js?v=3bv1';
 import {parseRouterLabel} from './router-parser.js?v=3bs1';
 import {buildScanPlan,createScannedNetwork,persistRecentBeforeReady,fieldSource,detectCrossFieldContamination} from './scan-flow.js?v=3bs2';
 import {renderWifiShell} from './shell.mjs';
@@ -17,7 +17,7 @@ import {createWifiReportNavigation} from './report-navigation.mjs?v=3bi1';
 import {isSsidDiagnosticAccessAllowed} from './config.js?v=3bp1';
 import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3bp1';
 import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3bp1';
-import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3bt2';
+import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3bv1';
 
 export async function mountWifiConnect(shadowRoot,userId,{submitReport=null,canRunAdminOcrDiagnostics=false,listAdminWifiOcrPhotos=null,loadAdminWifiOcrPhoto=null}={}){
 storage.setStorageUser(userId);
