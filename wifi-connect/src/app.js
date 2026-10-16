@@ -7,18 +7,19 @@ import {createCameraSession} from './camera.js';
 import {isLabMode,buildLabDiagnostic,buildLabText,characterDifferences} from './lab-diagnostics.js';
 import {APP_VERSION,VALIDATION_SECTIONS,VALIDATION_FAILURE_CATEGORIES,VALIDATION_STATUS,VALIDATION_STORAGE_KEY,isValidationMode,createChecklist,loadChecklist,saveChecklist,updateChecklistEntry,collectCapabilities,createValidationExport,createReadableReport} from './validation.js?v=1.21.11';
 import {formatRecentExpiry} from './network-lifecycle.js';
-import {analyzeRouterImage} from './router-image-analysis.js?v=3cb1';
-import {parseRouterLabel} from './router-parser.js?v=3cb1';
-import {buildScanPlan,buildRecoverableScanReview,createScannedNetwork,persistRecentBeforeReady,fieldSource,detectCrossFieldContamination} from './scan-flow.js?v=3cb1';
-import {renderScanReviewScreen} from './scan-review-screen.mjs?v=3cb1';
+import {analyzeRouterImage} from './router-image-analysis.js?v=3cc1';
+import {parseRouterLabel} from './router-parser.js?v=3cc1';
+import {buildScanPlan,buildRecoverableScanReview,createScannedNetwork,persistRecentBeforeReady,fieldSource,detectCrossFieldContamination} from './scan-flow.js?v=3cc1';
+import {renderScanReviewScreen} from './scan-review-screen.mjs?v=3cc1';
+import {runScanLifecycle} from './scan-lifecycle.mjs?v=3cc1';
 import {renderWifiShell} from './shell.mjs';
 import {ensureWifiReportButton} from './report-button.mjs?v=3bi1';
 import {renderWifiReportScreen} from './report-screen.mjs?v=3bi1';
 import {createWifiReportNavigation} from './report-navigation.mjs?v=3bi1';
-import {isSsidDiagnosticAccessAllowed} from './config.js?v=3cb1';
-import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3cb1';
-import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3cb1';
-import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3cb1';
+import {isSsidDiagnosticAccessAllowed} from './config.js?v=3cc1';
+import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3cc1';
+import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3cc1';
+import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic} from './admin-ocr-diagnostic.mjs?v=3cc1';
 
 export async function mountWifiConnect(shadowRoot,userId,{submitReport=null,canRunAdminOcrDiagnostics=false,listAdminWifiOcrPhotos=null,loadAdminWifiOcrPhoto=null}={}){
 storage.setStorageUser(userId);
@@ -121,18 +122,43 @@ function addWifiReportButton(){
 }
 const wifiReportObserver=new MutationObserver(()=>addWifiReportButton());
 wifiReportObserver.observe(root,{childList:true});
-async function detectWifiData(){const text=root.querySelector('#ocr-editable-text')?.value??ocrResult?.normalizedText??'';try{const {parseRouterLabel}=await import('./router-parser.js?v=3cb1');parserResult={...parseRouterLabel({rawText:ocrResult?.rawText||'',normalizedText:text,passes:ocrResult?.passes||[],qr:ocrResult?.qr?.status==='wifi'?ocrResult.qr:null}),inputText:text};showSecret=false;route='parser-review';await render();}catch(error){console.error('[WiFi Connect parser] Error:',error?.message||error);toast('No se pudieron analizar los datos. Puedes introducirlos manualmente.');}}
+async function detectWifiData(){const text=root.querySelector('#ocr-editable-text')?.value??ocrResult?.normalizedText??'';try{const {parseRouterLabel}=await import('./router-parser.js?v=3cc1');parserResult={...parseRouterLabel({rawText:ocrResult?.rawText||'',normalizedText:text,passes:ocrResult?.passes||[],qr:ocrResult?.qr?.status==='wifi'?ocrResult.qr:null}),inputText:text};showSecret=false;route='parser-review';await render();}catch(error){console.error('[WiFi Connect parser] Error:',error?.message||error);toast('No se pudieron analizar los datos. Puedes introducirlos manualmente.');}}
 async function beginOcr(){
- let completedAnalysis=null;
  const photo=camera.getConfirmedImage();if(!photo){toast('No hay una foto confirmada para analizar.');return;}
- clearOcrResult();scanChoices=[];scanReview=null;const controller=new AbortController();activeOcrController=controller;const run=++ocrRunSequence;ocrProgress={status:'Analizando router',progress:null};route='ocr-progress';await render();
- try{
-  const cameraContext={source:photo.source==='camera'?'Cámara':'Galería',permission:photo.source==='camera'?'concedido al capturar':'no solicitado',photoWidth:photo.width||null,photoHeight:photo.height||null};
-  const analysis=await analyzeRouterImage(photo.blob,{signal:controller.signal,onStage:()=>{if(run===ocrRunSequence){ocrProgress={status:'Analizando router',progress:null};}},onDiagnostics:snapshot=>persistScanDiagnostics({...snapshot,camera:{source:cameraContext.source,permission:cameraContext.permission},blob:{...snapshot.blob,width:cameraContext.photoWidth,height:cameraContext.photoHeight},review:{requested:null,reason:'Análisis en curso',fields:[]}}),onProgress:()=>{}});completedAnalysis=analysis;if(run!==ocrRunSequence)return;analysis.diagnostics.camera={source:cameraContext.source,permission:cameraContext.permission};analysis.diagnostics.blob={...analysis.diagnostics.blob,width:cameraContext.photoWidth,height:cameraContext.photoHeight};analysis.diagnostics.finalSource=analysis.source;
-  parserResult=analysis.parsed;const {processedPreviewBlob,...ocrData}=analysis.ocr;ocrResult={...ocrData,qr:analysis.qr,qrDurationMs:analysis.qrDurationMs,analysisDurationMs:analysis.durationMs,analysisSource:analysis.source,ocrError:analysis.ocrError};processedPreviewUrl=processedPreviewBlob?URL.createObjectURL(processedPreviewBlob):null;
-  if(LAB_MODE){route='ocr-result';await render();return;}await presentScanResult(analysis);
- }catch(error){if(error?.name==='AbortError'||run!==ocrRunSequence)return;if(completedAnalysis){parserResult=completedAnalysis.parsed;const recovery=buildRecoverableScanReview(parserResult);if(recovery){if(!ocrResult){const {processedPreviewBlob,...ocrData}=completedAnalysis.ocr||{};ocrResult={...ocrData,qr:completedAnalysis.qr,qrDurationMs:completedAnalysis.qrDurationMs,analysisDurationMs:completedAnalysis.durationMs,analysisSource:completedAnalysis.source};processedPreviewUrl=processedPreviewBlob?URL.createObjectURL(processedPreviewBlob):null;}scanReview=recovery;const usable=(parserResult.ssidCandidates||[]).filter(item=>item.fieldType==='ssid'&&typeof item.value==='string'&&item.value.length>0&&item.value.length<=64&&Number(item.score)>=40);const bands=new Map();for(const item of usable){const key=item.band||'Red detectada';if(!bands.has(key))bands.set(key,item);}scanChoices=[...bands.entries()].map(([band,item])=>({...item,selectionLabel:band}));if(scanChoices.length>1)route='band-choice';else route='scan-review';await render();return;}}if(LAB_MODE)console.error('[WiFi Connect analyze]',error);let prior={};try{prior=JSON.parse(sessionStorage.getItem('wifi-connect-scan-diagnostics')||'{}');}catch{}const errorCode=error?.name==='EncodingError'?'IMAGE_DECODE':error?.name==='NetworkError'?'OCR_ASSET_LOAD':error?.name==='NotReadableError'?'CAMERA_READ':error?.name==='QuotaExceededError'?'LOCAL_STORAGE':'OCR_RUNTIME';persistScanDiagnostics({...prior,stage:'analysis-failed',durationMs:prior.durationMs??null,errorCode,camera:prior.camera||{source:photo.source==='camera'?'Cámara':'Galería',permission:photo.source==='camera'?'concedido al capturar':'no solicitado'},blob:prior.blob||{type:photo.blob.type,size:photo.blob.size,width:photo.width||null,height:photo.height||null},review:{requested:true,reason:`El análisis se interrumpió (${errorCode})`,fields:[]},finalPasswordAvailable:Boolean(prior.finalPasswordAvailable),passwordSource:prior.passwordSource||'ninguno'});ocrErrorMessage=String(error?.message||'');route='ocr-error';await render();}
- finally{if(run===ocrRunSequence)activeOcrController=null;}
+ clearOcrResult();scanChoices=[];scanReview=null;const controller=new AbortController();activeOcrController=controller;const run=++ocrRunSequence;ocrProgress={status:'Analizando router',progress:null};route='ocr-progress';
+ const cameraContext={source:photo.source==='camera'?'Cámara':'Galería',permission:photo.source==='camera'?'concedido al capturar':'no solicitado',photoWidth:photo.width||null,photoHeight:photo.height||null};
+ await runScanLifecycle({
+  isCurrent:()=>run===ocrRunSequence,
+  analyze:async onCompleted=>{
+   await render();
+   const analysis=await analyzeRouterImage(photo.blob,{signal:controller.signal,onStage:()=>{if(run===ocrRunSequence){ocrProgress={status:'Analizando router',progress:null};}},onDiagnostics:snapshot=>persistScanDiagnostics({...snapshot,camera:{source:cameraContext.source,permission:cameraContext.permission},blob:{...snapshot.blob,width:cameraContext.photoWidth,height:cameraContext.photoHeight},review:{requested:null,reason:'Análisis en curso',fields:[]}}),onProgress:()=>{}});
+   onCompleted(analysis);
+   analysis.diagnostics.camera={source:cameraContext.source,permission:cameraContext.permission};analysis.diagnostics.blob={...analysis.diagnostics.blob,width:cameraContext.photoWidth,height:cameraContext.photoHeight};analysis.diagnostics.finalSource=analysis.source;
+   return analysis;
+  },
+  present:async analysis=>{
+   if(run!==ocrRunSequence)return;
+   parserResult=analysis.parsed;const {processedPreviewBlob,...ocrData}=analysis.ocr;ocrResult={...ocrData,qr:analysis.qr,qrDurationMs:analysis.qrDurationMs,analysisDurationMs:analysis.durationMs,analysisSource:analysis.source,ocrError:analysis.ocrError};processedPreviewUrl=processedPreviewBlob?URL.createObjectURL(processedPreviewBlob):null;
+   if(LAB_MODE){route='ocr-result';await render();return;}
+   await presentScanResult(analysis);
+  },
+  recover:async analysis=>{
+   parserResult=analysis.parsed;const recovery=buildRecoverableScanReview(parserResult);if(!recovery)return false;
+   if(!ocrResult){const {processedPreviewBlob,...ocrData}=analysis.ocr||{};ocrResult={...ocrData,qr:analysis.qr,qrDurationMs:analysis.qrDurationMs,analysisDurationMs:analysis.durationMs,analysisSource:analysis.source};processedPreviewUrl=processedPreviewBlob?URL.createObjectURL(processedPreviewBlob):null;}
+   scanReview=recovery;const usable=(parserResult.ssidCandidates||[]).filter(item=>item.fieldType==='ssid'&&typeof item.value==='string'&&item.value.length>0&&item.value.length<=64&&Number(item.score)>=40);const bands=new Map();for(const item of usable){const key=item.band||'Red detectada';if(!bands.has(key))bands.set(key,item);}scanChoices=[...bands.entries()].map(([band,item])=>({...item,selectionLabel:band}));route=scanChoices.length>1?'band-choice':'scan-review';await render();return true;
+  },
+  fail:async error=>{
+   if(LAB_MODE)console.error('[WiFi Connect analyze]',error);
+   let prior={};try{prior=JSON.parse(sessionStorage.getItem('wifi-connect-scan-diagnostics')||'{}');}catch{}
+   const errorCode=error?.name==='EncodingError'?'IMAGE_DECODE':error?.name==='NetworkError'?'OCR_ASSET_LOAD':error?.name==='NotReadableError'?'CAMERA_READ':error?.name==='QuotaExceededError'?'LOCAL_STORAGE':'OCR_RUNTIME';
+   try{persistScanDiagnostics({...prior,stage:'analysis-failed',durationMs:prior.durationMs??null,errorCode,camera:prior.camera||{source:cameraContext.source,permission:cameraContext.permission},blob:prior.blob||{type:photo.blob.type,size:photo.blob.size,width:photo.width||null,height:photo.height||null},review:{requested:true,reason:`El análisis se interrumpió (${errorCode})`,fields:[]},finalPasswordAvailable:Boolean(prior.finalPasswordAvailable),passwordSource:prior.passwordSource||'ninguno'});}catch{}
+   ocrErrorMessage=String(error?.message||'');route='ocr-error';try{await render();}catch{root.innerHTML=ocrErrorScreen();}
+  },
+  settle:async()=>{
+   activeOcrController=null;
+   if(route==='ocr-progress'||root.querySelector('.scan-wait-screen')){route='ocr-error';if(!ocrErrorMessage)ocrErrorMessage='No se pudo completar el análisis.';try{await render();}catch{root.innerHTML=ocrErrorScreen();}}
+  }
+ });
 }
 function cancelOcr(){ocrRunSequence++;activeOcrController?.abort();activeOcrController=null;clearOcrResult();scanChoices=[];scanReview=null;camera.clearConfirmedImage();ocrProgress={status:'Analizando router',progress:null};route='camera';render();}
 function preparedScreen(){const image=camera.getConfirmedImage();return `<section class="screen image-screen"><div class="badge">Imagen confirmada</div><h1 class="page-heading">Imagen preparada</h1><p class="muted">La fotografía está lista para analizar.</p><div class="photo-preview confirmed-preview">${image?`<img src="${image.url}" alt="Fotografía preparada de la etiqueta del router">`:'<p>La imagen ya no está disponible. Selecciona otra fotografía.</p>'}</div><p class="camera-privacy">🔒 La imagen permanece en este dispositivo</p><div class="button-row"><button class="soft-button" data-action="change-photo">Cambiar foto</button><button class="primary" data-action="camera-home">Volver al inicio</button></div></section>`;}
@@ -183,4 +209,3 @@ return {
   dispose(){cameraViewSequence++;ocrRunSequence++;activeOcrController?.abort();activeOcrController=null;adminOcrRun++;adminOcrController?.abort();adminOcrController=null;adminOcrImage=null;adminOcrReports=[];camera.stop();camera.clearConfirmedImage();clearOcrResult();current=null;parserResult=null;scanReview=null;if(reportPhotoUrl)URL.revokeObjectURL(reportPhotoUrl);try{if(modal.open)modal.close();}catch{}document.removeEventListener('visibilitychange',onVisibilityChange);window.removeEventListener('pagehide',onPageHide);window.removeEventListener('popstate',onWifiReportPopState);shadowRoot.replaceChildren();storage.closeStorage();}
 };
 }
-

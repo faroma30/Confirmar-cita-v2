@@ -1,4 +1,4 @@
-import { buildSafeSsidReport, compareSsidPasses, explicitCandidatesFromPass } from "./ssid-diagnostic-report.js?v=3cb1";
+import { buildSafeSsidReport, compareSsidPasses, explicitCandidatesFromPass } from "./ssid-diagnostic-report.js?v=3cc1";
 const PASS_IDS = new Set(["color", "grayscale-contrast", "ssid-focus-1", "ssid-focus-2"]);
 const STAGES = new Set(["qr", "ocr", "parser", "review"]);
 const REASONS = new Set([
@@ -270,4 +270,3 @@ export function renderAdminOcrDiagnostic(report) {
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>\"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char]);
 }
-

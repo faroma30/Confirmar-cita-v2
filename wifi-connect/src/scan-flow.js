@@ -80,8 +80,8 @@ export function buildRecoverableScanReview(parsed){
  const passwordNeedsReview=parsed?.security?.value!=='Sin contraseña'&&(
   !isFieldCandidate(password,'password')
   ||password.source!=='qr'&&(
-   Number(password.score)<60
-   ((!Number.isFinite(password.ocrConfidence)||password.ocrConfidence<90)&&password.ocrVerification?.exactAgreement!==true)
+    Number(password.score)<60
+    || ((!Number.isFinite(password.ocrConfidence)||password.ocrConfidence<90)&&password.ocrVerification?.exactAgreement!==true)
    ||password.needsReview
    ||password.ocrVerification?.status==='disagreement'
   )
@@ -96,4 +96,3 @@ export async function persistRecentBeforeReady(network,{saveRecent,showReady}){
  await showReady(recent);
  return recent;
 }
-

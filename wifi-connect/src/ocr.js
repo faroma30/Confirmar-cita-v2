@@ -1,5 +1,5 @@
 import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3bi1';
-import {parseRouterLabel} from './router-parser.js?v=3cb1';
+import {parseRouterLabel} from './router-parser.js?v=3cc1';
 import {findSsidFocusRegions} from './ssid-focus.js?v=3bn2';
 
 export const OCR_LANGUAGES='spa+eng';
@@ -117,4 +117,3 @@ function focusedSsidText(text){
  }
  return kept.join('\n');
 }
-
