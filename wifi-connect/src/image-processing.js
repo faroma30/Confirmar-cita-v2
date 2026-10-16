@@ -3,6 +3,13 @@ export const MAX_OCR_DIMENSION=2800;
 export const PREVIEW_MAX_DIMENSION=1200;
 export function throwIfAborted(signal){if(signal?.aborted){const error=new Error('OCR cancelado.');error.name='AbortError';throw error;}}
 function canvasToBlob(canvas,type='image/jpeg',quality=0.96){return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('No se pudo preparar la imagen para leerla.')),type,quality));}
+const PREPARATION_OPERATIONS=new Set(['decode_image','read_dimensions','create_ocr_canvas','get_ocr_context','draw_ocr_image','read_image_data','write_image_data','encode_ocr_image','create_preview_canvas','get_preview_context','draw_preview_image','encode_preview_image','complete']);
+function safeErrorKind(error){const name=String(error?.name||'');return ['EncodingError','SecurityError','InvalidStateError','IndexSizeError','NotSupportedError','QuotaExceededError','AbortError','TypeError','RangeError'].includes(name)?name:name==='Error'?'Error':'UnknownError';}
+function reportPreparation(onDiagnostic,operation,state,details={},error=null){
+ if(!PREPARATION_OPERATIONS.has(operation)||!['running','completed','failed'].includes(state))return;
+ const report={operation,state,errorKind:error?safeErrorKind(error):null,canvasAvailable:details.canvasAvailable??null,contextAvailable:details.contextAvailable??null,width:Number.isInteger(details.width)?details.width:null,height:Number.isInteger(details.height)?details.height:null};
+ try{onDiagnostic(report);}catch{}
+}
 async function decodeBlob(blob,urlApi,signal){
  throwIfAborted(signal);
  if(typeof globalThis.createImageBitmap==='function'){
@@ -17,33 +24,47 @@ async function decodeBlob(blob,urlApi,signal){
   throwIfAborted(signal);return {image,close:false};
  }finally{urlApi.revokeObjectURL(url);}
 }
-export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMENSION,previewMaxDimension=PREVIEW_MAX_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas'),onStage=()=>{},variant='color',region=null,includePreview=variant==='color'}={}){
+export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMENSION,previewMaxDimension=PREVIEW_MAX_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas'),onStage=()=>{},onDiagnostic=()=>{},variant='color',region=null,includePreview=variant==='color'}={}){
  if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/'))throw new TypeError('Se necesita una fotografía válida para analizar.');
  if(!blob.size)throw new TypeError('La fotografía está vacía.');
  throwIfAborted(signal);onStage('Preparando imagen');
- const decoded=await decodeBlob(blob,urlApi,signal);let canvas,previewCanvas;
+ let decoded,canvas,previewCanvas,currentOperation='decode_image',sourceWidth=null,sourceHeight=null,width=null,height=null,contextAvailable=null;
  try{
-  const sourceWidth=decoded.image.width||decoded.image.naturalWidth,sourceHeight=decoded.image.height||decoded.image.naturalHeight;
+  reportPreparation(onDiagnostic,currentOperation,'running');decoded=await decodeBlob(blob,urlApi,signal);reportPreparation(onDiagnostic,currentOperation,'completed');
+  currentOperation='read_dimensions';reportPreparation(onDiagnostic,currentOperation,'running');
+  sourceWidth=decoded.image.width||decoded.image.naturalWidth;sourceHeight=decoded.image.height||decoded.image.naturalHeight;
   if(!sourceWidth||!sourceHeight)throw new Error('No se pudieron leer las dimensiones de la fotografía.');
+  reportPreparation(onDiagnostic,currentOperation,'completed',{width:sourceWidth,height:sourceHeight});
   const crop=region?{left:Math.max(0,Math.floor(region.left)),top:Math.max(0,Math.floor(region.top)),width:Math.max(1,Math.floor(region.width)),height:Math.max(1,Math.floor(region.height))}:{left:0,top:0,width:sourceWidth,height:sourceHeight};
   crop.width=Math.min(crop.width,sourceWidth-crop.left);crop.height=Math.min(crop.height,sourceHeight-crop.top);
   if(crop.width<1||crop.height<1)throw new Error('La región de texto no está dentro de la fotografía.');
-  const scale=variant==='ssid-focus'?Math.min(2.5,maxDimension/Math.max(crop.width,crop.height)):variant==='grayscale'?Math.min(1.5,maxDimension/Math.max(crop.width,crop.height)):Math.min(1,maxDimension/Math.max(crop.width,crop.height));const width=Math.max(1,Math.round(crop.width*scale)),height=Math.max(1,Math.round(crop.height*scale));
-  canvas=canvasFactory();canvas.width=width;canvas.height=height;const context=canvas.getContext('2d',{alpha:false});if(!context)throw new Error('No se pudo procesar la fotografía en este dispositivo.');
+  const scale=variant==='ssid-focus'?Math.min(2.5,maxDimension/Math.max(crop.width,crop.height)):variant==='grayscale'?Math.min(1.5,maxDimension/Math.max(crop.width,crop.height)):Math.min(1,maxDimension/Math.max(crop.width,crop.height));width=Math.max(1,Math.round(crop.width*scale));height=Math.max(1,Math.round(crop.height*scale));
+  currentOperation='create_ocr_canvas';reportPreparation(onDiagnostic,currentOperation,'running',{width,height});canvas=canvasFactory();canvas.width=width;canvas.height=height;reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,width,height});
+  currentOperation='get_ocr_context';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:Boolean(canvas),width,height});const context=canvas.getContext('2d',{alpha:false});contextAvailable=Boolean(context);if(!context)throw new Error('No se pudo procesar la fotografía en este dispositivo.');reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable:true,width,height});
   // ImageBitmap with imageOrientation=from-image (or browser-decoded <img> fallback) normalizes EXIF exactly once.
+  currentOperation='draw_ocr_image';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:Boolean(canvas),contextAvailable,width,height});
   if(region)context.drawImage(decoded.image,crop.left,crop.top,crop.width,crop.height,0,0,width,height);
   else context.drawImage(decoded.image,0,0,width,height);
+  reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable:true,width,height});
   if(variant==='grayscale'){
+   currentOperation='read_image_data';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:true,contextAvailable:true,width,height});
    const pixels=context.getImageData(0,0,width,height),data=pixels.data;
+   reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable:true,width,height});
    for(let index=0;index<data.length;index+=4){const luminance=.2126*data[index]+.7152*data[index+1]+.0722*data[index+2],contrasted=Math.max(0,Math.min(255,(luminance-128)*1.22+128));data[index]=data[index+1]=data[index+2]=contrasted;}
+   currentOperation='write_image_data';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:true,contextAvailable:true,width,height});
    context.putImageData(pixels,0,0);
+   reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable:true,width,height});
   }
-  throwIfAborted(signal);onStage('Imagen preparada');const outputType=variant==='ssid-focus'?'image/png':'image/jpeg';const processedBlob=await canvasToBlob(canvas,outputType,0.96);throwIfAborted(signal);
+  throwIfAborted(signal);onStage('Imagen preparada');const outputType=variant==='ssid-focus'?'image/png':'image/jpeg';currentOperation='encode_ocr_image';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:Boolean(canvas),contextAvailable,width,height});const processedBlob=await canvasToBlob(canvas,outputType,0.96);reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable,width,height});throwIfAborted(signal);
   let previewBlob=null;
   if(includePreview){const previewScale=Math.min(1,previewMaxDimension/Math.max(width,height));const previewWidth=Math.max(1,Math.round(width*previewScale)),previewHeight=Math.max(1,Math.round(height*previewScale));
-   previewCanvas=canvasFactory();previewCanvas.width=previewWidth;previewCanvas.height=previewHeight;const previewContext=previewCanvas.getContext('2d',{alpha:false});if(!previewContext)throw new Error('No se pudo crear la vista comparativa.');
-   previewContext.drawImage(canvas,0,0,previewWidth,previewHeight);previewBlob=await canvasToBlob(previewCanvas,'image/jpeg',0.88);throwIfAborted(signal);}
+   currentOperation='create_preview_canvas';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:true,width:previewWidth,height:previewHeight});previewCanvas=canvasFactory();previewCanvas.width=previewWidth;previewCanvas.height=previewHeight;reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,width:previewWidth,height:previewHeight});
+   currentOperation='get_preview_context';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:Boolean(previewCanvas),width:previewWidth,height:previewHeight});const previewContext=previewCanvas.getContext('2d',{alpha:false});if(!previewContext)throw new Error('No se pudo crear la vista comparativa.');reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable:true,width:previewWidth,height:previewHeight});
+   currentOperation='draw_preview_image';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:true,contextAvailable:true,width:previewWidth,height:previewHeight});previewContext.drawImage(canvas,0,0,previewWidth,previewHeight);reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable:true,width:previewWidth,height:previewHeight});
+   currentOperation='encode_preview_image';reportPreparation(onDiagnostic,currentOperation,'running',{canvasAvailable:true,contextAvailable:true,width:previewWidth,height:previewHeight});previewBlob=await canvasToBlob(previewCanvas,'image/jpeg',0.88);reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:true,contextAvailable:true,width:previewWidth,height:previewHeight});throwIfAborted(signal);}
+  currentOperation='complete';reportPreparation(onDiagnostic,currentOperation,'completed',{canvasAvailable:Boolean(canvas),contextAvailable,width,height});
   return {blob:processedBlob,previewBlob,sourceWidth,sourceHeight,width,height,wasResized:scale<1,orientationNormalized:true,mimeType:outputType};
+ }catch(error){reportPreparation(onDiagnostic,currentOperation,'failed',{canvasAvailable:canvas?true:null,contextAvailable,width:width||sourceWidth,height:height||sourceHeight},error);throw error;
  }finally{
   if(decoded.close)try{decoded.image.close();}catch{}
   for(const temporary of [canvas,previewCanvas])if(temporary){temporary.width=0;temporary.height=0;}

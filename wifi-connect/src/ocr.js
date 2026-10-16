@@ -1,4 +1,4 @@
-import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3cj1';
+import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3cl1';
 import {parseRouterLabel} from './router-parser.js?v=3cj1';
 import {findSsidFocusRegions} from './ssid-focus.js?v=3bn2';
 
@@ -34,11 +34,11 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
   try{return await waitFor(instance.recognize(image,{}, {text:true,blocks:true}),signal,recognitionTimeoutMs,()=>{void terminateWorker();});}
   catch(error){if(error?.name==='TimeoutError'||signal?.aborted)await terminateWorker();throw error;}
  }
- async function recognizeOne(blob,{signal,onProgress=()=>{},onStage=()=>{},qrResult=null}={}){
+ async function recognizeOne(blob,{signal,onProgress=()=>{},onStage=()=>{},onImagePreparation=()=>{},qrResult=null}={}){
   if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/')||!blob.size)throw new TypeError('Selecciona una fotografía válida para analizar.');
   const started=performance.now();let prepared=null,alternatePrepared=null,focusedPrepared=null;const timing={imagePreparationMs:0,engineLoadMs:0,workerInitializationMs:0,recognitionMs:0,alternatePreparationMs:0,focusedPreparationMs:0};
   try{
-   throwIfAborted(signal);onStage('Preparando imagen');let prepStarted=performance.now();prepared=await preprocess(blob,{signal,onStage,variant:'color',includePreview:true});timing.imagePreparationMs=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
+   throwIfAborted(signal);onStage('Preparando imagen');let prepStarted=performance.now();prepared=await preprocess(blob,{signal,onStage,onDiagnostic:onImagePreparation,variant:'color',includePreview:true});timing.imagePreparationMs=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
    onStage('Cargando reconocimiento');prepStarted=performance.now();if(!enginePromise)enginePromise=Promise.resolve().then(loadEngine).then(loaded=>{const resolved=loaded?.createWorker?loaded:loaded?.default;if(!resolved?.createWorker)throw new TypeError('OCR engine unavailable.');engine=resolved;return resolved;}).catch(error=>{enginePromise=null;throw error;});
    const loadedEngine=await waitFor(enginePromise,signal,15000);timing.engineLoadMs=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
    onStage('Cargando idiomas');prepStarted=performance.now();const lease=await getWorker(loadedEngine,signal,onProgress,onStage);worker=lease.instance;timing.workerInitializationMs=lease.reused?0:Math.round(performance.now()-prepStarted);throwIfAborted(signal);
@@ -67,7 +67,7 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
    if(weak){
     throwIfAborted(signal);onStage('Mejorando lectura');const alternateStarted=performance.now();
     try{
-     prepStarted=performance.now();alternatePrepared=await preprocess(blob,{signal,onStage,variant:'grayscale',includePreview:false});timing.alternatePreparationMs=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
+     prepStarted=performance.now();alternatePrepared=await preprocess(blob,{signal,onStage,onDiagnostic:onImagePreparation,variant:'grayscale',includePreview:false});timing.alternatePreparationMs=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
      recognizeStarted=performance.now();const alternate=await recognizeWithTimeout(worker,alternatePrepared.blob,signal);timing.recognitionMs+=Math.round(performance.now()-recognizeStarted);throwIfAborted(signal);
      const alternateRaw=String(alternate?.data?.text??''),alternateNormalized=normalizeOcrText(alternateRaw),alternateConfidence=Number.isFinite(alternate?.data?.confidence)?alternate.data.confidence:null;
      passes.push({id:'grayscale-contrast',rawText:alternateRaw,normalizedText:alternateNormalized,confidence:alternateConfidence,blockCount:alternate?.data?.blocks?.length||0,durationMs:Math.round(performance.now()-alternateStarted),image:{width:alternatePrepared.width,height:alternatePrepared.height,bytes:alternatePrepared.blob.size}});
@@ -83,7 +83,7 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
     for(const [index,target] of prioritized.slice(0,2).entries()){
      throwIfAborted(signal);focusAttemptCount++;const focusStarted=performance.now();onStage('Verificando nombre Wi-Fi');
      try{
-      prepStarted=performance.now();focusedPrepared=await preprocess(target.blob,{signal,onStage,variant:'ssid-focus',region:target.region,includePreview:false});timing.focusedPreparationMs+=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
+      prepStarted=performance.now();focusedPrepared=await preprocess(target.blob,{signal,onStage,onDiagnostic:onImagePreparation,variant:'ssid-focus',region:target.region,includePreview:false});timing.focusedPreparationMs+=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
       recognizeStarted=performance.now();const focused=await recognizeWithTimeout(worker,focusedPrepared.blob,signal);timing.recognitionMs+=Math.round(performance.now()-recognizeStarted);throwIfAborted(signal);
       const focusedRaw=String(focused?.data?.text??'');let focusedNormalized=normalizeOcrText(focusedRaw);
       focusLengths.push(focusedNormalized.length);
