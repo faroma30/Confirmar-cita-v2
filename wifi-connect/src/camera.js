@@ -10,19 +10,42 @@ export function classifyCameraError(error,{secureContext=globalThis.isSecureCont
  if(!globalThis.navigator?.mediaDevices?.getUserMedia)return {kind:'unavailable',message:'Este navegador no ofrece acceso a la cámara. Puedes seleccionar una fotografía existente.'};
  return {kind:'unavailable',message:'No se ha podido abrir la cámara. Puedes seleccionar una fotografía existente.'};
 }
-export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDevices,urlApi=globalThis.URL,secureContext=globalThis.isSecureContext,canvasFactory=()=>globalThis.document.createElement('canvas')}={}){
- let stream=null,opening=null,sequence=0,candidate=null,confirmed=null,torchEnabled=false,videoTarget=null,state=CAMERA_STATES.IDLE;
+/** Permission queries are advisory only: Safari/iOS may not implement camera queries. */
+export async function queryCameraPermissionState(permissions=globalThis.navigator?.permissions){
+ if(typeof permissions?.query!=='function')return 'unsupported';
+ try{const status=await permissions.query({name:'camera'});return ['granted','denied','prompt'].includes(status?.state)?status.state:'unknown';}
+ catch{return 'unsupported';}
+}
+export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDevices,permissions=globalThis.navigator?.permissions,urlApi=globalThis.URL,secureContext=globalThis.isSecureContext,canvasFactory=()=>globalThis.document.createElement('canvas')}={}){
+ let stream=null,opening=null,sequence=0,candidate=null,confirmed=null,torchEnabled=false,videoTarget=null,state=CAMERA_STATES.IDLE,permissionState='unknown';
  const listeners=new Set();
  const emit=(next,detail={})=>{state=next;for(const listener of listeners)listener({state,detail});};
  const revoke=image=>{if(image?.url){try{urlApi.revokeObjectURL(image.url);}catch{}}};
  const stopTracks=active=>{active?.getTracks?.().forEach(track=>{try{track.stop();}catch{}});};
+ const streamIsLive=active=>{if(!active)return false;const videoTracks=active.getVideoTracks?.()||[],tracks=videoTracks.length?videoTracks:active.getTracks?.()||[];return tracks.length===0||tracks.some(track=>track.readyState!=='ended');};
+ async function attachStream(video,active){
+  if(!video||!active)return {ok:false,kind:'unavailable',message:'No se ha podido mostrar la cámara.'};
+  if(videoTarget&&videoTarget!==video){try{videoTarget.pause?.();}catch{}try{videoTarget.srcObject=null;}catch{}}
+  videoTarget=video;video.srcObject=active;video.muted=true;video.playsInline=true;video.setAttribute?.('playsinline','');video.setAttribute?.('muted','');
+  try{
+   await video.play?.();
+   if(!video.videoWidth&&video.addEventListener)await new Promise(resolve=>{let done=false;const finish=()=>{if(done)return;done=true;clearTimeout(timer);video.removeEventListener?.('loadedmetadata',finish);video.removeEventListener?.('loadeddata',finish);resolve();};const timer=setTimeout(finish,1800);video.addEventListener('loadedmetadata',finish,{once:true});video.addEventListener('loadeddata',finish,{once:true});});
+   return {ok:true};
+  }catch(error){try{video.srcObject=null;}catch{}return {ok:false,...classifyCameraError(error,{secureContext})};}
+ }
+ async function attachExistingStream(video,active){const result=await attachStream(video,active);if(!result.ok)stop();return result;}
  function stop(){sequence++;opening=null;if(stream){stopTracks(stream);stream=null;}if(videoTarget){try{videoTarget.pause?.();}catch{}try{videoTarget.srcObject=null;}catch{}videoTarget=null;}torchEnabled=false;if(state===CAMERA_STATES.LIVE||state===CAMERA_STATES.OPENING)emit(CAMERA_STATES.IDLE);}
  function clearReview(){if(candidate&&candidate!==confirmed)revoke(candidate);candidate=null;if(state===CAMERA_STATES.REVIEW)emit(CAMERA_STATES.IDLE);}
  function clearConfirmedImage(){if(confirmed)revoke(confirmed);if(candidate&&candidate!==confirmed)revoke(candidate);confirmed=null;candidate=null;if(state===CAMERA_STATES.CONFIRMED||state===CAMERA_STATES.REVIEW)emit(CAMERA_STATES.IDLE);}
  async function open(video){
   if(state===CAMERA_STATES.DISPOSED)return {ok:false,kind:'unavailable',message:'La cámara ya se ha cerrado.'};
+  // This is an advisory read only. Do not wait for it or gate getUserMedia:
+  // Safari/iOS can reject this permission descriptor even when the camera works.
+  void queryCameraPermissionState(permissions).then(value=>{permissionState=value;});
   if(state===CAMERA_STATES.LIVE&&stream&&videoTarget===video)return {ok:true};
-  if(opening)return opening;
+  if(stream&&!streamIsLive(stream)){stop();}
+  if(stream&&streamIsLive(stream)&&state===CAMERA_STATES.LIVE){return attachExistingStream(video,stream);}
+  if(opening){const result=await opening;if(!result.ok)return result;if(state===CAMERA_STATES.LIVE&&stream&&streamIsLive(stream))return attachExistingStream(video,stream);return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};}
   if(secureContext===false){const result=classifyCameraError(new Error('secure context required'),{secureContext});emit(CAMERA_STATES.ERROR,result);return {ok:false,...result};}
   if(!mediaDevices?.getUserMedia){const result={kind:'unavailable',message:'Este navegador no ofrece acceso a la cámara. Puedes seleccionar una fotografía existente.'};emit(CAMERA_STATES.ERROR,result);return {ok:false,...result};}
   stop();const mySequence=sequence;videoTarget=video;emit(CAMERA_STATES.OPENING);
@@ -36,9 +59,7 @@ export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDev
      acquired=await mediaDevices.getUserMedia({audio:false,video:true});
     }
     if(mySequence!==sequence||state===CAMERA_STATES.DISPOSED){stopTracks(acquired);return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};}
-    stream=acquired;video.srcObject=stream;video.muted=true;video.playsInline=true;video.setAttribute?.('playsinline','');video.setAttribute?.('muted','');
-    await video.play?.();
-    if(!video.videoWidth&&video.addEventListener)await new Promise(resolve=>{let done=false;const finish=()=>{if(done)return;done=true;clearTimeout(timer);video.removeEventListener?.('loadedmetadata',finish);video.removeEventListener?.('loadeddata',finish);resolve();};const timer=setTimeout(finish,1800);video.addEventListener('loadedmetadata',finish,{once:true});video.addEventListener('loadeddata',finish,{once:true});});
+    stream=acquired;const attached=await attachStream(video,stream);if(!attached.ok)throw Object.assign(new Error(attached.message),{name:attached.kind==='permission'?'NotAllowedError':'NotReadableError'});
     if(mySequence!==sequence){stopTracks(acquired);return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};}
     emit(CAMERA_STATES.LIVE);return {ok:true};
    }catch(error){if(acquired)stopTracks(acquired);if(stream===acquired)stream=null;if(mySequence!==sequence)return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};const result=classifyCameraError(error,{secureContext});if(videoTarget){try{videoTarget.srcObject=null;}catch{}}videoTarget=null;emit(CAMERA_STATES.ERROR,result);return {ok:false,...result};}
@@ -71,5 +92,6 @@ export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDev
  async function toggleTorch(){if(!supportsTorch())return false;const track=stream.getVideoTracks()[0];torchEnabled=!torchEnabled;try{await track.applyConstraints({advanced:[{torch:torchEnabled}]});return torchEnabled;}catch{torchEnabled=!torchEnabled;return false;}}
  function subscribe(listener){listeners.add(listener);return()=>listeners.delete(listener);}
  function dispose(){stop();clearConfirmedImage();emit(CAMERA_STATES.DISPOSED);listeners.clear();}
- return {open,stop,capture,selectImage,confirmImage,discardReview,clearConfirmedImage,getConfirmedImage,getPreviewImage,supportsTorch,toggleTorch,subscribe,dispose,getState:()=>state,getStream:()=>stream};
+ return {open,stop,capture,selectImage,confirmImage,discardReview,clearConfirmedImage,getConfirmedImage,getPreviewImage,supportsTorch,toggleTorch,subscribe,dispose,getPermissionState:async()=>{permissionState=await queryCameraPermissionState(permissions);return permissionState;},getState:()=>state,getStream:()=>stream};
 }
+
