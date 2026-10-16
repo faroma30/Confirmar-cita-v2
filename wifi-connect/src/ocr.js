@@ -1,5 +1,5 @@
-import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3ci1';
-import {parseRouterLabel} from './router-parser.js?v=3ci1';
+import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3cj1';
+import {parseRouterLabel} from './router-parser.js?v=3cj1';
 import {findSsidFocusRegions} from './ssid-focus.js?v=3bn2';
 
 export const OCR_LANGUAGES='spa+eng';
