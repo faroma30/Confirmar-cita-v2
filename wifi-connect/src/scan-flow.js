@@ -29,7 +29,7 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  // Preserve the existing password-review threshold; this phase changes SSID
  // review coherence only. Password payloads are never part of diagnostics.
  const highConfidencePassword=Number(password?.score)>=90&&password?.source!=='qr'&&/Etiqueta de contraseña Wi-Fi/i.test(password?.reason||'');
- const ocrConfidenceNeedsReview=candidate=>Boolean(candidate&& !candidate.source?.startsWith('qr')&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90));
+ const ocrConfidenceNeedsReview=candidate=>Boolean(candidate&& !candidate.source?.startsWith('qr')&&candidate.ocrVerification?.exactAgreement!==true&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90));
  const passwordOcrConfidenceNeedsReview=candidate=>Boolean(candidate&&!qrTrusted(candidate)&&(!Number.isFinite(candidate.ocrConfidence)||candidate.ocrConfidence<90)&&candidate.ocrVerification?.exactAgreement!==true);
  const passStatus=candidate=>candidate?.ocrVerification?.status||(candidate?.ocrVerification?.mismatchedPassCount>0?'disagreement':candidate?.ocrVerification?.exactAgreement?'agreement':'insufficient');
  const ssidUnverified=Boolean(primary.ocrVerification&&passStatus(primary)==='disagreement'&&!qrTrusted(primary));
@@ -96,3 +96,4 @@ export async function persistRecentBeforeReady(network,{saveRecent,showReady}){
  await showReady(recent);
  return recent;
 }
+
