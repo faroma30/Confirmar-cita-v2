@@ -17,6 +17,14 @@ const STATUSES = Object.freeze({
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
+export function canUseIssueCenter(profile) {
+  return Boolean(profile
+    && ["admin", "master", "technician"].includes(profile.role)
+    && profile.status === "active"
+    && profile.activation_verified_at
+    && !profile.must_change_password);
+}
+
 export function validateIssueFile(file) {
   if (!file) return null;
   if (!MIME_TYPES.has(file.type) || file.size < 16 || file.size > MAX_IMAGE_BYTES) {
@@ -61,7 +69,7 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
   let currentDetail = null;
   let generation = 0;
   const PAGE = 20;
-  const active = () => Boolean(getProfile() && ["admin", "master", "technician"].includes(getProfile().role));
+  const active = () => canUseIssueCenter(getProfile());
   const admin = () => active() && getProfile().role === "admin";
   const show = (id, visible) => $(id).classList.toggle("hidden", !visible);
   const rpc = (name, args = {}) => getSupabase().rpc(name, args);
