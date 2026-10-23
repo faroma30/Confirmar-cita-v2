@@ -50,6 +50,14 @@ export function buildWhatsAppUrl(phone, message, userAgent = "") {
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
 
+export function buildWhatsAppConversationUrl(phone, userAgent = "") {
+  const number = String(phone ?? "").replace(/\D/g, "");
+  if (/Android/i.test(userAgent)) {
+    return `intent://send?phone=${number}#Intent;scheme=whatsapp;package=com.whatsapp;end`;
+  }
+  return `https://wa.me/${number}`;
+}
+
 export function buildMapsUrl(query, userAgent = "") {
   const encoded = encodeURIComponent(String(query ?? "").trim());
   if (/Android/i.test(userAgent)) {

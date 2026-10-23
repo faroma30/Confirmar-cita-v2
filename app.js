@@ -11,6 +11,7 @@ import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
+import { createIgnoredWorkCard } from "./ignored-work.mjs";
 
 const $ = (id) => document.getElementById(id);
 // Keep the existing V2 workspace DOM intact while switching the two top-level tools.
@@ -1032,9 +1033,7 @@ function renderAppointments() {
       empty.textContent = "No hay intervenciones omitidas en la última importación."; list.append(empty);
     } else {
       for (const item of ignoredAppointments) {
-        const line = document.createElement("article"); line.className = "appointment-card";
-        line.textContent = `${item.time} · ${item.type || "Tipo no detectado"} · No importada (no es instalación)`;
-        list.append(line);
+        list.append(createIgnoredWorkCard(item, document, navigator.userAgent));
       }
     }
     return;

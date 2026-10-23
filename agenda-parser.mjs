@@ -35,6 +35,7 @@ export function parseOracleInstallations(text, keywords = ["kit hogar", "kit bá
     const time = starts[index][1].padStart(5, "0");
     const type = segment.match(/Tipo:\s*(.*?)\s+Panel:/i)?.[1]?.trim() ?? "";
     const isInstallation = normalizedKeywords.some((keyword) => normalizeText(type).includes(keyword));
+    const customerName = segment.match(/(?:Cliente|Nombre(?:\s+del\s+cliente)?)\s*:\s*(.*?)\s+(?=(?:Tipo|Panel|CP|Tlf|Mto)\s*:)/i)?.[1]?.trim() ?? "";
     const prospect = segment.match(/Mto:\s*-?(\d+)/i)?.[1] ?? "";
     const phone = normalizePhone(segment.match(/Tlf:\s*([+\d][\d\s()-]{7,})/i)?.[1] ?? "");
     let population = "";
@@ -67,7 +68,15 @@ export function parseOracleInstallations(text, keywords = ["kit hogar", "kit bá
     if (!population) entry.issues.push("Población no detectada");
     if (!fullAddress) entry.issues.push("Dirección no detectada");
     if (isInstallation) installations.push(entry);
-    else ignored.push({ time, type: type || "Tipo no detectado" });
+    else ignored.push({
+      time,
+      type: type || "Tipo no detectado",
+      customer_name: customerName,
+      phone,
+      population,
+      full_address: fullAddress,
+      postal_code: postalCode,
+    });
   }
   return { installations, ignored };
 }
