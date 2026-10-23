@@ -66,7 +66,7 @@ export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMEN
   return {blob:processedBlob,previewBlob,sourceWidth,sourceHeight,width,height,wasResized:scale<1,orientationNormalized:true,mimeType:outputType};
  }catch(error){reportPreparation(onDiagnostic,currentOperation,'failed',{canvasAvailable:canvas?true:null,contextAvailable,width:width||sourceWidth,height:height||sourceHeight},error);throw error;
  }finally{
-  if(decoded.close)try{decoded.image.close();}catch{}
+  if(decoded?.close)try{decoded.image.close();}catch{}
   for(const temporary of [canvas,previewCanvas])if(temporary){temporary.width=0;temporary.height=0;}
  }
 }
