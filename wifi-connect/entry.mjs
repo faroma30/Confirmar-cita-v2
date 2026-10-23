@@ -14,6 +14,6 @@ async function ensureQrGenerator() {
 export async function mountWifiConnect(host, userId, options = {}) {
   await ensureQrGenerator();
   const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-  const { mountWifiConnect: mountOriginal } = await import("./src/app.js?v=3cl1");
+  const { mountWifiConnect: mountOriginal } = await import("./src/app.js?v=3cn1");
   return mountOriginal(shadowRoot, userId, options);
 }
