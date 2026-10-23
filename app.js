@@ -147,7 +147,7 @@ async function selectTool(tool, { push = true } = {}) {
         let wifiLoadStage = "import";
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3cn1");
+          const module = await import("./wifi-connect/entry.mjs?v=3cn2");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           wifiLoadStage = "mount";
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {
