@@ -61,7 +61,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3cl1";
+const APP_BUILD = "3co1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -147,7 +147,7 @@ async function selectTool(tool, { push = true } = {}) {
         let wifiLoadStage = "import";
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3cn3");
+          const module = await import("./wifi-connect/entry.mjs?v=3co1");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           wifiLoadStage = "mount";
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {
