@@ -19,8 +19,8 @@ import {createWifiReportNavigation} from './report-navigation.mjs?v=3cl1';
 import {isSsidDiagnosticAccessAllowed} from './config.js?v=3cl1';
 import {buildSafeSsidReport,serializeSafeSsidReport} from './ssid-diagnostic-report.js?v=3cl1';
 import {renderSsidDiagnosticScreen} from './ssid-diagnostic-view.js?v=3cl1';
-import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic,classifyAdminOcrFailure,mapAdminOcrStage,inspectAdminOcrImage,validateAdminOcrFile} from './admin-ocr-diagnostic.mjs?v=3co1';
-import {createAdminOcrReportPhotoLoader,updateAdminOcrPhotoStatus} from './admin-ocr-report-photo.mjs?v=3co1';
+import {buildAdminOcrDiagnostic,renderAdminOcrDiagnostic,serializeAdminOcrDiagnostic,classifyAdminOcrFailure,mapAdminOcrStage,inspectAdminOcrImage,validateAdminOcrFile} from './admin-ocr-diagnostic.mjs?v=3co2';
+import {createAdminOcrReportPhotoLoader,updateAdminOcrPhotoStatus} from './admin-ocr-report-photo.mjs?v=3co2';
 
 export async function mountWifiConnect(shadowRoot,userId,{submitReport=null,canRunAdminOcrDiagnostics=false,listAdminWifiOcrPhotos=null,loadAdminWifiOcrPhoto=null}={}){
 storage.setStorageUser(userId);

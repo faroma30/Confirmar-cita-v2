@@ -56,7 +56,8 @@ test('muestra error de permisos/descarga y no deja imagen previa utilizable', as
   state.selected.id = 'a';
   assert.equal(await state.loader.load('a'), false);
   assert.equal(state.image.value, null);
-  assert.match(state.status.value, /consentimiento y tus permisos/);
+  assert.match(state.status.value, /No se pudo preparar la fotografía autorizada/);
+  assert.doesNotMatch(state.status.value, /forbidden|PERMISSION_DENIED/);
 });
 
 test('Analizar no inicia hasta resolver la carga pendiente', async () => {

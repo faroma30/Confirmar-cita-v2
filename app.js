@@ -1,8 +1,8 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
-import { createIssuesUI } from "./issues-ui.mjs?v=3cd1";
-import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs";
+import { createIssuesUI } from "./issues-ui.mjs?v=3co2";
+import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3co2";
 import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v=3bu1";
 import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bu1";
 import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3cl1";
@@ -61,7 +61,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3co1";
+const APP_BUILD = "3co2";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -147,7 +147,7 @@ async function selectTool(tool, { push = true } = {}) {
         let wifiLoadStage = "import";
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3co1");
+          const module = await import("./wifi-connect/entry.mjs?v=3co2");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           wifiLoadStage = "mount";
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {

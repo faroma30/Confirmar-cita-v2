@@ -10,7 +10,7 @@ const WIFI_PROBLEMS = Object.freeze({
 });
 const WIFI_FIELDS = Object.freeze({ssid:"SSID",password:"contraseña",both:"SSID y contraseña",ssid_5ghz:"red de 5 GHz",label:"etiqueta",other:"otro campo",unknown:"sin determinar"});
 import { createWifiOcrReportSubmitter } from "./wifi-ocr-report-submit.mjs";
-import { createAdminWifiOcrSource } from "./admin-wifi-ocr-source.mjs";
+import { createAdminWifiOcrSource } from "./admin-wifi-ocr-source.mjs?v=3co2";
 const STATUSES = Object.freeze({
   pending: "Pendiente", reviewing: "En revisión", resolved: "Resuelto",
 });
