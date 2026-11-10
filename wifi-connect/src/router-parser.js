@@ -2,13 +2,15 @@ import {detectOperator} from './operator-detector.js';
 import {getOperatorProfile} from './operator-profiles/index.js';
 
 const SSID_LABELS = [
-  [/^(?:ssid|ss[i1l]d)(?:\s*(?:[12]|[il])|\s+(?:2[.,]?4\s*(?:ghz|g)?|5\s*(?:ghz|g)?))?$/, 100, 'Etiqueta SSID'],
+  [/^(?:ssid|ss[i1l]d)(?:\s*(?:[12]|[il])|\s+(?:2[.,]?4\s*(?:ghz|g)?|5\s*(?:ghz|g)?|6\s*(?:ghz|g)?))?$/, 100, 'Etiqueta SSID'],
   [/^(?:red\s+)?wi[ -]?f[i1l](?:\s+red)?$/, 100, 'Etiqueta RED Wi-Fi'],
   [/^nombre\s+(?:de\s+)?wi[ -]?f[i1l]$/, 100, 'Etiqueta Nombre Wi-Fi'],
   [/^(?:nom\s+(?:de\s+)?(?:xarxa|wi[ -]?f[i1l])|xarxa\s+wi[ -]?f[i1l])$/, 100, 'Etiqueta catalana de nombre de red'],
   [/^(?:wi[ -]?fi|wlan)\s*(?:name|nombre)$/, 92, 'Etiqueta de nombre Wi-Fi'],
   [/^(?:wi[ -]?fi|wlan)$/, 78, 'Etiqueta Wi-Fi/WLAN'],
   [/^(?:wireless|network)\s+name$/, 88, 'Etiqueta de nombre de red'],
+  [/^(?:wireless\s+network|red\s+inalambrica|red\s+sin\s+cables)$/, 90, 'Etiqueta de red inalámbrica'],
+  [/^(?:wi[ -]?fi|wlan)\s*(?:2[.,]?4|5|6)\s*(?:ghz|g)$/, 94, 'Etiqueta de banda Wi-Fi'],
   [/^(?:nombre\s+(?:de\s+)?(?:wi[ -]?fi|red)|red\s+(?:wi[ -]?fi|wlan))$/, 90, 'Etiqueta de nombre de red']
 ];
 const PASSWORD_LABELS = [
@@ -116,18 +118,26 @@ function embeddedWlanKey(line){
  if(!match)return null;
  return {label:'WLAN Key',value:match[1].trim(),delimiter:/[:=：＝]/.test(match[0])};
 }
-function ssidBand(sourceLine){const match=String(sourceLine).match(/(?:^|[^\p{L}\p{N}])SS[i1l]D(?:\s+(2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b|\s*([12]|[il])\b)/i);if(!match)return null;if(match[1])return /^2/.test(match[1])?'1':'2';return String(match[2]).toLowerCase().replace(/[il]/,'1');}
+function ssidBand(sourceLine){const match=String(sourceLine).match(/(?:^|[^\p{L}\p{N}])SS[i1l]D(?:\s+(2\s*[.,]?\s*4|5|6)\s*(?:GHz|G)?\b|\s*([12]|[il])\b)/i);if(!match)return null;if(match[1])return /^2/.test(match[1])?'1':'2';return String(match[2]).toLowerCase().replace(/[il]/,'1');}
 function explicitSsidIndex(candidate){const label=normalizeLabel(candidate?.sourceLabel||'');const match=label.match(/^ssid\s*([12])$/);return match?.[1]||null;}
 function bandToken(value){
  const text=String(value||'');
  const five=text.match(/(^|[-_ ])(5\s*(?:\.\s*0|,\s*0)?\s*G(?:Hz)?)(?=$|[-_ ])/i);
  if(five)return {band:'5 GHz',start:five.index+five[1].length,end:five.index+five[1].length+five[2].length,raw:five[2],standard:'5G',strength:3};
+ const six=text.match(/(^|[-_ ])(6\s*G(?:Hz)?)(?=$|[-_ ])/i);
+ if(six)return {band:'6 GHz',start:six.index+six[1].length,end:six.index+six[1].length+six[2].length,raw:six[2],standard:'6G',strength:3};
  const four=text.match(/(^|[-_ ])(2\s*(?:[.,]\s*|\s+)4\s*G(?:Hz)?|24\s*G(?:Hz)?)(?=$|[-_ ])/i);
  if(four)return {band:'2.4 GHz',start:four.index+four[1].length,end:four.index+four[1].length+four[2].length,raw:four[2],standard:'2.4G',strength:/^2\s*[.,]/i.test(four[2])?3:2};
  return null;
 }
+function explicitLabelBand(label){
+ const key=normalizeLabel(label);
+ const match=key.match(/^(?:ssid\s+(2[.,]?\s*4|5|6)\s*(?:ghz|g)|(?:wi[ -]?fi|wlan)\s*(2[.,]?\s*4|5|6)\s*(?:ghz|g))$/i);
+ const token=match?.[1]||match?.[2];if(!token)return null;
+ return /^2/.test(token)?'2.4 GHz':token==='5'?'5 GHz':'6 GHz';
+}
 function annotateSsidBands(candidates){
- for(const candidate of candidates){const token=bandToken(candidate.value);if(token)candidate.band=token.band;}
+ for(const candidate of candidates){const token=bandToken(candidate.value);if(token)candidate.band=token.band;else{const labelBand=explicitLabelBand(candidate.sourceLabel);if(labelBand)candidate.band=labelBand;}}
  for(const candidate of candidates){
   const token=bandToken(candidate.value);if(!token)continue;
   // Explicit SSID1/SSID2 labels identify separate bands. Matching family and

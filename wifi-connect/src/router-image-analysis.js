@@ -1,6 +1,6 @@
-import {recognizeRouterLabel,disposeRecognizeRouterLabel} from './ocr.js?v=3cl1';
+import {recognizeRouterLabel,disposeRecognizeRouterLabel} from './ocr.js?v=3co3';
 import {decodeWifiQrPayloadsFromImage} from './wifi-qr.js?v=3bv1';
-import {parseRouterLabel} from './router-parser.js?v=3cj1';
+import {parseRouterLabel} from './router-parser.js?v=3co3';
 import {detectCrossFieldContamination,fieldSource,isSafeSsidCandidate} from './scan-flow.js?v=3cj1';
 
 function passDiagnostics(ocr){
