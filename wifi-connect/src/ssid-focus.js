@@ -38,3 +38,47 @@ export function findSsidFocusRegions(blocks,width,height,candidates=[]){
  }
  return found;
 }
+
+/**
+ * Bounded recovery for labels/values that OCR text found but the parser could
+ * not associate. Returned objects contain geometry and fixed reason codes only;
+ * OCR text is never copied into diagnostics.
+ */
+export function findSsidRecoveryRegions(blocks, width, height, { limit = 2 } = {}) {
+ if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) return [];
+ const rows = [];
+ for (const block of Array.isArray(blocks) ? blocks : []) {
+  for (const paragraph of block?.paragraphs || []) {
+   for (const line of paragraph?.lines || []) {
+    const text = String(line?.text || "").trim();
+    const box = line?.bbox;
+    if (!text || !box || ![box.x0, box.y0, box.x1, box.y1].every(Number.isFinite)) continue;
+    const h = box.y1 - box.y0, w = box.x1 - box.x0;
+    if (h < 4 || w < 16 || h > height * .2) continue;
+    if (/\b(?:admin(?:istration)?|password|pass(?:word)?|key|clave|contrase[nñ]a|wps|serial|s\/?n|mac|bssid|imei|pin|gateway|barcode|ip)\b/i.test(text)) continue;
+    const relevance = /\b(?:ssid|wi[ -]?fi|wlan|network|wireless|red|nombre|2[.,]?4|5g|6g)\b/i.test(text) ? 100 : 0;
+    const usefulLength = Math.min(32, (text.match(/[\p{L}\p{N}]/gu) || []).length);
+    rows.push({ box, h, w, score: relevance + usefulLength, centerY: (box.y0 + box.y1) / 2 });
+   }
+  }
+ }
+ rows.sort((a, b) => b.score - a.score || b.w - a.w);
+ const found = [];
+ for (const row of rows) {
+  const padX = Math.max(row.h * 2, row.w * .08);
+  const top = Math.max(0, Math.floor(row.box.y0 - row.h * 1.1));
+  const bottom = Math.min(height, Math.ceil(row.box.y1 + row.h * 1.5));
+  const left = Math.max(0, Math.floor(row.box.x0 - padX));
+  const right = Math.min(width, Math.ceil(row.box.x1 + padX));
+  if (right - left < 24 || bottom - top < 8) continue;
+  if (found.some(item => Math.abs(item.region.top + item.region.height / 2 - row.centerY) < row.h * 2)) continue;
+  found.push({ band: null, source: "ocr_region", psm: "6", region: { left, top, width: right - left, height: bottom - top } });
+  if (found.length >= Math.max(1, Math.min(2, limit))) return found;
+ }
+ if (found.length) return found;
+ const cropW = Math.max(1, Math.floor(width * .78)), cropH = Math.max(1, Math.floor(height * .78));
+ return [{
+  band: null, source: "center_crop", psm: "11",
+  region: { left: Math.floor((width - cropW) / 2), top: Math.floor((height - cropH) / 2), width: cropW, height: cropH }
+ }];
+}
