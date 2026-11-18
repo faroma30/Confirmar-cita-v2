@@ -31,29 +31,64 @@ function configuredAddress(type, preferences) {
   return "";
 }
 
-export function combineActivities(appointments, ignored, preferences = {}) {
+const knownPause = /^(?:pausa(?: (?:para|de) (?:comida|descanso))?|descanso|almuerzo|comida)$/;
+const needsTravelDecision = /^(?:pausa|descanso|almuerzo|comida) /;
+
+export function combineActivities(appointments, ignored, preferences = {}, overrides = new Map()) {
+  const occurrences = new Map();
   return [
     ...appointments.filter(row => !row.source_missing && row.status !== "cancelled")
-      .map(row => ({ ...row, routeType: "Instalación", routeTime: row.scheduled_time })),
-    ...ignored.filter(row => text(row.type) && !/^(?:pausa(?: (?:para|de) (?:comida|descanso))?|descanso|almuerzo|comida)$/.test(activityName(row.type)))
-      .map(row => ({ ...row, routeType: row.type, routeTime: row.time })),
-  ].map(row => {
+      .map(row => ({ row, type: "Instalación", time: row.scheduled_time, editableTravel: false })),
+    ...ignored.filter(row => text(row.type))
+      .map(row => ({ row, type: row.type, time: row.time, editableTravel: true })),
+  ].map(({ row, type, time, editableTravel }) => {
     const endTime = row.scheduled_end_time ?? row.end_time;
-    const start = clockMinutes(row.routeTime);
+    const start = clockMinutes(time);
     const end = clockMinutes(endTime);
+    const originalAddress = addressOf(row);
+    const identity = !editableTravel && row.id
+      ? JSON.stringify(["installation", row.id])
+      : JSON.stringify([editableTravel, type, time, endTime, originalAddress]);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    const key = JSON.stringify([identity, occurrence]);
+    const name = activityName(type);
+    const defaultTravel = editableTravel && knownPause.test(name) ? "pause"
+      : editableTravel && needsTravelDecision.test(name) ? "undecided" : "travel";
+    const override = overrides.get(key);
+    const travel = override?.travel ?? defaultTravel;
+    const agendaAddress = (editableTravel ? configuredAddress(type, preferences) : "") || originalAddress;
+    const address = travel === "travel"
+      ? formatRouteLocation(override?.location) || agendaAddress
+      : "";
     return {
-      type: row.routeType,
-      time: start === null ? "" : row.routeTime.slice(0, 5),
+      key, type, time: start === null ? "" : time.slice(0, 5),
       endTime: start !== null && end !== null && end >= start ? endTime : "",
-      address: (row.routeType === "Instalación" ? "" : configuredAddress(row.routeType, preferences)) || addressOf(row),
+      address, agendaAddress, travel, defaultTravel, editableTravel, override,
     };
   }).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
 }
 
 export function buildLegs(home, activities) {
-  if (!activities.length) return [];
-  const stops = [{ type: "Casa", address: home }, ...activities, { type: "Casa", address: home }];
-  return stops.slice(1).map((to, index) => ({ from: stops[index], to }));
+  const house = { type: "Casa", address: home };
+  const legs = [];
+  let from = house;
+  for (const activity of activities) {
+    if (activity.travel === "pause") {
+      // A pause stays at the last stop. Any later ETA needs a known finish for both activities.
+      if (legs.length) {
+        const previous = clockMinutes(from.endTime);
+        const pauseEnd = clockMinutes(activity.endTime);
+        from = { ...from, endTime: previous === null || pauseEnd === null
+          ? "" : pauseEnd > previous ? activity.endTime : from.endTime };
+      }
+      continue;
+    }
+    legs.push({ from, to: activity });
+    from = activity;
+  }
+  if (legs.length) legs.push({ from, to: house });
+  return legs;
 }
 
 export function mapsLink({ from, to }) {
@@ -146,6 +181,31 @@ export function createRpcRoutePreferences(options) {
   };
 }
 
+export function validateRouteLocation(location) {
+  if (location === null) return null;
+  if (!location || typeof location !== "object" ||
+    Object.keys(location).some(field => !Object.hasOwn(routeLocationFields, field))) {
+    throw new Error("La ubicación no es válida.");
+  }
+  const trimmed = {};
+  for (const [field, length] of Object.entries(routeLocationFields)) {
+    const raw = Object.hasOwn(location, field) ? location[field] : "";
+    if (typeof raw !== "string" || /[\u0000-\u001f\u007f]/.test(raw) || [...raw.trim()].length > length) {
+      throw new Error("La ubicación no es válida.");
+    }
+    trimmed[field] = raw.trim();
+  }
+  if (!trimmed.street || !trimmed.municipality ||
+    (trimmed.postalCode && !/^\d{5}$/.test(trimmed.postalCode))) {
+    throw new Error("Completa la calle y la población. Para el código postal, usa cinco dígitos.");
+  }
+  if (trimmed.province && !/^[\p{L}][\p{L} .\u2019\x27-]*$/u.test(trimmed.province)) {
+    throw new Error("La provincia no es válida.");
+  }
+  if (!trimmed.province) delete trimmed.province;
+  return trimmed;
+}
+
 export function validateRouteLocations(value) {
   if (!Number.isInteger(value?.margin) || value.margin < 0 || value.margin > 180) {
     throw new Error("El margen debe estar entre 0 y 180 minutos.");
@@ -153,28 +213,7 @@ export function validateRouteLocations(value) {
   const result = { margin: value.margin };
   for (const kind of routeLocationKinds) {
     const location = value[kind];
-    if (location === null) { result[kind] = null; continue; }
-    if (!location || typeof location !== "object" ||
-      Object.keys(location).some(field => !Object.hasOwn(routeLocationFields, field))) {
-      throw new Error("La ubicación no es válida.");
-    }
-    const trimmed = {};
-    for (const [field, length] of Object.entries(routeLocationFields)) {
-      const raw = Object.hasOwn(location, field) ? location[field] : "";
-      if (typeof raw !== "string" || /[\u0000-\u001f\u007f]/.test(raw) || [...raw.trim()].length > length) {
-        throw new Error("La ubicación no es válida.");
-      }
-      trimmed[field] = raw.trim();
-    }
-    if (!trimmed.street || !trimmed.municipality ||
-      (trimmed.postalCode && !/^\d{5}$/.test(trimmed.postalCode))) {
-      throw new Error("Completa la calle y la población. Para el código postal, usa cinco dígitos.");
-    }
-    if (trimmed.province && !/^[\p{L}][\p{L} .\u2019\x27-]*$/u.test(trimmed.province)) {
-      throw new Error("La provincia no es válida.");
-    }
-    if (!trimmed.province) delete trimmed.province;
-    result[kind] = trimmed;
+    result[kind] = validateRouteLocation(location);
   }
   return result;
 }
