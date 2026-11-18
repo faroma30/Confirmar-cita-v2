@@ -1,6 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
-import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes2";
-import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes2";
+import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes3";
+import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes3";
+import { createCloudRouteAutocomplete, createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes3";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
 import { createIssuesUI } from "./issues-ui.mjs?v=3co2";
@@ -63,7 +64,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3routes2";
+const APP_BUILD = "3routes3";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -1912,7 +1913,12 @@ async function createAccount(formData, role, teamIds) {
 const myRoutesActor = () => activeProfile?.status === "active" && !activeProfile.must_change_password
   ? { id: activeUser?.id, role: activeProfile.role } : null;
 
+const myRoutesGeoapify = config.myRoutesGeoapifyEnabled === true
+  ? { invoke: (...args) => supabase.functions.invoke(...args), getActor: myRoutesActor }
+  : null;
 const myRoutes = mountMyRoutes({
+  provider: myRoutesGeoapify ? createCloudRoutes(myRoutesGeoapify) : null,
+  autocomplete: myRoutesGeoapify ? createCloudRouteAutocomplete(myRoutesGeoapify) : null,
   panel: $("appointmentsPanel"),
   agenda: $("myRoutesAgenda"),
   getActor: myRoutesActor,

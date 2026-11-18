@@ -1,6 +1,7 @@
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocations } from "./my-routes.mjs?v=3routes2";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes3";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocations } from "./my-routes.mjs?v=3routes3";
 
-export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, preferencesStore = null }) {
+export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;
   const find = id => panel.querySelector("#" + id);
   const tab = find("myRoutesTab");
@@ -24,6 +25,21 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   let owner = null;
   let settingsRequest = 0;
   let saving = false;
+  const queries = new Map();
+  if (autocomplete) {
+    for (const kind of routeLocationKinds) {
+      queries.set(kind, bindRouteAutocomplete({
+        fields: locationFields[kind],
+        search: autocomplete,
+        eligible: () => Boolean(technicianId() && !settingsPanel.hidden && !form.hidden && !saving),
+        cancelOthers: () => {
+          for (const [other, clear] of queries) if (other !== kind) clear();
+        },
+        document: panel.ownerDocument,
+      }));
+    }
+  }
+
 
   function technicianId() {
     const actor = getActor();
@@ -34,6 +50,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   }
   function resetSettings() {
     settingsRequest++;
+    for (const clear of queries.values()) clear();
     saving = false;
     saveButton.disabled = false;
     back.disabled = false;
@@ -189,15 +206,16 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       if (isCurrentSettings(actorId, run)) settingsNotice.textContent = "No se pudieron cargar los ajustes. Vuelve a intentarlo.";
     }
   });
-  function returnToRoute() {
+  function returnToRoute({ refreshRoute = false } = {}) {
     resetSettings();
     openSettings.focus();
-    void refresh();
+    if (refreshRoute) void refresh();
   }
-  back.addEventListener("click", returnToRoute);
+  back.addEventListener("click", () => returnToRoute());
   for (const kind of routeLocationKinds) {
     find("myRoutesClear-" + kind).addEventListener("click", () => {
       if (saving) return;
+      queries.get(kind)?.();
       fillLocation(kind, null);
       settingsNotice.textContent = "Guarda los cambios para eliminar esta ubicación.";
     });
@@ -215,13 +233,14 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     let prefs;
     try { prefs = validateRouteLocations(data); }
     catch (error) { settingsNotice.textContent = error.message; return; }
+    for (const clear of queries.values()) clear();
     saving = true;
     saveButton.disabled = true;
     back.disabled = true;
     settingsNotice.textContent = "Guardando ajustes…";
     try {
       await settings.write(prefs);
-      if (isCurrentSettings(actorId, run)) returnToRoute();
+      if (isCurrentSettings(actorId, run)) returnToRoute({ refreshRoute: true });
     } catch {
       if (isCurrentSettings(actorId, run)) settingsNotice.textContent = "No se pudieron guardar los ajustes. Vuelve a intentarlo.";
     } finally {
