@@ -1,7 +1,7 @@
 const DEBOUNCE_MS = 450;
 
 export function bindRouteAutocomplete({ fields, search, eligible, cancelOthers, document }) {
-  const { street, municipality, postalCode } = fields;
+  const { street, municipality, province, postalCode } = fields;
   const results = document.createElement("div");
   results.className = "route-address-results";
   results.id = street.id + "-suggestions";
@@ -55,11 +55,12 @@ export function bindRouteAutocomplete({ fields, search, eligible, cancelOthers, 
         const button = document.createElement("button");
         button.type = "button";
         button.className = "button secondary";
-        button.textContent = [item.street, item.municipality, item.postalCode].filter(Boolean).join(" · ");
+        button.textContent = [item.street, item.municipality, item.province, item.displayPostalCode || item.postalCode].filter(Boolean).join(" · ");
         button.addEventListener("click", () => {
           if (!isCurrent()) return;
           street.value = item.street;
           municipality.value = item.municipality;
+          if (province) province.value = item.province ?? "";
           postalCode.value = item.postalCode;
           fields.number.focus();
           clear();
@@ -71,7 +72,9 @@ export function bindRouteAutocomplete({ fields, search, eligible, cancelOthers, 
     }
   }
   street.addEventListener("focus", cancelOthers);
+  municipality.addEventListener("input", () => { if (province) province.value = ""; clear(); });
   street.addEventListener("input", () => {
+    if (province) province.value = "";
     const query = street.value.trim().replace(/\s+/g, " ");
     if (lastQuery === query) return;
     cancelOthers();

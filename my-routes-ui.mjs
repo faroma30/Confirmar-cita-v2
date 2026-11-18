@@ -1,5 +1,5 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes3";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocations } from "./my-routes.mjs?v=3routes3";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes4";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocations } from "./my-routes.mjs?v=3routes4";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;
@@ -127,6 +127,9 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         add(item, "p", estimate
           ? Math.ceil(estimate.durationSeconds / 60) + " min · " + (estimate.distanceMeters / 1000).toLocaleString("es-ES") + " km"
           : "Tiempo no disponible · Distancia no disponible");
+        if (!estimate && batch?.length === legs.length && leg.from.address && leg.to.address) {
+          add(item, "p", "No se pudo verificar el tramo con precisión. Revisa el portal y el municipio.");
+        }
         if (estimate) {
           add(item, "p", "Estimación sin tráfico en tiempo real · " + new Date(estimate.calculatedAt).toLocaleString("es-ES"));
           if (mayArriveLate(leg, estimate)) add(item, "p", "Posible retraso: el trayecto supera el tiempo entre actividades.");
