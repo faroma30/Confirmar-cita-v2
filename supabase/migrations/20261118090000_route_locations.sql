@@ -38,18 +38,18 @@ begin
   end if;
   if (p_location - array['street','number','municipality','postalCode']) <> '{}'::jsonb
      or jsonb_typeof(p_location -> 'street') is distinct from 'string'
-     or jsonb_typeof(p_location -> 'number') is distinct from 'string'
+     or (p_location ? 'number' and jsonb_typeof(p_location -> 'number') is distinct from 'string')
      or jsonb_typeof(p_location -> 'municipality') is distinct from 'string'
      or (p_location ? 'postalCode' and jsonb_typeof(p_location -> 'postalCode') is distinct from 'string') then
     raise exception 'invalid route location' using errcode = '22023';
   end if;
 
   v_street := btrim(p_location ->> 'street');
-  v_number := btrim(p_location ->> 'number');
+  v_number := btrim(coalesce(p_location ->> 'number', ''));
   v_municipality := btrim(p_location ->> 'municipality');
   v_postal_code := btrim(coalesce(p_location ->> 'postalCode', ''));
   if char_length(v_street) not between 1 and 200
-     or char_length(v_number) not between 1 and 30
+     or char_length(v_number) > 30
      or char_length(v_municipality) not between 1 and 100
      or concat(v_street, v_number, v_municipality) ~ '[[:cntrl:]]'
      or v_postal_code !~ '^([0-9]{5})?$' then
@@ -110,7 +110,7 @@ begin
   v_keys := confirmar_citas.normalize_route_location(p_keys);
   v_tourline := confirmar_citas.normalize_route_location(p_tourline);
   if v_home is not null then
-    v_home_text := concat_ws(', ', concat_ws(' ', v_home ->> 'street', v_home ->> 'number'),
+    v_home_text := concat_ws(', ', concat_ws(' ', v_home ->> 'street', nullif(v_home ->> 'number', '')),
       concat_ws(' ', nullif(v_home ->> 'postalCode', ''), v_home ->> 'municipality'));
   end if;
 

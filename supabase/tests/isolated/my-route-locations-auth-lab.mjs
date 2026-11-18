@@ -6,7 +6,7 @@ const fixture = suffix => "mis-rutas-" + suffix + "@example.test";
 const defaults = { home: null, keys: null, tourline: null, margin: 10 };
 const home = { street: "Vía ficticia A", number: "S/N", municipality: "Municipio sintético A", postalCode: "" };
 const keys = { street: "Vía ficticia B", number: "2 bis", municipality: "Municipio sintético B", postalCode: "08001" };
-const tourline = { street: "Vía ficticia C", number: "3", municipality: "Municipio sintético C", postalCode: "" };
+const tourline = { street: "Vía ficticia C", number: "", municipality: "Municipio sintético C", postalCode: "" };
 const updatedKeys = { ...keys, number: "4" };
 let stage = "configuration";
 
@@ -70,9 +70,9 @@ async function main() {
     }
 
     stage = "canonical addresses and independent writes";
-    const { postalCode: ignored, ...tourlineWithoutPostcode } = tourline;
+    const tourlineWithoutNumberOrPostcode = { street: tourline.street, municipality: tourline.municipality };
     const selected = { home, keys, tourline, margin: 15 };
-    const untrimmed = { ...selected, home: { ...home, street: "  " + home.street + " " }, tourline: tourlineWithoutPostcode };
+    const untrimmed = { ...selected, home: { ...home, street: "  " + home.street + " " }, tourline: tourlineWithoutNumberOrPostcode };
     assert.equal((await save(a, untrimmed)).status, 204);
     assert.deepEqual((await read(a)).data, selected);
     assert.deepEqual((await read(b)).data, defaults);
@@ -83,7 +83,8 @@ async function main() {
 
     stage = "invalid shapes and rollback";
     const invalid = [
-      { ...home, number: "" },
+      { ...home, number: 3 },
+      { ...home, number: "1".repeat(31) },
       { ...home, municipality: " " },
       { ...home, postalCode: "abcd" },
       { ...home, street: "control\ncarriage" },
