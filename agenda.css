@@ -24,3 +24,7 @@
 #myRoutesView .button{min-height:44px}
 #myRoutesSettings .button{justify-self:start}
 @media(max-width:520px){#myRoutesSettingsPanel .agenda-heading{align-items:flex-start;flex-direction:column}}
+
+.route-address-results:not([hidden]){display:grid;gap:8px;min-width:0}
+.route-address-options{display:grid;gap:5px}
+.route-address-options .button{width:100%;text-align:left;justify-content:flex-start}
