@@ -31,3 +31,23 @@ export function createCloudRoutes({ invoke, getActor }) {
     },
   };
 }
+
+
+export function createCloudRouteAutocomplete({ invoke, getActor }) {
+  return async (query, signal) => {
+    const actor = getActor();
+    if (signal.aborted || !actor?.id || actor.role !== "technician") return [];
+    const { data, error } = await invoke("my-routes-estimate", {
+      body: { operation: "autocomplete", query, expectedActor: actor.id }, signal,
+    });
+    const current = getActor();
+    if (signal.aborted || current?.id !== actor.id || current.role !== "technician") return [];
+    if (error || !Array.isArray(data?.suggestions)) throw new Error("No se pudieron cargar sugerencias.");
+    return data.suggestions.slice(0, 5).filter(item =>
+      typeof item?.street === "string" && item.street.trim() && item.street.length <= 200 &&
+      typeof item.municipality === "string" && item.municipality.trim() && item.municipality.length <= 100 &&
+      typeof item.postalCode === "string" && /^(?:[0-9]{5})?$/.test(item.postalCode) &&
+      !/[\u0000-\u001f\u007f]/.test(item.street + item.municipality)
+    ).map(({ street, municipality, postalCode }) => ({ street, municipality, postalCode }));
+  };
+}

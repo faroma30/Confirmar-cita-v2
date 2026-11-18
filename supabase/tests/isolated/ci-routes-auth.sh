@@ -72,7 +72,7 @@ source "$lab/lab.env"
 set +a
 psql -Xq -v ON_ERROR_STOP=1 -f "$lab/fixture.sql" \
   -f "$src/supabase/migrations/20261118090000_route_locations.sql" \
-  -f "$src/supabase/sql_editor/DRAFT_my_route_budget.sql"
+  -f "$src/supabase/migrations/20261118100000_route_geoapify_budget.sql"
 psql -Xq -v ON_ERROR_STOP=1 -c "notify pgrst, 'reload schema';"
 sleep 2
 node "$src/supabase/tests/isolated/my-route-locations-auth-lab.mjs"
@@ -92,7 +92,9 @@ select
 " | grep -qx t
 for actor in 1 2; do
   id="00000000-0000-4000-8000-00000000000${actor}"
-  psql -XAtq -v ON_ERROR_STOP=1 -c "set role service_role; select public.cc_route_budget_begin('$id',current_date,'$id');" >"$lab/race-${actor}" &
+  op=route
+  if [ "$actor" = 2 ]; then op=autocomplete; fi
+  psql -XAtq -v ON_ERROR_STOP=1 -c "set role service_role; select public.cc_route_budget_begin_operation('$id','$id','$op');" >"$lab/race-${actor}" &
   pids[${actor}]=$!
 done
 wait "${pids[1]}"
@@ -100,5 +102,5 @@ wait "${pids[2]}"
 test "$(sort "$lab/race-1" "$lab/race-2" | tr -d '\n')" = ft
 echo 'PASS: RLS, grants, global admission under parallel connections'
 cd "$src"
-node --test supabase/functions/my-routes-estimate/core.test.mjs
+node --test supabase/functions/my-routes-estimate/core.test.mjs multiusuario/my-routes.test.mjs multiusuario/my-routes-autocomplete.test.mjs
 
