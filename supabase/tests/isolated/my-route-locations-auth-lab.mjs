@@ -39,6 +39,8 @@ async function main() {
   const logout = session => call("/auth/v1/logout?scope=local", {}, session.token);
   const read = (session, actor = session.id) => call("/rest/v1/rpc/cc_my_route_locations",
     { p_expected_technician_id: actor }, session.token);
+  const readV2 = (session, actor = session.id) => call("/rest/v1/rpc/cc_my_route_locations_v2",
+    { p_expected_technician_id: actor }, session.token);
   const save = (session, prefs, actor = session.id) => call("/rest/v1/rpc/cc_save_my_route_locations",
     { p_expected_technician_id: actor, p_home: prefs.home, p_keys: prefs.keys,
       p_tourline: prefs.tourline, p_margin: prefs.margin }, session.token);
@@ -80,6 +82,17 @@ async function main() {
     assert.equal((await save(b, second)).status, 204);
     assert.deepEqual((await read(b)).data, second);
     assert.deepEqual((await read(a)).data, selected);
+
+    stage = "versioned province visibility and isolation";
+    const precise = { ...selected, home: { ...home, province: "Madrid" } };
+    assert.equal((await save(a, precise)).status, 204);
+    assert.deepEqual((await readV2(a)).data, precise);
+    assert.deepEqual((await read(a)).data, selected);
+    assert.equal((await readV2(b, a.id)).status, 403);
+    assert.equal((await readV2(master)).status, 403);
+    assert.equal((await readV2(inactive)).status, 403);
+    assert.ok([401,403].includes((await readV2({ id:a.id })).status));
+    assert.equal((await save(a, selected)).status, 204);
 
     stage = "invalid shapes and rollback";
     const invalid = [

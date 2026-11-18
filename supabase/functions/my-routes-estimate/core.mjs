@@ -15,7 +15,8 @@ function addressOf(row) {
 
 function formatLocation(location) {
   if (!location) return "";
-  return [[location.street, location.number].filter(Boolean).join(" "), location.postalCode, location.municipality].filter(Boolean).join(", ");
+  const locality = location.province ? `${location.municipality} (${location.province})` : location.municipality;
+  return [[location.street, location.number].filter(Boolean).join(" "), location.postalCode, locality].filter(Boolean).join(", ");
 }
 
 function ignoredAddress(row, preferences) {
@@ -48,10 +49,34 @@ export async function journeyFingerprint(addresses) {
 
 const STREET = /^[\p{L}][\p{L}\p{N} .’'ºª/-]{1,119}$/u;
 const LOCALITY = /^[\p{L}][\p{L} .’'-]{1,99}$/u;
-const HOUSE = /^(?<street>[\p{L}][\p{L}\p{N} .’'ºª/-]{1,119})\s+(?<housenumber>\d{1,5}(?:[A-Za-z]|\s+(?:bis|ter))?)$/iu;
+const HOUSE = /^(?<street>[\p{L}][\p{L}\p{N} .’'ºª/-]{1,119})\s+(?<housenumber>\d{1,5}(?:\s?[A-Za-z]|\s*(?:bis|ter))?)$/iu;
 
-function streetName(value) {
-  return normalized(value).replace(/^(?:(?:calle|carrer|rua|avenida|avinguda|plaza|placa|passeig|paseo|via|c|av|avda) )/, "");
+const streetTypes = new Map([
+  ["calle", "street"], ["carrer", "street"], ["rua", "street"], ["c", "street"],
+  ["avenida", "avenue"], ["avinguda", "avenue"], ["av", "avenue"], ["avda", "avenue"],
+  ["plaza", "square"], ["placa", "square"], ["passeig", "promenade"], ["paseo", "promenade"],
+  ["via", "way"],
+]);
+
+function streetParts(value) {
+  const name = normalized(value);
+  const separator = name.indexOf(" ");
+  const type = streetTypes.get(separator > 0 ? name.slice(0, separator) : "");
+  return { type, name: type ? name.slice(separator + 1) : name };
+}
+
+function sameStreet(left, right) {
+  const a = streetParts(left);
+  const b = streetParts(right);
+  if (a.type && b.type && a.type !== b.type) return false;
+  if (a.name === b.name) return true;
+  // Autocomplete and portal geocoding may include or omit the initial preposition.
+  return Boolean(a.type && b.type) && a.name.replace(/^de /, "") === b.name.replace(/^de /, "");
+}
+
+function samePortal(left, right) {
+  const portal = value => normalized(value).replace(/^(\d+) ([a-z]+)$/, "$1$2");
+  return portal(left) === portal(right);
 }
 
 // Use only the street/house number and the last locality fields, never interior details.
@@ -59,11 +84,15 @@ export function streetFields(address) {
   const parts = field(address).split(",").map(field).filter(Boolean);
   if (parts.length < 2) return null;
   const street = HOUSE.exec(parts[0]);
-  const locality = /^(?:(?<postcode>\d{5})\s+)?(?<city>[\p{L}][\p{L} .’'-]{1,99})$/u.exec(parts.at(-1));
+  const locality = /^(?:(?<postcode>\d{5})\s+)?(?<city>[\p{L}][\p{L} .’'-]{1,99}?)(?: \((?<province>[\p{L}][\p{L} .’'-]{1,99})\))?$/u.exec(parts.at(-1));
   if (!street || !locality) return null;
   const separatePostal = parts.length > 2 && /^\d{5}$/.test(parts.at(-2)) ? parts.at(-2) : "";
   const postcode = locality.groups.postcode || separatePostal;
-  return { ...street.groups, ...(postcode ? { postcode } : {}), city: locality.groups.city, country: "España", filter: "countrycode:es", limit: "2" };
+  const { city, province } = locality.groups;
+  return {
+    ...street.groups, ...(postcode ? { postcode } : {}), city, ...(province ? { province } : {}),
+    country: "España", filter: "countrycode:es", limit: "5",
+  };
 }
 
 class RouteFailure extends Error {
@@ -103,28 +132,46 @@ function municipality(location) {
   return field(location?.city || location?.town || location?.village || location?.municipality);
 }
 
+function madridProvince(province) {
+  return ["madrid", "provincia de madrid", "comunidad de madrid", "community of madrid"].includes(normalized(province));
+}
+
+function provinceOf(location) {
+  const county = field(location?.county);
+  if (madridProvince(county) || (!county && madridProvince(location?.state))) return "Madrid";
+  return LOCALITY.test(county) ? county : "";
+}
+
 function coordinates(location) {
   return Number.isFinite(location?.lat) && Number.isFinite(location?.lon)
     && Math.abs(location.lat) <= 90 && Math.abs(location.lon) <= 180 ? [location.lat, location.lon] : null;
 }
 
 async function geocode(fields, context) {
-  const data = await readProvider("geocode/search", { ...fields, format: "json" }, 1, context);
+  const { province, ...params } = fields;
+  const data = await readProvider("geocode/search", { ...params, format: "json" }, 1, context);
   const points = new Map();
-  for (const location of Array.isArray(data?.results) ? data.results.slice(0, 2) : []) {
+  for (const location of Array.isArray(data?.results) ? data.results.slice(0, Number(params.limit)) : []) {
     const point = coordinates(location);
-    const confidence = location?.rank?.confidence_building_level ?? location?.rank?.confidence;
-    if (location?.country_code !== "es" || (fields.postcode && location.postcode !== fields.postcode)
-      || streetName(location.street) !== streetName(fields.street)
+    const match = location?.rank?.match_type;
+    if (!point || location?.country_code !== "es" || (fields.postcode && location.postcode !== fields.postcode)
+      || (province && normalized(provinceOf(location)) !== (madridProvince(province) ? "madrid" : normalized(province)))
+      || !sameStreet(location.street, fields.street)
       || normalized(municipality(location)) !== normalized(fields.city)
-      || normalized(location.housenumber) !== normalized(fields.housenumber)
+      || !samePortal(location.housenumber, fields.housenumber)
       || !["building", "amenity"].includes(location.result_type)
-      || !["full_match", "match_by_building"].includes(location.rank?.match_type)
-      || !Number.isFinite(confidence) || confidence < 0.9
-      || !point) continue;
-    points.set(point.join(","), point);
+      || !["full_match", "match_by_building", "inner_part"].includes(match)) continue;
+    // A venue inside a building can match the full portal even with an inner-part rank.
+    const score = location.rank.confidence_building_level ?? (match === "full_match" ? location.rank.confidence : null);
+    const key = point.join(",");
+    const reliable = match === "inner_part"
+      ? location.result_type === "amenity" && location.rank.confidence === 1 && score === 1
+      : Number.isFinite(score) && score >= 0.9;
+    points.set(key, { point, reliable: reliable || points.get(key)?.reliable });
   }
-  return points.size === 1 ? [...points.values()][0] : null;
+  if (points.size !== 1) return null;
+  const [match] = points.values();
+  return match.reliable ? match.point : null;
 }
 
 export function autocompleteQuery(value) {
@@ -146,10 +193,19 @@ export async function autocompleteStreets(query, options) {
     const street = field(row?.street);
     const town = municipality(row);
     if (row?.country_code !== "es" || row.result_type !== "street" || !STREET.test(street) || !LOCALITY.test(town)) continue;
-    const key = JSON.stringify([normalized(street), normalized(town)]);
-    // A street centroid cannot establish a portal postcode. Return an explicit postcode only when the result corroborates it.
-    const postalCode = postcodes.length === 1 && row.postcode === postcodes[0] ? postcodes[0] : "";
-    if (!suggestions.has(key) || postalCode) suggestions.set(key, { street, municipality: town, postalCode, label: street + " · " + town });
+    const province = provinceOf(row);
+    const rowPostalCode = /^\d{5}$/.test(row.postcode ?? "") ? row.postcode : "";
+    const key = JSON.stringify([normalized(street), normalized(town), normalized(province)]);
+    const current = suggestions.get(key);
+    // A street's suggested postcode is informative. Fill it only if the query specified it.
+    const postalCode = current?.postalCode || (postcodes.length === 1 && rowPostalCode === postcodes[0] ? rowPostalCode : "");
+    const displayPostalCode = current && current.displayPostalCode !== rowPostalCode ? "" : rowPostalCode;
+    const label = [street, town, normalized(province) !== normalized(town) ? province : "", displayPostalCode]
+      .filter(Boolean).join(" · ");
+    suggestions.set(key, {
+      street, municipality: town, ...(province ? { province } : {}), postalCode,
+      ...(displayPostalCode ? { displayPostalCode } : {}), label,
+    });
   }
   return [...suggestions.values()].slice(0, 6);
 }

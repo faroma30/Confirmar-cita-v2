@@ -14,7 +14,7 @@ function element() {
   };
 }
 function picker(search, isAllowed = () => true) {
-  const fields = Object.fromEntries(["street", "municipality", "postalCode", "number"].map(key => [key, element()]));
+  const fields = Object.fromEntries(["street", "municipality", "province", "postalCode", "number"].map(key => [key, element()]));
   const label = element();
   label.after = node => label.append(node);
   fields.street.closest = () => label;
@@ -132,4 +132,24 @@ test("envía solo la huella de ruta, deduplica peticiones en curso y conserva po
   release({ data: { estimates } });
   assert.deepEqual(await Promise.all(requests), [estimates, estimates]);
   assert.equal(invoked, 1);
+});
+
+
+test("muestra provincia y CP de referencia, conserva la provincia y no asigna ese CP al portal", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const ui = picker(async () => [
+    { ...suggestion("Madrid"), province: "Madrid", displayPostalCode: "28013" },
+    { ...suggestion("Alcalá de Henares"), province: "Madrid", displayPostalCode: "28801" },
+  ]);
+  ui.input("Calle Mayor");
+  await tick(t);
+  assert.match(ui.choices.children[1].textContent, /Alcalá de Henares · Madrid · 28801/);
+  ui.fields.number.value = "48";
+  ui.choices.children[1].events.click();
+  assert.equal(ui.fields.province.value, "Madrid");
+  assert.equal(ui.fields.postalCode.value, "");
+  assert.equal(ui.fields.number.value, "48");
+  ui.fields.municipality.value = "Otro municipio";
+  ui.fields.municipality.events.input();
+  assert.equal(ui.fields.province.value, "");
 });

@@ -34,7 +34,7 @@ Deno.serve(async (request: Request) => {
 
   try {
     // This caller-scoped RPC checks active technician status, team membership and session revocation.
-    const prefs = await auth.client.rpc("cc_my_route_locations", { p_expected_technician_id: auth.user.id });
+    const prefs = await auth.client.rpc("cc_my_route_locations_v2", { p_expected_technician_id: auth.user.id });
     if (prefs.error?.code === "42501") return reply({ error: "Acceso denegado." }, 403);
     if (prefs.error || !prefs.data || !Object.hasOwn(prefs.data, "home")) return disabled();
 

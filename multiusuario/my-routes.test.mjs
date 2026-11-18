@@ -266,7 +266,7 @@ test("Ajustes guarda mediante RPC, vuelve a la jornada y conserva las ubicacione
       writes.push(saved);
       return { data: null };
     }
-    assert.equal(name, "cc_my_route_locations");
+    assert.equal(name, "cc_my_route_locations_v2");
     return { data: saved };
   } });
   const dates = [];
@@ -300,4 +300,14 @@ test("Ajustes guarda mediante RPC, vuelve a la jornada y conserva las ubicacione
   ui.sync();
   assert.equal(get("Tab").parentElement.hidden, true);
   assert.equal(get("-keys-street").value, "");
+});
+
+
+test("conserva provincia de la sugerencia en el formato usado para identificar la ruta", () => {
+  const detailed = { ...usual, keys: { ...usual.keys, province: "  Madrid  " } };
+  const clean = validateRouteLocations(detailed);
+  assert.equal(clean.keys.province, "Madrid");
+  assert.match(formatRouteLocation(clean.keys), /Municipio ficticio \(Madrid\)$/);
+  assert.ok(!Object.hasOwn(clean.home, "province"));
+  assert.throws(() => validateRouteLocations({ ...detailed, keys: { ...detailed.keys, province: "Madrid, España" } }));
 });

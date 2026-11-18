@@ -22,10 +22,10 @@ test("servidor y navegador coinciden en orden y tramos con direcciones ausentes"
   assert.equal(streetFields("Calle 10 sin datos de municipio"), null);
   assert.equal(streetFields("Calle de Prueba S/N, Madrid"), null);
   assert.deepEqual(streetFields(journeyAddresses(prefs, jobs, ignored)[2]), {
-    street: "Calle Prueba", housenumber: "12", postcode: "28000", city: "Madrid", country: "España", filter: "countrycode:es", limit: "2",
+    street: "Calle Prueba", housenumber: "12", postcode: "28000", city: "Madrid", country: "España", filter: "countrycode:es", limit: "5",
   });
   assert.deepEqual(streetFields("Calle 8 de marzo 12 bis, Madrid"), {
-    street: "Calle 8 de marzo", housenumber: "12 bis", city: "Madrid", country: "España", filter: "countrycode:es", limit: "2",
+    street: "Calle 8 de marzo", housenumber: "12 bis", city: "Madrid", country: "España", filter: "countrycode:es", limit: "5",
   });
 });
 
@@ -96,8 +96,8 @@ test("límite y rechazo del proveedor detienen las solicitudes pendientes", asyn
 
 function suggestionsResponse() {
   return Response.json({ results: [
-    { country_code: "es", result_type: "street", street: "Calle Fira", city: "Municipio A", postcode: "08000", lat: 40, lon: -3, place_id: "private-extra-field" },
-    { country_code: "es", result_type: "street", street: "Calle Fira", city: "Municipio A", postcode: "08001" },
+    { country_code: "es", result_type: "street", street: "Calle Fira", city: "Municipio A", county: "Provincia A", postcode: "08000", lat: 40, lon: -3, place_id: "private-extra-field" },
+    { country_code: "es", result_type: "street", street: "Calle Fira", city: "Municipio A", county: "Provincia B", postcode: "08001" },
     { country_code: "es", result_type: "street", street: "Calle Fira", city: "Municipio B", postcode: "28000" },
     { country_code: "es", result_type: "building", street: "Calle Fira", city: "Municipio B", housenumber: "15" },
     { country_code: "fr", result_type: "street", street: "Calle Fira", city: "Fuera del país" },
@@ -120,14 +120,15 @@ test("autocompletado conserva municipios distintos y evita postales, portales y 
     },
   });
   assert.deepEqual(result, [
-    { street: "Calle Fira", municipality: "Municipio A", postalCode: "", label: "Calle Fira · Municipio A" },
-    { street: "Calle Fira", municipality: "Municipio B", postalCode: "", label: "Calle Fira · Municipio B" },
+    { street: "Calle Fira", municipality: "Municipio A", province: "Provincia A", postalCode: "", displayPostalCode: "08000", label: "Calle Fira · Municipio A · Provincia A · 08000" },
+    { street: "Calle Fira", municipality: "Municipio A", province: "Provincia B", postalCode: "", displayPostalCode: "08001", label: "Calle Fira · Municipio A · Provincia B · 08001" },
+    { street: "Calle Fira", municipality: "Municipio B", postalCode: "", displayPostalCode: "28000", label: "Calle Fira · Municipio B · 28000" },
   ]);
   const explicit = await autocompleteStreets("Calle Fira 08001", {
     apiKey: "fake-test-key", charge: async () => true, fetcher: async () => suggestionsResponse(),
   });
-  assert.equal(explicit[0].postalCode, "08001");
-  assert.equal(explicit[1].postalCode, "");
+  assert.equal(explicit[0].postalCode, "");
+  assert.equal(explicit[1].postalCode, "08001");
 });
 
 test("autocompletado inválido, cancelado o fuera de cuota no contacta al proveedor", async () => {
@@ -162,4 +163,88 @@ test("cliente deduplica por jornada y descarta los resultados al cambiar de usua
   assert.deepEqual(await two, []);
   assert.deepEqual(await provider.estimateJourney(legs, options), []);
   assert.equal(calls, 1);
+});
+
+test("se conserva la provincia seleccionada y se omite del parámetro city", async () => {
+  const address = "Calle Prueba 12 A, 28000, Madrid (Provincia A)";
+  const route = journeyAddresses({ ...prefs, home: { street: "Calle Prueba", number: "12 A", municipality: "Madrid",
+    province: "Provincia A", postalCode: "28000" } }, jobs, []);
+  assert.equal(route[0], address);
+  assert.equal(route.at(-1), address);
+  assert.equal(streetFields(address).province, "Provincia A");
+  const result = await calculateJourney([address, address, address], {
+    apiKey: "fake-test-key", charge: async () => true,
+    fetcher: async url => {
+      const p = url.searchParams;
+      if (url.pathname.endsWith("/routing")) {
+        return Response.json({ features: [{ properties: { distance: 0, time: 0 } }] });
+      }
+      assert.equal(p.get("city"), "Madrid");
+      assert.equal(p.has("province"), false);
+      assert.equal(p.has("state"), false);
+      return Response.json({ results: [
+        location(p, { county: "Provincia B", housenumber: "12A", lat: 42 }),
+        location(p, { county: "Provincia A", housenumber: "12A" }),
+      ] });
+    },
+  });
+  assert.deepEqual(result.map(leg => leg?.distanceMeters), [0, 0]);
+});
+
+test("un inner_part puede confirmar el portal exacto, una calle homónima o varios puntos no", async () => {
+  const address = "Calle Mayor 48, 28801, Alcalá de Henares";
+  const inner = { result_type: "amenity", rank: { match_type: "inner_part", confidence: 1, confidence_building_level: 1 } };
+  const check = async (rows, answered) => {
+    let routeCalls = 0;
+    const legs = await calculateJourney([address, address, address], {
+      apiKey: "fake-test-key", charge: async () => true,
+      fetcher: async url => {
+        if (url.pathname.endsWith("/routing")) {
+          routeCalls++;
+          return Response.json({ features: [{ properties: { distance: 0, time: 0 } }] });
+        }
+        return Response.json({ results: rows(url.searchParams) });
+      },
+    });
+    assert.equal(routeCalls, answered ? 1 : 0);
+    assert.deepEqual(legs.map(leg => leg?.distanceMeters ?? null), answered ? [0, 0] : [null, null]);
+  };
+  await check(params => [
+    location(params, { ...inner, street: "Avenida Mayor", lat: 41 }),
+    location(params, { ...inner, housenumber: "49", lat: 42 }),
+    location(params, { ...inner, result_type: "street", lat: 43 }),
+    location(params, inner),
+    location(params, inner),
+  ], true);
+  await check(params => [location(params, inner), location(params, { ...inner, lat: 41 })], false);
+  await check(params => [location(params, { ...inner, rank: { match_type: "inner_part", confidence: 1 } })], false);
+  await check(params => [location(params, { ...inner, rank: { ...inner.rank, confidence_building_level: 0.5 } })], false);
+});
+
+test("se unifican calles idénticas con CP en conflicto sin perder el CP escrito", async () => {
+  const fetcher = async () => Response.json({ results: [
+    { country_code: "es", result_type: "street", street: "Calle Mayor", city: "Alcalá de Henares", state: "Comunidad de Madrid", postcode: "28801" },
+    { country_code: "es", result_type: "street", street: "Calle Mayor", city: "Alcalá de Henares", county: "Madrid", postcode: "28802" },
+  ] });
+  const options = { apiKey: "fake-test-key", charge: async () => true, fetcher };
+  const [result] = await autocompleteStreets("Calle Mayor 28801", options);
+  assert.equal(result.province, "Madrid");
+  assert.equal(result.postalCode, "28801");
+  assert.equal(result.displayPostalCode, undefined);
+  assert.equal(result.label, "Calle Mayor · Alcalá de Henares · Madrid");
+});
+
+
+test("la etiqueta abreviada de autocomplete coincide con la calle del portal exacto", async () => {
+  const address = "Calle Ruiz de Alarcón 23, 28014, Madrid (Madrid)";
+  const estimates = await calculateJourney([address, address, address], {
+    apiKey: "fake-test-key", charge: async () => true,
+    fetcher: async url => url.pathname.endsWith("/routing")
+      ? Response.json({ features: [{ properties: { distance: 25, time: 20 } }] })
+      : Response.json({ results: [
+        location(url.searchParams, { street: "Calle de Ruiz de Alarcón", state: "Community of Madrid" }),
+        location(url.searchParams, { street: "Avenida de Ruiz de Alarcón", state: "Community of Madrid", lat: 42 }),
+      ] }),
+  });
+  assert.deepEqual(estimates.map(x => x?.distanceMeters), [25, 25]);
 });

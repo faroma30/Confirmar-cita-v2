@@ -73,7 +73,8 @@ set +a
 psql -Xq -v ON_ERROR_STOP=1 -f "$lab/fixture.sql" \
   -f "$src/supabase/migrations/20261118090000_route_locations.sql" \
   -f "$src/supabase/migrations/20261118100000_route_geoapify_budget.sql" \
-  -f "$src/supabase/migrations/20261118110000_route_budget_require_where.sql"
+  -f "$src/supabase/migrations/20261118110000_route_budget_require_where.sql" \
+  -f "$src/supabase/migrations/20261118120000_route_location_province.sql"
 psql -Xq -v ON_ERROR_STOP=1 -c "notify pgrst, 'reload schema';"
 sleep 2
 node "$src/supabase/tests/isolated/my-route-locations-auth-lab.mjs"
