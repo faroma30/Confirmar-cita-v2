@@ -72,7 +72,8 @@ source "$lab/lab.env"
 set +a
 psql -Xq -v ON_ERROR_STOP=1 -f "$lab/fixture.sql" \
   -f "$src/supabase/migrations/20261118090000_route_locations.sql" \
-  -f "$src/supabase/migrations/20261118100000_route_geoapify_budget.sql"
+  -f "$src/supabase/migrations/20261118100000_route_geoapify_budget.sql" \
+  -f "$src/supabase/migrations/20261118110000_route_budget_require_where.sql"
 psql -Xq -v ON_ERROR_STOP=1 -c "notify pgrst, 'reload schema';"
 sleep 2
 node "$src/supabase/tests/isolated/my-route-locations-auth-lab.mjs"
@@ -83,6 +84,35 @@ const response=await fetch(new URL('/functions/v1/my-routes-estimate',process.en
 if(response.status!==503) throw Error('disabled Edge response: '+response.status);
 console.log('PASS: Edge refuses requests while Geoapify is disabled');
 JS
+node --input-type=module <<'JS'
+import {readFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
+import assert from 'node:assert/strict';
+const {API_URL, SERVICE_ROLE_KEY, ANON_KEY}=JSON.parse(readFileSync(process.env.LAB_STATE,'utf8'));
+const url=new URL(API_URL);
+assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname));
+const lease=randomUUID();
+const rpc=(key,method,body)=>fetch(new URL('/rest/v1/rpc/'+method,url),{
+  method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),
+  headers:{apikey:key,authorization:'Bearer '+key,'content-type':'application/json'},body:JSON.stringify(body),
+});
+const begin={p_actor:randomUUID(),p_lease:lease,p_operation:'route'};
+try{
+  const denied=await rpc(ANON_KEY,'cc_route_budget_begin_operation',begin);
+  assert.ok([401,403].includes(denied.status));
+  const admitted=await rpc(SERVICE_ROLE_KEY,'cc_route_budget_begin_operation',begin);
+  assert.equal(admitted.status,200);
+  assert.equal(await admitted.json(),true);
+  const charge=await rpc(SERVICE_ROLE_KEY,'cc_route_budget_charge',{p_lease:lease,p_credits:1});
+  assert.equal(charge.status,200);
+  assert.equal(await charge.json(),true);
+} finally {
+  const end=await rpc(SERVICE_ROLE_KEY,'cc_route_budget_end',{p_lease:lease,p_provider_limited:false});
+  assert.equal(end.status,204);
+}
+console.log('PASS: PostgREST denies anon, admits service and reserves/releases one local credit');
+JS
+sleep 1
 psql -XAtq -v ON_ERROR_STOP=1 -c "
 select
   not has_function_privilege('authenticated','public.cc_route_budget_charge(uuid,integer)','EXECUTE')
@@ -103,4 +133,3 @@ test "$(sort "$lab/race-1" "$lab/race-2" | tr -d '\n')" = ft
 echo 'PASS: RLS, grants, global admission under parallel connections'
 cd "$src"
 node --test supabase/functions/my-routes-estimate/core.test.mjs multiusuario/my-routes.test.mjs multiusuario/my-routes-autocomplete.test.mjs
-
