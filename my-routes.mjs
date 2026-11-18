@@ -7,12 +7,12 @@ function addressOf(row) {
     ? [street, text(row.postal_code), text(row.population)].filter(Boolean).join(", ") : "";
 }
 
-export const routeLocationFields = { street: 200, number: 30, municipality: 100, postalCode: 5 };
+export const routeLocationFields = { street: 200, number: 30, municipality: 100, postalCode: 5, province: 100 };
 export const routeLocationKinds = ["home", "keys", "tourline"];
 
 export function formatRouteLocation(location) {
   if (!location) return "";
-  return [[location.street, location.number].filter(Boolean).join(" "), location.postalCode, location.municipality].filter(Boolean).join(", ");
+  return [[location.street, location.number].filter(Boolean).join(" "), location.postalCode, location.province ? location.municipality + " (" + location.province + ")" : location.municipality].filter(Boolean).join(", ");
 }
 
 function activityName(value) {
@@ -170,6 +170,10 @@ export function validateRouteLocations(value) {
       (trimmed.postalCode && !/^\d{5}$/.test(trimmed.postalCode))) {
       throw new Error("Completa la calle y la población. Para el código postal, usa cinco dígitos.");
     }
+    if (trimmed.province && !/^[\p{L}][\p{L} .\u2019\x27-]*$/u.test(trimmed.province)) {
+      throw new Error("La provincia no es válida.");
+    }
+    if (!trimmed.province) delete trimmed.province;
     result[kind] = trimmed;
   }
   return result;
@@ -178,7 +182,7 @@ export function validateRouteLocations(value) {
 export function createRpcRouteLocations(options) {
   const { call, clear } = routePreferencesRpc(options);
   return {
-    async read() { return validateRouteLocations(await call("cc_my_route_locations")); },
+    async read() { return validateRouteLocations(await call("cc_my_route_locations_v2")); },
     async write(value) {
       const { home, keys, tourline, margin } = validateRouteLocations(value);
       await call("cc_save_my_route_locations", { p_home: home, p_keys: keys, p_tourline: tourline, p_margin: margin });

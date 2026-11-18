@@ -48,6 +48,10 @@ export function createCloudRouteAutocomplete({ invoke, getActor }) {
       typeof item.municipality === "string" && item.municipality.trim() && item.municipality.length <= 100 &&
       typeof item.postalCode === "string" && /^(?:[0-9]{5})?$/.test(item.postalCode) &&
       !/[\u0000-\u001f\u007f]/.test(item.street + item.municipality)
-    ).map(({ street, municipality, postalCode }) => ({ street, municipality, postalCode }));
+    ).map(({ street, municipality, postalCode, province, displayPostalCode }) => ({
+      street, municipality, postalCode,
+      ...(typeof province === "string" && province.length <= 100 && /^[\p{L}][\p{L} .\u2019\x27-]*$/u.test(province) ? { province } : {}),
+      ...(typeof displayPostalCode === "string" && /^\d{5}$/.test(displayPostalCode) ? { displayPostalCode } : {}),
+    }));
   };
 }
