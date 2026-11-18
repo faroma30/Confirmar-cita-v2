@@ -71,11 +71,11 @@ set -a
 source "$lab/lab.env"
 set +a
 psql -Xq -v ON_ERROR_STOP=1 -f "$lab/fixture.sql" \
-  -f "$src/supabase/sql_editor/DRAFT_my_route_preferences.sql" \
+  -f "$src/supabase/migrations/20261118090000_route_locations.sql" \
   -f "$src/supabase/sql_editor/DRAFT_my_route_budget.sql"
 psql -Xq -v ON_ERROR_STOP=1 -c "notify pgrst, 'reload schema';"
 sleep 2
-node "$src/supabase/tests/isolated/my-route-auth-lab.mjs"
+node "$src/supabase/tests/isolated/my-route-locations-auth-lab.mjs"
 # No Geoapify secret or activation flag exists. Request must fail closed.
 node --input-type=module <<'JS'
 const response=await fetch(new URL('/functions/v1/my-routes-estimate',process.env.MY_ROUTES_LAB_URL),
