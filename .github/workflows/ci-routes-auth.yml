@@ -1,0 +1,24 @@
+name: Mis rutas - laboratorio Auth
+on:
+  push:
+    branches: [ci/mis-rutas-auth]
+permissions:
+  contents: read
+concurrency:
+  group: mis-rutas-auth
+  cancel-in-progress: true
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: supabase/setup-cli@v1
+        with:
+          version: '2.121.0'
+      - name: Validate synthetic Auth and database permissions
+        run: bash supabase/tests/isolated/ci-routes-auth.sh
+
