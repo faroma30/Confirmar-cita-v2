@@ -1,4 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
+import { mountMyRoutes } from "./my-routes-ui.mjs";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
 import { createIssuesUI } from "./issues-ui.mjs?v=3co2";
@@ -61,7 +62,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3co2";
+const APP_BUILD = "3routes1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -352,6 +353,7 @@ function finishWorkspaceLoading(diagnostic) {
 }
 
 function clearWorkspaceAgendaResults() {
+  myRoutes?.reset();
   currentAppointments = [];
   appointmentIdentityIndex = [];
   ignoredAppointments = [];
@@ -404,6 +406,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   settingsNavigation.abandon();
   issuesNavigation.abandon();
   hideWorkspacePanels();
+  myRoutes?.reset();
   const sessionReadStartedAt = performance.now();
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   diagnostic.getSessionMs = performance.now() - sessionReadStartedAt;
@@ -971,6 +974,7 @@ async function selectAppointmentDate(date) {
 }
 
 function renderAppointments() {
+  myRoutes?.sync();
   renderAgendaDateNavigation();
   const rows = [...currentAppointments].sort((a, b) => String(a.scheduled_time).localeCompare(String(b.scheduled_time)));
   const next = rows.find((row) => row.status === "pending" && !(row.issues ?? []).length && !row.source_missing && !row.contacted_at);
@@ -1903,6 +1907,27 @@ async function createAccount(formData, role, teamIds) {
   if (error || data?.error) throw new Error("provision failed");
   return data;
 }
+
+const myRoutesActor = () => activeProfile?.status === "active" && !activeProfile.must_change_password
+  ? { id: activeUser?.id, role: activeProfile.role } : null;
+
+const myRoutes = mountMyRoutes({
+  panel: $("appointmentsPanel"),
+  agenda: $("myRoutesAgenda"),
+  getActor: myRoutesActor,
+  getDate: () => appointmentDate,
+  async loadActivities(date) {
+    const args = { p_work_date: date };
+    const [appointments, ignored] = await Promise.all([
+      supabase.rpc("cc_my_appointments", args),
+      supabase.rpc("cc_my_ignored_interventions", args),
+    ]);
+    if (appointments.error || ignored.error || !Array.isArray(appointments.data) || !Array.isArray(ignored.data)) {
+      throw new Error("Actividades no disponibles.");
+    }
+    return { appointments: appointments.data, ignored: ignored.data };
+  },
+});
 
 function bindEvents() {
   issuesUI.bind(); adminRoutesUI.bind();
