@@ -1,24 +1,48 @@
-import { arrivalAfter, buildLegs, combineActivities, createRoutePreferences, estimateLeg, mapsLink, mayArriveLate, recommendedDeparture } from "./my-routes.mjs";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocations } from "./my-routes.mjs?v=3routes2";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, preferencesStore = null }) {
-  const settings = preferencesStore ?? createRoutePreferences(getActor);
+  const settings = preferencesStore;
   const find = id => panel.querySelector("#" + id);
   const tab = find("myRoutesTab");
   const agendaTab = find("myRoutesAgendaTab");
   const view = find("myRoutesView");
   const form = find("myRoutesSettings");
   const date = find("myRoutesDate");
-  const home = find("myRoutesHome");
+  const content = find("myRoutesContent");
+  const settingsPanel = find("myRoutesSettingsPanel");
+  const openSettings = find("myRoutesOpenSettings");
+  const back = find("myRoutesBack");
+  const saveButton = find("myRoutesSave");
+  const settingsNotice = find("myRoutesSettingsNotice");
+  const locationFields = Object.fromEntries(routeLocationKinds.map(kind => [kind,
+    Object.fromEntries(Object.keys(routeLocationFields).map(field => [field, find("myRoutes-" + kind + "-" + field)])),
+  ]));
   const margin = find("myRoutesMargin");
   const notice = find("myRoutesNotice");
   const list = find("myRoutesList");
   let request = 0;
   let owner = null;
-  let savedMargin = 10;
+  let settingsRequest = 0;
+  let saving = false;
 
   function technicianId() {
     const actor = getActor();
     return actor?.role === "technician" ? actor.id : null;
+  }
+  function fillLocation(kind, location) {
+    for (const [field, input] of Object.entries(locationFields[kind])) input.value = location?.[field] ?? "";
+  }
+  function resetSettings() {
+    settingsRequest++;
+    saving = false;
+    saveButton.disabled = false;
+    back.disabled = false;
+    content.hidden = false;
+    settingsPanel.hidden = true;
+    form.hidden = true;
+    form.reset();
+    for (const kind of routeLocationKinds) fillLocation(kind, null);
+    settingsNotice.textContent = "";
   }
   function close() {
     request++;
@@ -29,8 +53,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     tab.className = "button secondary"; agendaTab.className = "button primary";
     list.replaceChildren();
     notice.textContent = "";
-    form.reset();
-    savedMargin = 10;
+    resetSettings();
     date.value = "";
   }
   function sync() {
@@ -51,7 +74,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   function label(stop) {
     return [stop.type, stop.time].filter(Boolean).join(" · ");
   }
-  async function refresh({ fill = false } = {}) {
+  async function refresh() {
     const run = ++request;
     const actorId = technicianId();
     const current = () => actorId && technicianId() === actorId && request === run && !view.hidden;
@@ -61,14 +84,12 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     try {
       const preferences = await settings.read();
       if (!current()) return;
-      savedMargin = preferences.margin;
-      if (fill) { home.value = preferences.home; margin.value = preferences.margin; }
       const selectedDate = date.value;
       if (!selectedDate) { notice.textContent = "Selecciona una fecha."; return; }
       const { appointments, ignored } = await loadActivities(selectedDate);
       if (!current()) return;
-      const activities = combineActivities(appointments, ignored);
-      const legs = buildLegs(preferences.home, activities);
+      const activities = combineActivities(appointments, ignored, preferences);
+      const legs = buildLegs(formatRouteLocation(preferences.home), activities);
       const batch = provider?.estimateJourney
         ? await provider.estimateJourney(legs, { date: selectedDate }) : null;
       const estimates = await Promise.all(legs.map((leg, index) => estimateLeg(leg,
@@ -141,23 +162,75 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     agendaTab.setAttribute("aria-pressed", "false");
     tab.className = "button primary"; agendaTab.className = "button secondary";
     date.value = getDate();
-    void refresh({ fill: true });
+    void refresh();
   });
   agendaTab.addEventListener("click", close);
   date.addEventListener("change", () => void refresh());
-  async function save(values) {
-    const actorId = technicianId();
-    try {
-      await settings.write(values);
-      if (actorId === technicianId() && !view.hidden) await refresh({ fill: true });
-    } catch {
-      if (actorId === technicianId() && !view.hidden) notice.textContent = "No se pudo guardar la configuración.";
-    }
+  function isCurrentSettings(actorId, run) {
+    return actorId && technicianId() === actorId && run === settingsRequest && !view.hidden && !settingsPanel.hidden;
   }
-  form.addEventListener("submit", event => {
-    event.preventDefault();
-    void save({ home: home.value, margin: margin.valueAsNumber });
+  openSettings.addEventListener("click", async () => {
+    const actorId = technicianId();
+    if (!actorId || view.hidden || !settingsPanel.hidden) return;
+    const run = ++settingsRequest;
+    content.hidden = true;
+    settingsPanel.hidden = false;
+    form.hidden = true;
+    settingsNotice.textContent = "Cargando ajustes…";
+    back.focus();
+    try {
+      const prefs = await settings.read();
+      if (!isCurrentSettings(actorId, run)) return;
+      for (const kind of routeLocationKinds) fillLocation(kind, prefs[kind]);
+      margin.value = prefs.margin;
+      form.hidden = false;
+      settingsNotice.textContent = "";
+    } catch {
+      if (isCurrentSettings(actorId, run)) settingsNotice.textContent = "No se pudieron cargar los ajustes. Vuelve a intentarlo.";
+    }
   });
-  find("myRoutesRemoveHome").addEventListener("click", () => void save({ home: "", margin: savedMargin }));
+  function returnToRoute() {
+    resetSettings();
+    openSettings.focus();
+    void refresh();
+  }
+  back.addEventListener("click", returnToRoute);
+  for (const kind of routeLocationKinds) {
+    find("myRoutesClear-" + kind).addEventListener("click", () => {
+      if (saving) return;
+      fillLocation(kind, null);
+      settingsNotice.textContent = "Guarda los cambios para eliminar esta ubicación.";
+    });
+  }
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const actorId = technicianId();
+    const run = settingsRequest;
+    if (saving || form.hidden || !isCurrentSettings(actorId, run)) return;
+    const data = { margin: margin.valueAsNumber };
+    for (const [kind, fields] of Object.entries(locationFields)) {
+      const location = Object.fromEntries(Object.entries(fields).map(([field, input]) => [field, input.value.trim()]));
+      data[kind] = Object.values(location).some(Boolean) ? location : null;
+    }
+    let prefs;
+    try { prefs = validateRouteLocations(data); }
+    catch (error) { settingsNotice.textContent = error.message; return; }
+    saving = true;
+    saveButton.disabled = true;
+    back.disabled = true;
+    settingsNotice.textContent = "Guardando ajustes…";
+    try {
+      await settings.write(prefs);
+      if (isCurrentSettings(actorId, run)) returnToRoute();
+    } catch {
+      if (isCurrentSettings(actorId, run)) settingsNotice.textContent = "No se pudieron guardar los ajustes. Vuelve a intentarlo.";
+    } finally {
+      if (isCurrentSettings(actorId, run)) {
+        saving = false;
+        saveButton.disabled = false;
+        back.disabled = false;
+      }
+    }
+  });
   return { sync, reset() { settings.clear(); owner = null; close(); tab.parentElement.hidden = true; } };
 }

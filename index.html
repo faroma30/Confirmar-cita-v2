@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3routes1">
+  <meta name="app-build" content="3routes2">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
   <link rel="manifest" href="./manifest.webmanifest?v=3cl1">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png?v=3cl1">
   <link rel="stylesheet" href="./app.css?v=3cl1">
-  <link rel="stylesheet" href="./agenda.css?v=3routes1">
+  <link rel="stylesheet" href="./agenda.css?v=3routes2">
   <link rel="stylesheet" href="./admin-directory.css?v=3cl1">
   <link rel="stylesheet" href="./tool-categories.css?v=3cl1">
 </head>
@@ -181,20 +181,48 @@
           <button id="myRoutesTab" class="button secondary" type="button" aria-controls="myRoutesView" aria-pressed="false">Mis rutas</button>
         </nav>
         <div id="myRoutesView" hidden>
-          <div class="agenda-heading"><div><p class="eyebrow">AGENDA PERSONAL</p><h2>Mis rutas</h2></div></div>
-          <div class="agenda-controls"><label for="myRoutesDate">Fecha de la ruta</label><input id="myRoutesDate" type="date"></div>
-          <details class="subpanel"><summary>Domicilio y margen de salida</summary><form id="myRoutesSettings" class="dialog-form">
-            <p>El domicilio y el margen se conservan hasta que cierres sesión o recargues la aplicación.</p>
-            <label for="myRoutesHome">Domicilio habitual<input id="myRoutesHome" maxlength="500" autocomplete="off"></label>
-            <label for="myRoutesMargin">Margen de salida (minutos)<input id="myRoutesMargin" type="number" min="0" max="180" step="1" required value="10"></label>
-            <div class="agenda-import">
-              <button class="button primary" type="submit">Guardar domicilio y margen</button>
-              <button id="myRoutesRemoveHome" class="button secondary" type="button">Eliminar domicilio</button>
+          <div id="myRoutesContent">
+            <div class="agenda-heading"><div><p class="eyebrow">AGENDA PERSONAL</p><h2>Mis rutas</h2></div>
+              <button id="myRoutesOpenSettings" class="button secondary" type="button" aria-controls="myRoutesSettingsPanel"><span aria-hidden="true">⚙️</span> Ajustes</button>
             </div>
-          </form></details>
-          <p>Al abrir un tramo, sus direcciones se comparten con Google Maps.</p>
-          <p id="myRoutesNotice" class="muted" role="status"></p>
-          <div id="myRoutesList" class="appointment-list"></div>
+            <div class="agenda-controls"><label for="myRoutesDate">Fecha de la ruta</label><input id="myRoutesDate" type="date"></div>
+            <p>Al abrir un tramo, sus direcciones se comparten con Google Maps.</p>
+            <p id="myRoutesNotice" class="muted" role="status"></p>
+            <div id="myRoutesList" class="appointment-list"></div>
+          </div>
+          <div id="myRoutesSettingsPanel" hidden>
+            <div class="agenda-heading"><h2>Ajustes de Mis rutas</h2><button id="myRoutesBack" class="button secondary" type="button">Volver a Mis rutas</button></div>
+            <p id="myRoutesSettingsNotice" class="muted" role="status"></p>
+            <form id="myRoutesSettings" class="dialog-form" hidden>
+              <fieldset class="subpanel">
+                <legend>Mi domicilio</legend>
+                <label for="myRoutes-home-street">Calle o vía<input id="myRoutes-home-street" type="text" maxlength="200" autocomplete="off"></label>
+                <label for="myRoutes-home-number">Número o S/N<input id="myRoutes-home-number" type="text" maxlength="30" autocomplete="off"></label>
+                <label for="myRoutes-home-municipality">Población o municipio<input id="myRoutes-home-municipality" type="text" maxlength="100" autocomplete="off"></label>
+                <label for="myRoutes-home-postalCode">Código postal (opcional)<input id="myRoutes-home-postalCode" type="text" maxlength="5" autocomplete="off" inputmode="numeric" pattern="[0-9]{5}"></label>
+                <button id="myRoutesClear-home" class="button secondary" type="button">Limpiar ubicación</button>
+              </fieldset>
+              <fieldset class="subpanel">
+                <legend>Recogida de llaves</legend>
+                <label for="myRoutes-keys-street">Calle o vía<input id="myRoutes-keys-street" type="text" maxlength="200" autocomplete="off"></label>
+                <label for="myRoutes-keys-number">Número o S/N<input id="myRoutes-keys-number" type="text" maxlength="30" autocomplete="off"></label>
+                <label for="myRoutes-keys-municipality">Población o municipio<input id="myRoutes-keys-municipality" type="text" maxlength="100" autocomplete="off"></label>
+                <label for="myRoutes-keys-postalCode">Código postal (opcional)<input id="myRoutes-keys-postalCode" type="text" maxlength="5" autocomplete="off" inputmode="numeric" pattern="[0-9]{5}"></label>
+                <button id="myRoutesClear-keys" class="button secondary" type="button">Limpiar ubicación</button>
+              </fieldset>
+              <fieldset class="subpanel">
+                <legend>Tourline / Recogida de material</legend>
+                <label for="myRoutes-tourline-street">Calle o vía<input id="myRoutes-tourline-street" type="text" maxlength="200" autocomplete="off"></label>
+                <label for="myRoutes-tourline-number">Número o S/N<input id="myRoutes-tourline-number" type="text" maxlength="30" autocomplete="off"></label>
+                <label for="myRoutes-tourline-municipality">Población o municipio<input id="myRoutes-tourline-municipality" type="text" maxlength="100" autocomplete="off"></label>
+                <label for="myRoutes-tourline-postalCode">Código postal (opcional)<input id="myRoutes-tourline-postalCode" type="text" maxlength="5" autocomplete="off" inputmode="numeric" pattern="[0-9]{5}"></label>
+                <button id="myRoutesClear-tourline" class="button secondary" type="button">Limpiar ubicación</button>
+              </fieldset>
+              <p>Deja una ubicación vacía y guarda los cambios para eliminarla.</p>
+              <label for="myRoutesMargin">Margen de salida (minutos)<input id="myRoutesMargin" type="number" min="0" max="180" step="1" required value="10"></label>
+              <button id="myRoutesSave" class="button primary" type="submit">Guardar cambios</button>
+            </form>
+          </div>
         </div>
         <div id="myRoutesAgenda">
         <div class="agenda-heading"><div><p class="eyebrow">AGENDA PERSONAL</p><h2>Confirmar Citas</h2></div></div>
@@ -335,6 +363,6 @@
   </main>
   <script src="./config.js?v=3cl1"></script>
   <script src="./startup-status.js?v=3cl1"></script>
-  <script type="module" src="./app.js?v=3routes1"></script>
+  <script type="module" src="./app.js?v=3routes2"></script>
 </body>
 </html>
