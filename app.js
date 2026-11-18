@@ -1,5 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
-import { mountMyRoutes } from "./my-routes-ui.mjs";
+import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes2";
+import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes2";
 import { captureSubmittedForm } from "./form-events.mjs";
 import { createSettingsNavigation } from "./settings-navigation.mjs";
 import { createIssuesUI } from "./issues-ui.mjs?v=3co2";
@@ -62,7 +63,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3routes1";
+const APP_BUILD = "3routes2";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -1916,6 +1917,7 @@ const myRoutes = mountMyRoutes({
   agenda: $("myRoutesAgenda"),
   getActor: myRoutesActor,
   getDate: () => appointmentDate,
+  preferencesStore: createRpcRouteLocations({ rpc: (...args) => supabase.rpc(...args), getActor: myRoutesActor }),
   async loadActivities(date) {
     const args = { p_work_date: date };
     const [appointments, ignored] = await Promise.all([

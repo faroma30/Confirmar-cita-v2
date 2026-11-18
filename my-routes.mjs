@@ -2,14 +2,40 @@ const text = value => typeof value === "string" ? value.trim() : "";
 
 function addressOf(row) {
   const street = text(row.full_address);
-  return street ? [street, text(row.postal_code), text(row.population)].filter(Boolean).join(", ") : "";
+  const missing = /^(?:s\/d|s\/n|sin (?:direccion|datos)|no (?:disponible|informada)|[-–—]+)$/i;
+  return street && !missing.test(street.normalize("NFD").replace(/\p{Diacritic}/gu, ""))
+    ? [street, text(row.postal_code), text(row.population)].filter(Boolean).join(", ") : "";
 }
 
-export function combineActivities(appointments, ignored) {
+export const routeLocationFields = { street: 200, number: 30, municipality: 100, postalCode: 5 };
+export const routeLocationKinds = ["home", "keys", "tourline"];
+
+export function formatRouteLocation(location) {
+  if (!location) return "";
+  return [[location.street, location.number].filter(Boolean).join(" "), location.postalCode, location.municipality].filter(Boolean).join(", ");
+}
+
+function activityName(value) {
+  return text(value).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function configuredAddress(type, preferences) {
+  const name = activityName(type);
+  if (/^(?:recogida (?:de )?llaves|recoger (?:las )?llaves)(?: (?:en|del?|de la) .+)?$/.test(name)) {
+    return formatRouteLocation(preferences.keys);
+  }
+  if (/^(?:tour ?line(?: express)?(?: recogida(?: (?:de )?material(?:es)?)?)?|recogida (?:de )?material(?:es)?(?: tour ?line)?)$/.test(name)) {
+    return formatRouteLocation(preferences.tourline);
+  }
+  return "";
+}
+
+export function combineActivities(appointments, ignored, preferences = {}) {
   return [
     ...appointments.filter(row => !row.source_missing && row.status !== "cancelled")
       .map(row => ({ ...row, routeType: "Instalación", routeTime: row.scheduled_time })),
-    ...ignored.filter(row => /mantenimiento|valoraci[oó]n/i.test(text(row.type)))
+    ...ignored.filter(row => text(row.type) && !/^(?:pausa(?: (?:para|de) (?:comida|descanso))?|descanso|almuerzo|comida)$/.test(activityName(row.type)))
       .map(row => ({ ...row, routeType: row.type, routeTime: row.time })),
   ].map(row => {
     const endTime = row.scheduled_end_time ?? row.end_time;
@@ -19,7 +45,7 @@ export function combineActivities(appointments, ignored) {
       type: row.routeType,
       time: start === null ? "" : row.routeTime.slice(0, 5),
       endTime: start !== null && end !== null && end >= start ? endTime : "",
-      address: addressOf(row),
+      address: (row.routeType === "Instalación" ? "" : configuredAddress(row.routeType, preferences)) || addressOf(row),
     };
   }).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
 }
@@ -88,8 +114,7 @@ function validatePreferences(value) {
   return { home: home.trim(), margin };
 }
 
-// Inject only in environments where the private RPCs have been deployed and validated.
-export function createRpcRoutePreferences({ rpc, getActor }) {
+function routePreferencesRpc({ rpc, getActor }) {
   let revision = 0;
   async function call(name, args = {}) {
     const actor = getActor();
@@ -106,13 +131,59 @@ export function createRpcRoutePreferences({ rpc, getActor }) {
       throw new Error("No se pudo acceder a las preferencias de ruta.");
     }
   }
+  return { call, clear() { revision++; } };
+}
+
+export function createRpcRoutePreferences(options) {
+  const { call, clear } = routePreferencesRpc(options);
   return {
     async read() { return validatePreferences(await call("cc_my_route_preferences")); },
     async write(value) {
       const { home, margin } = validatePreferences(value);
       await call("cc_save_my_route_preferences", { p_home: home || null, p_margin: margin });
     },
-    clear() { revision++; },
+    clear,
+  };
+}
+
+export function validateRouteLocations(value) {
+  if (!Number.isInteger(value?.margin) || value.margin < 0 || value.margin > 180) {
+    throw new Error("El margen debe estar entre 0 y 180 minutos.");
+  }
+  const result = { margin: value.margin };
+  for (const kind of routeLocationKinds) {
+    const location = value[kind];
+    if (location === null) { result[kind] = null; continue; }
+    if (!location || typeof location !== "object" ||
+      Object.keys(location).some(field => !Object.hasOwn(routeLocationFields, field))) {
+      throw new Error("La ubicación no es válida.");
+    }
+    const trimmed = {};
+    for (const [field, length] of Object.entries(routeLocationFields)) {
+      const raw = Object.hasOwn(location, field) ? location[field] : "";
+      if (typeof raw !== "string" || /[\u0000-\u001f\u007f]/.test(raw) || [...raw.trim()].length > length) {
+        throw new Error("La ubicación no es válida.");
+      }
+      trimmed[field] = raw.trim();
+    }
+    if (!trimmed.street || !trimmed.municipality ||
+      (trimmed.postalCode && !/^\d{5}$/.test(trimmed.postalCode))) {
+      throw new Error("Completa la calle y la población. Para el código postal, usa cinco dígitos.");
+    }
+    result[kind] = trimmed;
+  }
+  return result;
+}
+
+export function createRpcRouteLocations(options) {
+  const { call, clear } = routePreferencesRpc(options);
+  return {
+    async read() { return validateRouteLocations(await call("cc_my_route_locations")); },
+    async write(value) {
+      const { home, keys, tourline, margin } = validateRouteLocations(value);
+      await call("cc_save_my_route_locations", { p_home: home, p_keys: keys, p_tourline: tourline, p_margin: margin });
+    },
+    clear,
   };
 }
 
