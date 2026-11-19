@@ -124,7 +124,7 @@ const b = { ...a, source_key: "99200000-0000-4000-8000-000000000002", scheduled_
   end_time: "16:00", prospect_ref: "SYN-ORACLE-B", type: "Kit Premium" };
 const ignored = [
   { time: "08:00", end_time: "09:00", type: "Tourline", full_address: "Fictional depot" },
-  { time: "11:00", end_time: "12:00", type: "Valoración" },
+  { time: "11:00", end_time: "12:00", type: "ValoraciÃ³n" },
   { time: "13:00", end_time: "14:00", type: "Comida" },
   { time: "16:00", end_time: "17:00", type: "Mantenimiento Kit Hogar" },
 ];
@@ -173,3 +173,6 @@ try {
   process.exitCode = 1;
 }
 JS
+
+cd "$src"
+CHROME_PATH="$(command -v google-chrome)" node oracle-chrome-lab.mjs
