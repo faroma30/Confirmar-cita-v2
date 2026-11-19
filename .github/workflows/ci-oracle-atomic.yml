@@ -1,0 +1,25 @@
+name: Oracle - autenticación e importación atómica
+on:
+  push:
+    branches: [ci/oracle-atomic]
+permissions:
+  contents: read
+concurrency:
+  group: confirmar-citas-oracle-atomic
+  cancel-in-progress: true
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: supabase/setup-cli@v1
+        with:
+          version: '2.121.0'
+      - name: Validate isolated Oracle import using real Supabase Auth
+        run: bash supabase/tests/isolated/ci-oracle-atomic.sh

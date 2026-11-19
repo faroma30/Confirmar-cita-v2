@@ -1,4 +1,8 @@
-const normalizeText = (value = "") => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// The import RPC applies the same normalization and service-type exclusion.
+const accentedVowels = { á: "a", é: "e", í: "i", ó: "o", ú: "u", ü: "u" };
+const serviceType = /manten|averia|reparacion|revision|inspeccion/;
+const validClock = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const normalizeText = value => value.toLowerCase().replace(/[áéíóúü]/g, vowel => accentedVowels[vowel]);
 
 export function normalizePhone(value = "") {
   const raw = String(value).trim();
@@ -27,14 +31,21 @@ export function parseOracleInstallations(text, keywords = ["kit hogar", "kit bá
   const starts = [...normalized.matchAll(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g)];
   const installations = [];
   const ignored = [];
-  const normalizedKeywords = (Array.isArray(keywords) ? keywords : []).map(normalizeText).filter(Boolean);
+  const normalizedKeywords = (Array.isArray(keywords) ? keywords : [])
+    .filter(keyword => typeof keyword === "string")
+    .map(keyword => normalizeText(keyword.trim()))
+    .filter(Boolean);
 
   for (let index = 0; index < starts.length; index += 1) {
     const start = starts[index].index;
     const segment = normalized.slice(start, starts[index + 1]?.index ?? normalized.length);
     const time = starts[index][1].padStart(5, "0");
+    const end = starts[index][2].padStart(5, "0");
+    const range = validClock.test(time) && validClock.test(end) && end >= time ? { end_time: end } : {};
     const type = segment.match(/Tipo:\s*(.*?)\s+Panel:/i)?.[1]?.trim() ?? "";
-    const isInstallation = normalizedKeywords.some((keyword) => normalizeText(type).includes(keyword));
+    const normalizedType = normalizeText(type);
+    const isInstallation = !serviceType.test(normalizedType)
+      && normalizedKeywords.some(keyword => normalizedType.includes(keyword));
     const customerName = segment.match(/(?:Cliente|Nombre(?:\s+del\s+cliente)?)\s*:\s*(.*?)\s+(?=(?:Tipo|Panel|CP|Tlf|Mto)\s*:)/i)?.[1]?.trim() ?? "";
     const prospect = segment.match(/Mto:\s*-?(\d+)/i)?.[1] ?? "";
     const phone = normalizePhone(segment.match(/Tlf:\s*([+\d][\d\s()-]{7,})/i)?.[1] ?? "");
@@ -54,6 +65,7 @@ export function parseOracleInstallations(text, keywords = ["kit hogar", "kit bá
     postalCode = segment.match(/CP:\s*([\w -]{3,20})/i)?.[1]?.trim().split(/\s+/)[0] ?? "";
     const entry = {
       time,
+      ...range,
       type,
       kind: isInstallation ? "installation" : "maintenance_or_other",
       prospect_ref: prospect || null,
@@ -70,6 +82,7 @@ export function parseOracleInstallations(text, keywords = ["kit hogar", "kit bá
     if (isInstallation) installations.push(entry);
     else ignored.push({
       time,
+      ...range,
       type: type || "Tipo no detectado",
       customer_name: customerName,
       phone,
