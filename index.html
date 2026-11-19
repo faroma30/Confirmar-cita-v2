@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e30613">
-  <meta name="app-build" content="3oracle1">
+  <meta name="app-build" content="3oracle2">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://qbjydrltoxysydujtyns.supabase.co; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
   <title>Confirmar Citas · Acceso de equipo</title>
   <link rel="manifest" href="./manifest.webmanifest?v=3cl1">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png?v=3cl1">
   <link rel="stylesheet" href="./app.css?v=3cl1">
-  <link rel="stylesheet" href="./agenda.css?v=3routes5">
+  <link rel="stylesheet" href="./agenda.css?v=3oracle2">
   <link rel="stylesheet" href="./admin-directory.css?v=3cl1">
   <link rel="stylesheet" href="./tool-categories.css?v=3cl1">
 </head>
@@ -267,7 +267,20 @@
             <label for="installationTemplate">Plantilla WhatsApp · Instalación</label><textarea id="installationTemplate" rows="7"></textarea>
             <label for="maintenanceTemplate">Plantilla WhatsApp · Mantenimiento (no se importa)</label><textarea id="maintenanceTemplate" rows="5"></textarea>
             <label for="cancellationTemplate">Plantilla de correo de cancelación</label><textarea id="cancellationTemplate" rows="7"></textarea>
-            <div class="grid-form"><label>Para<input id="cancelEmailTo" type="email" maxlength="320"></label><label>CC<input id="cancelEmailCc" maxlength="1000"></label><label>Asunto<input id="cancelEmailSubject" maxlength="500"></label></div>
+            <div class="grid-form cancellation-recipient-groups">
+              <fieldset>
+                <legend>Para</legend>
+                <div id="cancelEmailTo"></div>
+                <button id="addCancelEmailTo" class="button secondary" type="button" aria-label="Añadir correo a Para">Añadir correo</button>
+              </fieldset>
+              <fieldset>
+                <legend>CC</legend>
+                <div id="cancelEmailCc"></div>
+                <button id="addCancelEmailCc" class="button secondary" type="button" aria-label="Añadir correo a CC">Añadir correo</button>
+              </fieldset>
+            </div>
+            <p id="cancelEmailStatus" class="cancellation-recipient-status" role="status"></p>
+            <label for="cancelEmailSubject">Asunto</label><input id="cancelEmailSubject" maxlength="500">
             <button id="restoreCancellationDefaults" class="button secondary" type="button">Restaurar predeterminado</button>
             <button class="button primary" type="submit">Guardar ajustes</button>
           </form>
@@ -351,6 +364,17 @@
         <textarea id="messagePreviewText" class="message-preview-text" rows="14" maxlength="5000" aria-label="Mensaje completo editable"></textarea>
         <div class="dialog-actions"><button id="copyPreviewMessage" class="button secondary" type="button">Copiar mensaje</button><button id="openPreviewWhatsApp" class="button primary" type="button">Abrir WhatsApp</button><button id="closePreviewDialog" class="button quiet" type="button">Cerrar</button></div>
       </dialog>
+      <dialog id="cancelAppointmentDialog" class="app-dialog" aria-labelledby="cancelAppointmentTitle">
+        <h2 id="cancelAppointmentTitle">Cancelar cita</h2>
+        <form method="dialog" class="dialog-form">
+          <label for="cancelAppointmentReason">Motivo comunicado por el cliente</label>
+          <textarea id="cancelAppointmentReason" required maxlength="2000" rows="4"></textarea>
+          <div class="dialog-actions">
+            <button class="button primary" type="submit" value="submit">Registrar cancelación</button>
+            <button class="button quiet" type="submit" value="dismiss" formnovalidate>Volver</button>
+          </div>
+        </form>
+      </dialog>
       <dialog id="editAppointmentDialog" class="app-dialog" aria-labelledby="editAppointmentTitle">
         <h2 id="editAppointmentTitle">Editar instalación</h2>
         <form id="editAppointmentForm" class="dialog-form">
@@ -366,6 +390,6 @@
   </main>
   <script src="./config.js?v=3cl1"></script>
   <script src="./startup-status.js?v=3cl1"></script>
-  <script type="module" src="./app.js?v=3oracle1"></script>
+  <script type="module" src="./app.js?v=3oracle2"></script>
 </body>
 </html>

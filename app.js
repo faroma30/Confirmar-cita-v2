@@ -1,3 +1,4 @@
+import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3oracle2";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
 import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes5";
 import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes5";
@@ -10,6 +11,7 @@ import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v
 import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bu1";
 import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3cl1";
 import { appendCancellationReason } from "./cancellation-reason.mjs?v=3bu1";
+import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3oracle2";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
 import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3oracle1";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
@@ -64,7 +66,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3oracle1";
+const APP_BUILD = "3oracle2";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -218,6 +220,10 @@ function disposeWifiAccess(userId, { clearChoice = false } = {}) {
 }
 const DEFAULT_CANCEL_TO = "toa.alianzas@verisure.es";
 const DEFAULT_CANCEL_CC = "angel.garciaestevez@verisure.es";
+const cancellationRecipients = {
+  to: createCancellationRecipientEditor($("cancelEmailTo"), $("addCancelEmailTo"), { label: "Para", maxLength: CANCELLATION_RECIPIENT_LIMITS.to }),
+  cc: createCancellationRecipientEditor($("cancelEmailCc"), $("addCancelEmailCc"), { label: "CC", maxLength: CANCELLATION_RECIPIENT_LIMITS.cc }),
+};
 
 const DEFAULT_INSTALLATION_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la alarma de Verisure* para hacer la instalación de la alarma.\n\nMañana estaré en *{POBLACION}* a las *{HORA}*.\n\n📍 Dirección: *{DIRECCION}*\n\nPor favor, comprueba que la dirección es correcta.\n\nImportante que tenga el *DNI* (físico) y el *número de cuenta*.\n\nRecuerda que el inmueble debe tener:\n- Luz\n- No estar en obras\n- Internet (si se quiere instalar la cámara de vídeo)\n\nTe avisaré cuando esté de camino. Cualquier cosa, házmela saber.\n\n*Si necesitas CANCELAR la instalación avísame antes de las 00:00 de hoy para evitar penalizaciones.*`;
 const DEFAULT_MAINTENANCE_TEMPLATE = `Buenas, soy {TECNICO}, el *técnico de la alarma de Verisure* para hacer el mantenimiento de la alarma.\n\nMañana estaré en *{POBLACION}* a las *{HORA}*.\n\n📍 Dirección: *{DIRECCION}*\n\nPor favor, comprueba que la dirección es correcta.\n\n*Si necesitas CANCELAR el mantenimiento avísame antes de las 00:00 de hoy para evitar penalizaciones.*`;
@@ -392,7 +398,62 @@ async function fetchOwnProfile() {
   return data;
 }
 
+let workspaceSessionExpiry = null;
+let workspaceRevalidation;
+const workspaceResumeKey = "cc-workspace-navigation";
+function rememberWorkspaceNavigation() {
+  if (!activeUser?.id || initializedWorkspaceUserId !== activeUser.id) return;
+  try {
+    sessionStorage.setItem(workspaceResumeKey, JSON.stringify({
+      owner: activeUser.id,
+      date: appointmentDate,
+      dayOffset: appointmentDayOffset,
+      routes: $("myRoutesTab").getAttribute("aria-pressed") === "true",
+      routeDate: $("myRoutesDate").value,
+      settings: settingsNavigation.isOpen(),
+      top: Math.max(0, window.scrollY),
+    }));
+  } catch { /* Session storage can be disabled. */ }
+}
+
+function takeWorkspaceNavigation(owner) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(workspaceResumeKey));
+    sessionStorage.removeItem(workspaceResumeKey);
+    return saved?.owner === owner ? saved : null;
+  } catch { return null; }
+}
+
+function restoreWorkspaceNavigation(saved) {
+  if (!saved) return;
+  if (saved.routes && activeProfile.role === "technician") {
+    $("myRoutesTab").click();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(saved.routeDate)) {
+      $("myRoutesDate").value = saved.routeDate;
+      $("myRoutesDate").dispatchEvent(new Event("change"));
+    }
+  }
+  if (saved.settings) $("settingsToggle").click();
+  if (Number.isFinite(saved.top)) requestAnimationFrame(() => window.scrollTo(0, saved.top));
+}
+
 async function routeSession({ preserveWorkspace = false } = {}) {
+  if (preserveWorkspace && initializedWorkspaceUserId) {
+    const owner = initializedWorkspaceUserId;
+    const role = initializedWorkspaceRole;
+    const { data, error } = await supabase.auth.getUser();
+    if (!error && data?.user?.id === owner && activeUser?.id === owner) {
+      const profile = await fetchOwnProfile().catch(() => null);
+      if (profile?.status === "active" && profile.activation_verified_at && !profile.must_change_password
+          && profile.role === role && activeUser?.id === owner) {
+        document.body.style.visibility = "";
+        window.__CC_APP_READY__ = true;
+        return;
+      }
+    }
+  }
+  $("cancelAppointmentDialog").close();
+  document.body.style.visibility = "";
   kpiAvailabilityRequest += 1;
   kpiAvailableUserId = null;
   const routeStartedAt = performance.now();
@@ -420,7 +481,9 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     return;
   }
   const session = sessionData.session;
+  workspaceSessionExpiry = session?.expires_at ?? null;
   if (!session) {
+    clearCancellationDraft();
     disposeWifiAccess(previousUserId, { clearChoice: true });
     issuesUI.reset(); adminRoutesUI.reset();
     selectedAdminView = "management";
@@ -461,6 +524,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     return;
   }
   if (previousUserId && previousUserId !== verifiedUser.user.id) {
+    clearCancellationDraft();
     disposeWifiAccess(previousUserId, { clearChoice: true });
     issuesUI.reset(); adminRoutesUI.reset();
     masterNavigation.clear(previousUserId);
@@ -546,6 +610,10 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   setVisible("roleDescription", activeProfile.role === "admin");
   diagnostic.verifiedShellMs = performance.now() - diagnostic.startedAt;
   finishStartup();
+  const savedNavigation = takeWorkspaceNavigation(activeUser.id);
+  if (Number.isInteger(savedNavigation?.dayOffset) && Math.abs(savedNavigation.dayOffset) <= 7) {
+    appointmentDayOffset = savedNavigation.dayOffset;
+  }
   const roleDataStartedAt = performance.now();
   if (activeProfile.role === "admin") {
     setVisible("agendaSettingsGroup", false);
@@ -573,7 +641,8 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     masterRouteDayOffset = navigation.dayOffset;
     masterRouteDate = addLocalDays(todayMadrid(), masterRouteDayOffset);
     setVisible("agendaSettingsGroup", true);
-    appointmentDate = addLocalDays(todayMadrid(), appointmentDayOffset);
+    appointmentDate = /^\d{4}-\d{2}-\d{2}$/.test(savedNavigation?.date)
+      ? savedNavigation.date : addLocalDays(todayMadrid(), appointmentDayOffset);
     renderAgendaDateNavigation();
     setVisible("appointmentsLoading", !resumeLoadedWorkspace);
     setVisible("masterAppointmentsLoading", !resumeLoadedWorkspace);
@@ -608,7 +677,8 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   } else {
     setVisible("agendaSettingsGroup", true);
     setVisible("masterViewTabs", false);
-    appointmentDate = addLocalDays(todayMadrid(), appointmentDayOffset);
+    appointmentDate = /^\d{4}-\d{2}-\d{2}$/.test(savedNavigation?.date)
+      ? savedNavigation.date : addLocalDays(todayMadrid(), appointmentDayOffset);
     renderAgendaDateNavigation();
     setVisible("appointmentsLoading", !resumeLoadedWorkspace);
     if (resumeLoadedWorkspace) {
@@ -631,6 +701,17 @@ async function routeSession({ preserveWorkspace = false } = {}) {
       setVisible("appointmentsLoading", false);
       if (!initializedWorkspaceUserId) showWorkspaceLoadFailure("No se pudo cargar el equipo. Vuelve a intentarlo.");
       publishLoginDiagnostic(diagnostic, performance.now() - roleDataStartedAt, "role_data_failed");
+    }
+  }
+  if (initializedWorkspaceUserId === activeUser?.id) {
+    restoreWorkspaceNavigation(savedNavigation);
+    if (savedNavigation && activeProfile.role !== "admin") {
+      const owner = activeUser.id;
+      const draft = await readCancellationDraft(owner);
+      const row = owner === activeUser?.id && draft && currentAppointments.find(item => item.id === draft.id
+        && !item.source_missing && item.status !== "cancelled");
+      if (row) void changeAppointmentStatus(row, "cancelled", draft.reason);
+      else clearCancellationDraft();
     }
   }
 }
@@ -875,14 +956,14 @@ async function loadAppointmentPreferences() {
   for (const [field, fallback] of [["cancellation_email_to", DEFAULT_CANCEL_TO], ["cancellation_email_cc", DEFAULT_CANCEL_CC]]) {
     if (data?.[field] == null) appointmentPreferences[field] = fallback;
   }
-  appointmentDate = addLocalDays(todayMadrid(), appointmentDayOffset);
   renderAgendaDateNavigation();
   $("installationKeywords").value = (appointmentPreferences.installation_keywords ?? []).join("\n");
   $("installationTemplate").value = appointmentPreferences.installation_template ?? DEFAULT_INSTALLATION_TEMPLATE;
   $("maintenanceTemplate").value = appointmentPreferences.maintenance_template ?? DEFAULT_MAINTENANCE_TEMPLATE;
   $("cancellationTemplate").value = appointmentPreferences.cancellation_template ?? DEFAULT_CANCELLATION_TEMPLATE;
-  $("cancelEmailTo").value = appointmentPreferences.cancellation_email_to ?? "";
-  $("cancelEmailCc").value = appointmentPreferences.cancellation_email_cc ?? "";
+  cancellationRecipients.to.setValue(appointmentPreferences.cancellation_email_to);
+  cancellationRecipients.cc.setValue(appointmentPreferences.cancellation_email_cc);
+  $("cancelEmailStatus").textContent = "";
   $("cancelEmailSubject").value = appointmentPreferences.cancellation_email_subject ?? "";
 }
 
@@ -1247,19 +1328,58 @@ async function editAppointmentNote(row) {
   else { appointmentNotice("Nota guardada.", "success"); await loadOwnAppointments(appointmentDate); }
 }
 
-async function changeAppointmentStatus(row, status) {
+const pendingCancellations = new Set();
+
+function requestCancellationReason(row, initialReason = "") {
+  const dialog = $("cancelAppointmentDialog");
+  if (dialog.open) return Promise.resolve(null);
+  const reason = $("cancelAppointmentReason");
+  reason.value = initialReason;
+  const owner = activeUser.id;
+  const save = () => {
+    if (activeUser?.id === owner) void saveCancellationDraft(owner, { id: row.id, reason: reason.value });
+  };
+  reason.addEventListener("input", save);
+  save();
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise(resolve => dialog.addEventListener("close", () => {
+    reason.removeEventListener("input", save);
+    const submitted = dialog.returnValue === "submit" ? reason.value.trim() : null;
+    if (submitted === null) clearCancellationDraft();
+    reason.value = "";
+    resolve(submitted);
+  }, { once: true }));
+}
+
+async function changeAppointmentStatus(row, status, initialReason = "") {
   const oldStatus = row.status;
   const oldReason = row.cancellation_reason ?? "";
   let emailToOpen = "";
   if (oldStatus === status) return;
   if (status === "cancelled") {
-    const reason = window.prompt("Motivo comunicado por el cliente");
-    if (reason === null) return;
-    if (!reason.trim()) { appointmentNotice("Indica el motivo de cancelación.", "error"); return; }
-    const { error } = await supabase.rpc("cc_cancel_appointment", { p_appointment_id: row.id, p_reason: reason.trim() });
-    if (error) { appointmentNotice("No se pudo registrar la cancelación.", "error"); return; }
-    row.cancellation_reason = reason.trim();
-    emailToOpen = buildCancellationEmail(row, reason.trim());
+    const owner = activeUser?.id;
+    if (!owner || pendingCancellations.has(row.id)) return;
+    pendingCancellations.add(row.id);
+    try {
+      const saved = initialReason ? null : await readCancellationDraft(owner);
+      if (activeUser?.id !== owner) return;
+      const reason = await requestCancellationReason(row, initialReason || (saved?.id === row.id ? saved.reason : ""));
+      if (reason === null || activeUser?.id !== owner) return;
+      if (!reason) { appointmentNotice("Indica el motivo de cancelación.", "error"); return; }
+      const { error } = await supabase.rpc("cc_cancel_appointment", { p_appointment_id: row.id, p_reason: reason });
+      if (activeUser?.id !== owner) return;
+      if (error) { appointmentNotice("No se pudo registrar la cancelación.", "error"); return; }
+      clearCancellationDraft();
+      row.status = "cancelled";
+      row.cancellation_reason = reason;
+      emailToOpen = buildCancellationEmail(row, reason);
+    } catch {
+      if (activeUser?.id === owner) appointmentNotice("No se pudo comprobar la cancelación. Actualiza la agenda antes de reintentar.", "error");
+      return;
+    } finally {
+      pendingCancellations.delete(row.id);
+    }
   } else {
     const { error } = await supabase.rpc("cc_set_appointment_status", { p_appointment_id: row.id, p_new_status: status });
     if (error) { appointmentNotice("No se pudo cambiar el estado.", "error"); return; }
@@ -1305,10 +1425,12 @@ function buildCancellationEmail(row, reason) {
   const template = appointmentPreferences.cancellation_template || DEFAULT_CANCELLATION_TEMPLATE;
   const subject = fillAppointmentTemplate(appointmentPreferences.cancellation_email_subject || "Cliente cancela - Prospecto {MTO}", row, activeProfile?.display_name, reason);
   const body = fillAppointmentTemplate(template, row, activeProfile?.display_name, reason);
-  const to = appointmentPreferences.cancellation_email_to || "";
-  if (!to) return "";
-  const cc = appointmentPreferences.cancellation_email_cc || "";
-  return `mailto:${encodeURIComponent(to)}?${cc ? `cc=${encodeURIComponent(cc)}&` : ""}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return buildCancellationMailto({
+    to: appointmentPreferences.cancellation_email_to,
+    cc: appointmentPreferences.cancellation_email_cc,
+    subject,
+    body,
+  });
 }
 
 async function removeAppointment(row) {
@@ -1544,14 +1666,23 @@ function renderMasterTeamSummary(rows) {
 
 async function saveAppointmentPreferences(event) {
   event.preventDefault();
+  const recipientStatus = $("cancelEmailStatus");
+  recipientStatus.textContent = "";
+  const to = cancellationRecipients.to.read();
+  const cc = cancellationRecipients.cc.read();
+  if (!to.valid || !cc.valid) {
+    const group = to.valid ? "CC" : "Para";
+    recipientStatus.textContent = `Revisa los correos del grupo ${group}. Comprueba su formato y el límite total de caracteres.`;
+    return;
+  }
   const keywords = $("installationKeywords").value.split(/\r?\n/).map((item) => item.trim().toLocaleLowerCase("es-ES")).filter(Boolean);
   const { error } = await supabase.rpc("cc_save_my_appointment_preferences", {
     p_installation_keywords: keywords,
     p_installation_template: $("installationTemplate").value,
     p_maintenance_template: $("maintenanceTemplate").value,
     p_cancellation_template: $("cancellationTemplate").value,
-    p_email_to: $("cancelEmailTo").value.trim(),
-    p_email_cc: $("cancelEmailCc").value.trim(),
+    p_email_to: to.value,
+    p_email_cc: cc.value,
     p_email_subject: $("cancelEmailSubject").value.trim(),
   });
   if (error) { appointmentNotice("No se pudieron guardar los ajustes.", "error"); return; }
@@ -1564,8 +1695,8 @@ function restoreV1Defaults() {
   $("installationTemplate").value = DEFAULT_INSTALLATION_TEMPLATE;
   $("maintenanceTemplate").value = DEFAULT_MAINTENANCE_TEMPLATE;
   $("cancellationTemplate").value = DEFAULT_CANCELLATION_TEMPLATE;
-  $("cancelEmailTo").value = DEFAULT_CANCEL_TO;
-  $("cancelEmailCc").value = DEFAULT_CANCEL_CC;
+  cancellationRecipients.to.setValue(DEFAULT_CANCEL_TO);
+  cancellationRecipients.cc.setValue(DEFAULT_CANCEL_CC);
   $("cancelEmailSubject").value = "Cliente cancela - Prospecto {MTO}";
   $("appointmentPreferences").requestSubmit();
 }
@@ -2269,6 +2400,8 @@ function bindEvents() {
 }
 
 function refreshMadridDates() {
+  if (document.visibilityState === "hidden" || $("cancelAppointmentDialog").open
+      || settingsNavigation.isOpen() || $("myRoutesTab").getAttribute("aria-pressed") === "true") return;
   const today = todayMadrid();
   if (today === previousMadridDate) return;
   previousMadridDate = today;
@@ -2306,9 +2439,14 @@ async function start() {
   }
   bindEvents();
   createSupabaseClient();
-  supabase.auth.onAuthStateChange((event) => {
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (session?.user?.id === activeUser?.id) workspaceSessionExpiry = session?.expires_at ?? null;
+    if (event === "SIGNED_IN" && session?.user?.id === initializedWorkspaceUserId) return;
     if (["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED", "PASSWORD_RECOVERY"].includes(event)) {
       if (event === "SIGNED_OUT") {
+        clearCancellationDraft();
+        $("cancelAppointmentDialog").close();
+        try { sessionStorage.removeItem(workspaceResumeKey); } catch { /* Storage is optional. */ }
         issuesUI.reset(); adminRoutesUI.reset();
         if (activeUser?.id) masterNavigation.clear(activeUser.id);
         activeUser = null;
@@ -2329,24 +2467,33 @@ async function start() {
       queueMicrotask(() => { void routeSession({ preserveWorkspace }).catch(() => window.__CC_SHOW_INIT_ERROR__?.()); });
     }
   });
-  window.addEventListener("pageshow", (event) => {
-    if (!event.persisted) return;
-    hideWorkspacePanels();
-    setVisible("startupError", false);
-    setVisible("startupStatus", true);
+  const revalidateVisibleWorkspace = () => {
+    if (workspaceRevalidation) return;
+    document.body.style.visibility = "hidden";
     window.__CC_APP_READY__ = false;
-    const preserveWorkspace = Boolean(activeUser?.id
-      && initializedWorkspaceUserId === activeUser.id
-      && initializedWorkspaceRole === activeProfile?.role);
-    void routeSession({ preserveWorkspace }).catch(() => window.__CC_SHOW_INIT_ERROR__?.());
+    workspaceRevalidation = routeSession({ preserveWorkspace: true }).catch(() => {
+      $("cancelAppointmentDialog").close();
+      hideWorkspacePanels();
+      document.body.style.visibility = "";
+      window.__CC_SHOW_INIT_ERROR__?.();
+    }).finally(() => { workspaceRevalidation = null; });
+  };
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) revalidateVisibleWorkspace();
   });
   window.addEventListener("pagehide", () => {
-    // Hide authenticated DOM before a browser can freeze this document in its back/forward cache.
-    hideWorkspacePanels();
+    rememberWorkspaceNavigation();
+    // Mask the DOM without losing form fields, dialog or scroll state in the back/forward cache.
+    document.body.style.visibility = "hidden";
     window.__CC_APP_READY__ = false;
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") refreshMadridDates();
+    if (document.visibilityState === "visible") {
+      if (activeUser && workspaceSessionExpiry && workspaceSessionExpiry <= Date.now() / 1000) {
+        revalidateVisibleWorkspace();
+      } else refreshMadridDates();
+    }
+    else rememberWorkspaceNavigation();
   });
   window.setInterval(refreshMadridDates, 30_000);
   await routeSession();

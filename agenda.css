@@ -28,3 +28,7 @@
 .route-address-results:not([hidden]){display:grid;gap:8px;min-width:0}
 .route-address-options{display:grid;gap:5px}
 .route-address-options .button{width:100%;text-align:left;justify-content:flex-start}
+.cancellation-recipient-groups fieldset{min-inline-size:0}
+.cancellation-recipient-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin-bottom:8px}
+.cancellation-recipient-row .button{width:auto;white-space:nowrap}
+.cancellation-recipient-status:empty{display:none}
