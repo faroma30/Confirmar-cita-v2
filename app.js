@@ -11,7 +11,7 @@ import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3bu1";
 import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3cl1";
 import { appendCancellationReason } from "./cancellation-reason.mjs?v=3bu1";
 import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs";
-import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs";
+import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3oracle1";
 import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs";
 import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs";
 import { createIgnoredWorkCard } from "./ignored-work.mjs";
@@ -64,7 +64,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3routes5";
+const APP_BUILD = "3oracle1";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -1341,52 +1341,105 @@ function matchesAppointment(existing, parsed) {
     && (existing.phone ?? "") === parsed.phone && (existing.full_address ?? "") === parsed.full_address);
 }
 
+const oracleImportErrors = new Map([
+  ["not authorized", "El servidor no autorizó la importación para esta cuenta o equipo."],
+  ["appointment team ownership conflict", "Una instalación ya pertenece a otro equipo."],
+  ["invalid import size", "La agenda está vacía o supera el tamaño admitido."],
+  ["invalid import", "El servidor rechazó los datos o la fecha de la importación."],
+  ["invalid installation import", "El servidor rechazó el tipo o el formato de una instalación."],
+  ["invalid import date or time format", "Una actividad contiene una fecha u hora inválida."],
+  ["invalid private field size", "Un dato de una instalación supera el tamaño admitido."],
+  ["duplicate source_key in import", "La agenda contiene dos registros con la misma identidad."],
+  ["duplicate prospect_ref in import", "La agenda contiene referencias de prospecto duplicadas."],
+  ["invalid ignored intervention", "El servidor rechazó el formato de una actividad no confirmable."],
+  ["expired appointment", "La fecha o una referencia anterior quedó fuera del periodo de retención."],
+  ["source key reuse", "Una instalación entra en conflicto con una referencia anterior."],
+]);
+
+function oracleImportFailure(operation, response) {
+  const error = response.error;
+  const fields = [];
+  if (Number.isInteger(response.status) && response.status >= 100 && response.status <= 599) {
+    fields.push(`HTTP ${response.status}`);
+  }
+  if (typeof error?.code === "string" && /^(?:[0-9][0-9A-Z]{4}|PGRST[0-9]{3})$/.test(error.code)) {
+    fields.push(error.code);
+  }
+  // Only predefined messages are displayable. Server details and hints may contain row values.
+  const reason = oracleImportErrors.get(error?.message) ?? "No se pudo guardar la agenda.";
+  const context = fields.length ? ` (${fields.join(" · ")})` : "";
+  setVisible("manualImport", true);
+  appointmentNotice(`${operation}${context}: ${reason} El texto se conserva para reintentar.`, "error");
+}
+
+let oracleImportInProgress = false;
+
 async function processOracleText() {
+  if (oracleImportInProgress) return;
+  oracleImportInProgress = true;
+  try {
+    await saveOracleText();
+  } catch {
+    oracleImportFailure("Importar agenda", {});
+  } finally {
+    oracleImportInProgress = false;
+  }
+}
+
+async function saveOracleText() {
   const text = $("oracleText").value;
   if (!text.trim()) { appointmentNotice("Pega primero el texto de Oracle.", "error"); return; }
   if (!selectedAppointmentTeam || !appointmentTeams.some((team) => team.id === selectedAppointmentTeam)) {
     appointmentNotice("No hay un equipo autorizado para esta importación.", "error"); return;
   }
   const parsed = parseOracleInstallations(text, appointmentPreferences.installation_keywords);
-  ignoredAppointments = parsed.ignored;
+  if (parsed.installations.length + parsed.ignored.length === 0) {
+    appointmentNotice("No se detectaron actividades. Revisa el texto de Oracle antes de importar.", "error");
+    return;
+  }
+  const date = appointmentDate;
+  const team = selectedAppointmentTeam;
+  const actor = activeUser?.id;
+  if (!actor) { oracleImportFailure("Importar agenda", {}); return; }
+  const changesBySource = new Map(importChangesBySource);
   const occurrences = new Map();
   const usedSources = new Set();
   const rows = [];
   for (const item of parsed.installations) {
     const old = appointmentIdentityIndex.find((candidate) => !usedSources.has(candidate.source_key) && matchesAppointment(candidate, item));
     if (old) usedSources.add(old.source_key);
-    const base = item.prospect_ref ? `p:${item.prospect_ref}` : `n:${appointmentDate}|${item.time}|${item.population}|${item.type}`;
+    const base = item.prospect_ref ? `p:${item.prospect_ref}` : `n:${date}|${item.time}|${item.population}|${item.type}`;
     const occurrence = occurrences.get(base) ?? 0;
     occurrences.set(base, occurrence + 1);
-    const sourceKey = old?.source_key ?? await stableSourceKey(activeUser.id, appointmentDate, item, occurrence);
+    const sourceKey = old?.source_key ?? await stableSourceKey(actor, date, item, occurrence);
     const changes = compareImportedAppointment(old, item);
-    if (changes.length) importChangesBySource.set(sourceKey, changes);
-    else importChangesBySource.delete(sourceKey);
+    if (changes.length) changesBySource.set(sourceKey, changes);
+    else changesBySource.delete(sourceKey);
     rows.push({
-      source_key: sourceKey, work_date: appointmentDate, scheduled_time: item.time,
+      source_key: sourceKey, work_date: date, scheduled_time: item.time,
       population: item.population || "Población pendiente", prospect_ref: item.prospect_ref,
       kind: "installation", type: item.type, phone: item.phone,
+      ...(item.end_time && { end_time: item.end_time }),
       full_address: item.full_address, postal_code: item.postal_code,
-      private_note: old?.private_note ?? "", cancellation_reason: old?.cancellation_reason ?? "",
     });
   }
-  for (const old of appointmentIdentityIndex.filter((candidate) => candidate.work_date === appointmentDate && !usedSources.has(candidate.source_key))) {
-    importChangesBySource.set(old.source_key, ["Una cita ya no aparece en Oracle"]);
+  for (const old of appointmentIdentityIndex.filter((candidate) => candidate.work_date === date && !usedSources.has(candidate.source_key))) {
+    changesBySource.set(old.source_key, ["Una cita ya no aparece en Oracle"]);
   }
   const duplicateProspects = rows.filter((row, index) => row.prospect_ref && rows.findIndex((other) => other.prospect_ref === row.prospect_ref) !== index);
   if (duplicateProspects.length) { appointmentNotice("Oracle contiene referencias de prospecto duplicadas; revisa el texto antes de importar.", "error"); return; }
-  const { data, error } = await supabase.rpc("cc_sync_appointment_batch", {
-    p_team_id: selectedAppointmentTeam, p_work_date: appointmentDate, p_rows: rows,
+  if (activeUser?.id !== actor) return;
+  const result = await supabase.rpc("cc_import_oracle_agenda", {
+    p_team_id: team, p_work_date: date, p_installations: rows, p_ignored: parsed.ignored,
   });
-  if (error) { appointmentNotice("La importación no se pudo guardar. Revisa el equipo y la fecha e inténtalo de nuevo.", "error"); return; }
-  const { error: ignoredError } = await supabase.rpc("cc_save_my_ignored_interventions", {
-    p_work_date: appointmentDate, p_rows: ignoredAppointments,
-  });
-  $("oracleText").value = "";
-  await loadOwnAppointments(appointmentDate);
-  appointmentNotice(ignoredError
-    ? `Importación guardada: ${Number(data) || 0} instalaciones, pero no se sincronizó la lista de intervenciones omitidas.`
-    : `Importación guardada: ${Number(data) || 0} instalaciones. Se conservaron los estados y notas existentes.`, ignoredError ? "error" : "success");
+  if (activeUser?.id !== actor || appointmentDate !== date) return;
+  if (result.error) { oracleImportFailure("Importar agenda", result); return; }
+  importChangesBySource.clear();
+  for (const [key, changes] of changesBySource) importChangesBySource.set(key, changes);
+  if ($("oracleText").value === text) $("oracleText").value = "";
+  if (await loadOwnAppointments(date) && activeUser?.id === actor && appointmentDate === date) {
+    appointmentNotice(`Importación guardada: ${Number(result.data) || 0} instalaciones y ${parsed.ignored.length} actividades no confirmables.`, "success");
+  }
 }
 
 async function loadMasterAppointments() {
@@ -2085,21 +2138,23 @@ function bindEvents() {
   });
   $("appointmentTeam").addEventListener("change", () => { selectedAppointmentTeam = $("appointmentTeam").value; });
   $("importClipboard").addEventListener("click", async () => {
+    let text;
     try {
-      const text = await navigator.clipboard.readText();
-      if (!text.trim()) {
-        setVisible("manualImport", true);
-        appointmentNotice("El portapapeles está vacío. Pega el texto de Oracle en el cuadro inferior.", "error");
-        $("oracleText").focus();
-        return;
-      }
-      $("oracleText").value = text;
-      await processOracleText();
+      text = await navigator.clipboard.readText();
     } catch {
       setVisible("manualImport", true);
       appointmentNotice("El navegador no permitió leer el portapapeles. Pega el texto manualmente.", "error");
       $("oracleText").focus();
+      return;
     }
+    if (!text.trim()) {
+      setVisible("manualImport", true);
+      appointmentNotice("El portapapeles está vacío. Pega el texto de Oracle en el cuadro inferior.", "error");
+      $("oracleText").focus();
+      return;
+    }
+    $("oracleText").value = text;
+    await processOracleText();
   });
   $("processOracle").addEventListener("click", () => void processOracleText());
   $("pasteOracle").addEventListener("click", async () => {
