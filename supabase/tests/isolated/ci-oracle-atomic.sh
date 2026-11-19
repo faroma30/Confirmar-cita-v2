@@ -60,6 +60,13 @@ writeFileSync(directory + "/users.sql", [
   "insert into confirmar_citas.team_members(team_id,user_id,member_role,status) values "
     + "('" + teams[0] + "','" + a + "','technician','active'),"
     + "('" + teams[1] + "','" + b + "','technician','active');",
+  "insert into confirmar_citas.appointments(id,technician_id,team_id,work_date,scheduled_time,population,prospect_ref,source_key,status) values "
+    + "('99300000-0000-4000-8000-000000000001','" + a + "','" + teams[0] + "',confirmar_citas.sync_cutoff()-1,'07:00','Historical Town','SYN-ORACLE-A','99200000-0000-4000-8000-000000000001','confirmed'),"
+    + "('99300000-0000-4000-8000-000000000002','" + b + "','" + teams[1] + "',confirmar_citas.sync_cutoff()-1,'07:00','Other Historical Town','SYN-ORACLE-A','99200000-0000-4000-8000-000000000001','confirmed'),"
+    + "('99300000-0000-4000-8000-000000000003','" + a + "','" + teams[1] + "',confirmar_citas.sync_cutoff()-1,'08:00','Other Team Town','SYN-ORACLE-TEAM','99200000-0000-4000-8000-000000000003','pending');",
+  "insert into confirmar_citas.appointment_private_data(appointment_id,technician_id,private_note) values "
+    + "('99300000-0000-4000-8000-000000000001','" + a + "','Historical fixture sample'),"
+    + "('99300000-0000-4000-8000-000000000002','" + b + "','Historical fixture sample');",
 ].join("\n"));
 writeFileSync(directory + "/test-settings.json", JSON.stringify({ api: api.origin, publicKey, password, teams }), { mode: 0o600 });
 for (const [key,value] of Object.entries({ PGHOST: db.hostname, PGPORT: db.port,
@@ -143,12 +150,29 @@ try {
   assert.equal(invalidOld.data?.code, "22023");
   assert.equal(invalidOld.data?.message, "invalid installation import");
 
-  stage = "six activities and repeat import";
-  for (let run = 0; run < 2; run++) {
-    assert.deepEqual(await importAgenda(owner, [a,b], ignored), { status: 200, data: 2 });
-  }
+  stage = "old source key collides with an expired record";
+  const expiredOld = await call("/rest/v1/rpc/cc_sync_appointment_batch",
+    { p_team_id: teams[0], p_work_date: date, p_rows: [a].map(stripEnd) }, owner);
+  assert.equal(expiredOld.status, 400);
+  assert.equal(expiredOld.data?.code, "22023");
+  assert.equal(expiredOld.data?.message, "expired appointment");
+
+  stage = "six activities, recovery of the expired key and repeat import";
+  assert.deepEqual(await importAgenda(owner, [a,b], ignored), { status: 200, data: 2 });
+  const firstImport = await read("cc_my_appointments", owner);
+  assert.equal(firstImport.status, 200);
+  assert.equal(firstImport.data.length, 2);
+  const recovered = firstImport.data.find(row => row.prospect_ref === a.prospect_ref);
+  assert.ok(recovered);
+  assert.notEqual(recovered.id, "99300000-0000-4000-8000-000000000001");
+  assert.equal(recovered.source_key, a.source_key);
+  assert.equal(recovered.status, "pending");
+  assert.equal(recovered.private_note, "");
+  assert.deepEqual(await importAgenda(owner, [a,b], ignored), { status: 200, data: 2 });
   const appointments = await read("cc_my_appointments", owner);
   assert.equal(appointments.status, 200);
+  assert.deepEqual(appointments.data.map(row => [row.id,row.source_key]),
+    firstImport.data.map(row => [row.id,row.source_key]));
   assert.deepEqual(appointments.data.map(row => row.scheduled_end_time), ["11:00", "16:00"]);
   assert.deepEqual(await read("cc_my_ignored_interventions", owner), { status: 200, data: ignored });
 
@@ -163,6 +187,9 @@ try {
   stage = "ownership and denied roles";
   assert.deepEqual(await read("cc_my_appointments", other), { status: 200, data: [] });
   assert.deepEqual(await read("cc_my_ignored_interventions", other), { status: 200, data: [] });
+  const otherTeamSource = { ...a, source_key: "99200000-0000-4000-8000-000000000003", prospect_ref: "SYN-ORACLE-TEAM" };
+  assert.equal((await importAgenda(owner, [otherTeamSource], ignored)).status, 403);
+  assert.deepEqual(await read("cc_my_appointments", owner), appointments);
   assert.equal((await importAgenda(other, [a,b], ignored)).status, 403);
   assert.equal((await importAgenda(inactive, [a,b], ignored)).status, 403);
   assert.ok([401,403].includes((await importAgenda(undefined, [a,b], ignored)).status));
@@ -176,3 +203,38 @@ JS
 
 cd "$src"
 CHROME_PATH="$(command -v google-chrome)" node oracle-chrome-lab.mjs
+psql -Xq -v ON_ERROR_STOP=1 <<'SQL'
+do $fixture$
+begin
+  if (select count(*)
+      from confirmar_citas.appointments a
+      join confirmar_citas.appointment_private_data d on d.appointment_id = a.id
+      where a.id in ('99300000-0000-4000-8000-000000000001','99300000-0000-4000-8000-000000000002')
+        and a.work_date < confirmar_citas.sync_cutoff()
+        and a.status = 'confirmed'
+        and a.prospect_ref = 'SYN-ORACLE-A'
+        and (
+          (a.id = '99300000-0000-4000-8000-000000000001'
+            and a.team_id = '99100000-0000-4000-8000-000000000001'
+            and a.source_key <> '99200000-0000-4000-8000-000000000001'
+            and a.oracle_released_source_key = '99200000-0000-4000-8000-000000000001')
+          or (a.id = '99300000-0000-4000-8000-000000000002'
+            and a.team_id = '99100000-0000-4000-8000-000000000002'
+            and a.source_key = '99200000-0000-4000-8000-000000000001'
+            and a.oracle_released_source_key is null)
+        )
+        and d.private_note = 'Historical fixture sample') <> 2 then
+    raise exception 'Original expired records changed or disappeared';
+  end if;
+  if not exists (select from confirmar_citas.appointments a
+    where a.id = '99300000-0000-4000-8000-000000000003'
+      and a.team_id = '99100000-0000-4000-8000-000000000002'
+      and a.work_date < confirmar_citas.sync_cutoff()
+      and a.prospect_ref = 'SYN-ORACLE-TEAM'
+      and a.source_key = '99200000-0000-4000-8000-000000000003'
+      and a.oracle_released_source_key is null) then
+    raise exception 'An expired record in another team was modified';
+  end if;
+end $fixture$;
+SQL
+echo 'PASS: expired identity released, historical records retained, unrelated users and teams unchanged.'
