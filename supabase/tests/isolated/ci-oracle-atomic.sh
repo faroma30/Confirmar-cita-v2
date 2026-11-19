@@ -126,7 +126,7 @@ async function login(name) {
 
 const a = { source_key: "99200000-0000-4000-8000-000000000001", work_date: date, scheduled_time: "10:00",
   end_time: "11:00", population: "Fictional Town", prospect_ref: "SYN-ORACLE-A", kind: "installation",
-  type: "Kit Hogar", phone: "", full_address: "", postal_code: "", private_note: "", cancellation_reason: "" };
+  type: "Kit Hogar", phone: "", full_address: "", postal_code: "", private_note: "Stale client text", cancellation_reason: "Stale client text" };
 const b = { ...a, source_key: "99200000-0000-4000-8000-000000000002", scheduled_time: "15:00",
   end_time: "16:00", prospect_ref: "SYN-ORACLE-B", type: "Kit Premium" };
 const ignored = [
@@ -168,6 +168,7 @@ try {
   assert.equal(recovered.source_key, a.source_key);
   assert.equal(recovered.status, "pending");
   assert.equal(recovered.private_note, "");
+  assert.equal(recovered.cancellation_reason, "");
   assert.deepEqual(await importAgenda(owner, [a,b], ignored), { status: 200, data: 2 });
   const appointments = await read("cc_my_appointments", owner);
   assert.equal(appointments.status, 200);

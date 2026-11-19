@@ -47,11 +47,18 @@ begin
     end if;
   end loop;
 
+  if pg_column_size(jsonb_build_object(p_work_date::text, p_rows)) > 65536 then
+    raise exception 'invalid ignored intervention' using errcode = '22023';
+  end if;
   insert into confirmar_citas.user_preferences as current_preferences(user_id, ignored_by_work_date)
     values (v_actor, jsonb_build_object(p_work_date::text, p_rows))
   on conflict (user_id) do update set ignored_by_work_date = jsonb_set(
     current_preferences.ignored_by_work_date, array[p_work_date::text], p_rows, true
-  ), updated_at = clock_timestamp();
+  ), updated_at = clock_timestamp()
+  where pg_column_size(jsonb_set(current_preferences.ignored_by_work_date, array[p_work_date::text], p_rows, true)) <= 65536;
+  if not found then
+    raise exception 'invalid ignored intervention' using errcode = '22023';
+  end if;
 end;
 $$;
 
@@ -80,7 +87,7 @@ begin
   left join confirmar_citas.appointment_private_data d
     on d.appointment_id=a.id and d.technician_id=v_actor
   where a.technician_id=v_actor and a.work_date=p_work_date
-    and a.work_date>=confirmar_citas.sync_cutoff()
+    and a.oracle_released_source_key is null and a.work_date>=confirmar_citas.sync_cutoff()
     and a.team_id is not null and confirmar_citas.is_team_member(a.team_id);
   return v_result;
 end;
@@ -152,28 +159,39 @@ begin
     raise exception 'invalid import date or time format' using errcode = '22023';
   end if;
   perform pg_advisory_xact_lock(hashtextextended('cc_import_oracle_agenda:' || v_actor::text, 0));
+  if exists (select 1 from confirmar_citas.appointments a
+    where a.technician_id = v_actor and a.oracle_released_source_key is not null
+      and exists (select 1 from jsonb_array_elements(p_installations) as i(value)
+        where lower(i.value->>'source_key') = a.source_key::text)) then
+    raise exception 'expired appointment' using errcode = '22023';
+  end if;
   -- Release eligible stale identities in the same transaction as both writes.
   -- A correctly rejected batch rolls this update back too.
-  with incoming as (
-    select value, position, lower(value->>'source_key') as source_key,
-      nullif(btrim(value->>'prospect_ref'), '') as prospect_ref
-    from jsonb_array_elements(p_installations) with ordinality as rows(value, position)
-  ), retired as (
-    update confirmar_citas.appointments a
-      set oracle_released_source_key = a.source_key, source_key = gen_random_uuid()
-    where a.technician_id = v_actor and a.team_id = p_team_id
-      and a.work_date < v_cutoff and a.oracle_released_source_key is null
-      and exists (select 1 from incoming i
-        where (i.source_key = a.source_key::text and i.prospect_ref is not distinct from a.prospect_ref)
-           or i.prospect_ref = a.prospect_ref)
-    returning a.oracle_released_source_key::text as source_key, a.prospect_ref
-  )
-  select coalesce(jsonb_agg(
-    case when exists (select 1 from retired r where r.source_key = i.source_key or r.prospect_ref = i.prospect_ref)
-      then (i.value - 'end_time') || '{"private_note":"","cancellation_reason":""}'::jsonb
-      else i.value - 'end_time'
-    end order by i.position), '[]'::jsonb)
-    into v_installations from incoming i;
+  update confirmar_citas.appointments a
+    set oracle_released_source_key = a.source_key, source_key = gen_random_uuid()
+  where a.technician_id = v_actor and a.team_id = p_team_id
+    and a.work_date < v_cutoff and a.oracle_released_source_key is null
+    and exists (select 1 from jsonb_array_elements(p_installations) as incoming(value)
+      where (lower(value->>'source_key') = a.source_key::text
+        and nullif(btrim(value->>'prospect_ref'), '') is not distinct from a.prospect_ref)
+        or nullif(btrim(value->>'prospect_ref'), '') = a.prospect_ref);
+
+  -- Notes and cancellation reasons are authoritative on current rows only.
+  -- This also protects a retry when the old row was already archived.
+  select coalesce(jsonb_agg((i.value - 'end_time') || jsonb_build_object(
+      'private_note', coalesce(d.private_note, ''),
+      'cancellation_reason', coalesce(d.cancellation_reason, '')
+    ) order by i.position), '[]'::jsonb)
+    into v_installations
+    from jsonb_array_elements(p_installations) with ordinality as i(value, position)
+    left join confirmar_citas.appointments a on a.technician_id = v_actor and a.team_id = p_team_id
+      and a.work_date >= v_cutoff and a.oracle_released_source_key is null
+      and a.source_key = case
+        when (i.value->>'source_key') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        then (i.value->>'source_key')::uuid
+      end
+    left join confirmar_citas.appointment_private_data d
+      on d.appointment_id = a.id and d.technician_id = v_actor;
   v_count := public.cc_sync_appointment_batch(p_team_id, p_work_date, v_installations);
   perform public.cc_save_my_ignored_interventions(p_work_date, p_ignored);
   update confirmar_citas.appointment_private_data d

@@ -1352,7 +1352,7 @@ const oracleImportErrors = new Map([
   ["duplicate source_key in import", "La agenda contiene dos registros con la misma identidad."],
   ["duplicate prospect_ref in import", "La agenda contiene referencias de prospecto duplicadas."],
   ["invalid ignored intervention", "El servidor rechazó el formato de una actividad no confirmable."],
-  ["expired appointment", "Una instalación está fuera del periodo permitido."],
+  ["expired appointment", "La fecha o una referencia anterior quedó fuera del periodo de retención."],
   ["source key reuse", "Una instalación entra en conflicto con una referencia anterior."],
 ]);
 
@@ -1421,7 +1421,6 @@ async function saveOracleText() {
       kind: "installation", type: item.type, phone: item.phone,
       ...(item.end_time && { end_time: item.end_time }),
       full_address: item.full_address, postal_code: item.postal_code,
-      private_note: old?.private_note ?? "", cancellation_reason: old?.cancellation_reason ?? "",
     });
   }
   for (const old of appointmentIdentityIndex.filter((candidate) => candidate.work_date === date && !usedSources.has(candidate.source_key))) {
