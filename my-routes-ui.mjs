@@ -1,5 +1,5 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes5";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes5";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes6";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes6";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;
@@ -12,6 +12,48 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   const content = find("myRoutesContent");
   const settingsPanel = find("myRoutesSettingsPanel");
   const openSettings = find("myRoutesOpenSettings");
+  const pilotControls = find("myRoutesPilotControls");
+  const calculateButton = find("myRoutesCalculate");
+  const pilotNotice = find("myRoutesPilotNotice");
+  if (pilotControls) pilotControls.hidden = true;
+  let pilotAction = 0;
+  let pilotBusy = false;
+  let stopped = false;
+  async function updatePilot(operation) {
+    const actor = technicianId();
+    const action = ++pilotAction;
+    if (!actor || !provider?.pilot || !pilotNotice) return;
+    const state = await provider.pilot(operation);
+    if (actor !== technicianId() || action !== pilotAction) return;
+    if (!state) { pilotNotice.textContent = "No se pudo comprobar el estado del piloto."; return; }
+    if (pilotControls) pilotControls.hidden = false;
+    stopped = !state.active || state.stopped || !state.enabled || state.creditsReserved24h >= 50 || state.routingRequests24h >= 10;
+    calculateButton.disabled = stopped || pilotBusy;
+    const errors = {
+      quota: "Cuota alcanzada", provider_limited: "Proveedor bloqueado",
+      provider_unavailable: "Proveedor no disponible", route_estimate_exceeded: "Distancia superior a la reserva",
+      timeout: "Tiempo de espera agotado",
+    };
+    const credits = Number(state.creditsReserved24h) || 0;
+    const requests = Number(state.routingRequests24h) || 0;
+    pilotNotice.textContent = [
+      stopped ? "Piloto desactivado." : "Piloto disponible.",
+      `Últimas 24 h: ${credits}/50 créditos reservados, ${requests}/10 consultas de ruta. Quedan ${Math.max(0, 50 - credits)} créditos internos.`,
+      errors[state.lastError] ? `Último error: ${errors[state.lastError]}.` : "",
+      "El contador interno puede diferir del consumo de Geoapify.",
+    ].filter(Boolean).join(" ");
+    if (operation === "stop") void refresh();
+  }
+  calculateButton?.addEventListener("click", async () => {
+    if (!provider?.manual || stopped || pilotBusy) return;
+    pilotBusy = true;
+    calculateButton.disabled = true;
+    try { await refresh(true); }
+    finally { pilotBusy = false; calculateButton.disabled = stopped || pilotBusy; }
+    await updatePilot("status");
+  });
+  find("myRoutesPilotStatus")?.addEventListener("click", () => void updatePilot("status"));
+  find("myRoutesPilotStop")?.addEventListener("click", () => void updatePilot("stop"));
   const back = find("myRoutesBack");
   const saveButton = find("myRoutesSave");
   const settingsNotice = find("myRoutesSettingsNotice");
@@ -31,7 +73,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     for (const kind of routeLocationKinds) {
       queries.set(kind, bindRouteAutocomplete({
         fields: locationFields[kind],
-        search: autocomplete,
+        search: (query, signal) => autocomplete(query, signal, kind),
         eligible: () => Boolean(technicianId() && !settingsPanel.hidden && !form.hidden && !saving),
         cancelOthers: () => {
           for (const [other, clear] of queries) if (other !== kind) clear();
@@ -79,6 +121,12 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     if (id !== owner || !id) {
       settings.clear();
       activityEdits.clear();
+      provider?.clear?.();
+      pilotAction++;
+      stopped = false;
+      if (calculateButton) calculateButton.disabled = false;
+      if (pilotNotice) pilotNotice.textContent = "";
+      if (pilotControls) pilotControls.hidden = true;
       close();
       owner = id;
     }
@@ -155,7 +203,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     });
   }
 
-  async function refresh() {
+  async function refresh(explicit = false) {
     const run = ++request;
     const actorId = technicianId();
     const current = () => actorId && technicianId() === actorId && request === run && !view.hidden;
@@ -172,17 +220,18 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const edits = activityEdits.get(selectedDate) ?? new Map();
       const activities = combineActivities(appointments, ignored, preferences, edits);
       const legs = buildLegs(formatRouteLocation(preferences.home), activities);
-      const localRoute = activities.some(item => item.override || (item.travel === "undecided" && item.agendaAddress));
-      const estimatesProvider = localRoute ? null : provider;
+      const localOnly = activities.some(item => item.override || (item.travel === "undecided" && item.agendaAddress));
+      const estimatesProvider = localOnly ? null : provider;
       const batch = estimatesProvider?.estimateJourney
-        ? await estimatesProvider.estimateJourney(legs, { date: selectedDate }) : null;
+        ? await estimatesProvider.estimateJourney(legs, { date: selectedDate, ...(estimatesProvider.manual ? { cachedOnly: !explicit } : {}) }) : null;
       const estimates = await Promise.all(legs.map((leg, index) => estimateLeg(leg,
         batch === null ? estimatesProvider : { estimate: () => batch[index] }, { date: selectedDate })));
       if (!current()) return;
       notice.textContent = !activities.length ? "No hay actividades para esta fecha."
         : legs.length && !preferences.home ? "Añade tu domicilio para completar la ida y el regreso." : "";
       if (!provider) add(list, "p", "Los tiempos de conducción están desactivados. Puedes abrir en Google Maps los tramos con ubicación completa.");
-      else if (localRoute) add(list, "p", "Los ajustes de esta jornada se quedan en esta sesión. Puedes abrir los tramos en Google Maps.");
+
+      if (localOnly && provider) add(list, "p", "Los ajustes de esta jornada siguen disponibles para abrir tramos en Google Maps.");
       if (activities.some(item => item.editableTravel || (item.travel === "travel" && !item.address))) {
         add(list, "p", "Los cambios de las actividades duran hasta cerrar sesión o recargar la aplicación.");
       }
@@ -269,9 +318,18 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         const osm = add(credit, "a", "© OpenStreetMap contributors");
         osm.href = "https://www.openstreetmap.org/copyright";
       }
-      if (estimatesProvider && legs.length) add(list, "p", estimates.every(Boolean)
-        ? "Conducción total: " + Math.ceil(estimates.reduce((total, leg) => total + leg.durationSeconds, 0) / 60) + " min"
-        : "Conducción total no disponible.");
+      if (estimatesProvider && legs.length) {
+        const available = estimates.filter(Boolean);
+        if (available.length) {
+          const seconds = available.reduce((total, leg) => total + leg.durationSeconds, 0);
+          const meters = available.reduce((total, leg) => total + leg.distanceMeters, 0);
+          const partial = available.length !== legs.length;
+          add(list, "p", (partial ? "Conducción parcial (" + available.length + "/" + legs.length + " tramos): " : "Conducción total: ")
+            + Math.ceil(seconds / 60) + " min · " + (meters / 1000).toLocaleString("es-ES") + " km");
+        } else {
+          add(list, "p", "Conducción total no disponible.");
+        }
+      }
     } catch {
       if (current()) notice.textContent = "No se pudo cargar la ruta. Vuelve a intentarlo.";
     }
@@ -285,6 +343,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     agendaTab.setAttribute("aria-pressed", "false");
     tab.className = "button primary"; agendaTab.className = "button secondary";
     date.value = getDate();
+    if (provider?.manual) void updatePilot("status");
     void refresh();
   });
   agendaTab.addEventListener("click", close);
@@ -357,5 +416,5 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       }
     }
   });
-  return { sync, reset() { settings.clear(); activityEdits.clear(); owner = null; close(); tab.parentElement.hidden = true; } };
+  return { sync, reset() { provider?.clear?.(); settings.clear(); activityEdits.clear(); owner = null; close(); tab.parentElement.hidden = true; } };
 }
