@@ -56,7 +56,13 @@ export function createCloudRoutes({ invoke, getActor }) {
               502: "El proveedor de rutas devolvió un error.",
               503: "El servicio de rutas o el piloto está temporalmente desactivado.",
             };
-            throw Object.assign(new Error(messages[status] ?? "No se pudo conectar con el servicio de rutas."), { code: "route_request" });
+            let fault;
+            try { fault = (await error.context?.clone?.().json())?.code; } catch { /* Safe generic fallback. */ }
+            const providerMessage = {
+              geocoding_timeout: "Geoapify tardó demasiado en buscar la dirección. No se calculó ningún desplazamiento.",
+              geocoding_unavailable: "Geoapify no pudo buscar la dirección. No se calculó ningún desplazamiento.",
+            }[fault];
+            throw Object.assign(new Error(providerMessage ?? messages[status] ?? "No se pudo conectar con el servicio de rutas."), { code: "route_request" });
           }
           if (!Array.isArray(data?.estimates) || data.estimates.length !== legs.length
             || getActor()?.id !== actor.id || getActor()?.role !== "technician" || generation !== revision) return [];
