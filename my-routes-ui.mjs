@@ -1,5 +1,5 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes10";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes10";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes11";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes11";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;
@@ -359,7 +359,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       }
     } catch (error) {
       if (current()) {
-        notice.textContent = "No se pudo cargar la ruta. Vuelve a intentarlo.";
+        notice.textContent = error?.code === "route_request" ? "" : "No se pudo cargar la ruta. Vuelve a intentarlo.";
         if (explicit && calcNotice) calcNotice.textContent = error?.code === "route_request"
           ? error.message : "No se pudo calcular la ruta. Comprueba la conexión y vuelve a intentarlo.";
       }
