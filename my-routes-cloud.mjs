@@ -45,14 +45,28 @@ export function createCloudRoutes({ invoke, getActor }) {
           const { data, error } = await invoke("my-routes-estimate", {
             body: { date, fingerprint, expectedActor: actor.id, ...(edits.length ? { edits } : {}) },
           });
-          if (error || !Array.isArray(data?.estimates) || data.estimates.length !== legs.length
+          if (error) {
+            const status = error.context?.status ?? error.status;
+            const messages = {
+              401: "La sesión ha caducado. Vuelve a iniciar sesión.",
+              403: "Esta cuenta no tiene acceso al piloto.",
+              409: "La agenda cambió. Actualiza Mis rutas e inténtalo de nuevo.",
+              429: "Se alcanzó el límite de consultas o la cuota del piloto.",
+              503: "El servicio de rutas o el piloto está temporalmente desactivado.",
+            };
+            throw Object.assign(new Error(messages[status] ?? "No se pudo conectar con el servicio de rutas."), { code: "route_request" });
+          }
+          if (!Array.isArray(data?.estimates) || data.estimates.length !== legs.length
             || getActor()?.id !== actor.id || getActor()?.role !== "technician" || generation !== revision) return [];
           if (data.estimates.some(Boolean)) {
             if (cache.size >= 8) cache.delete(cache.keys().next().value);
             cache.set(key, { estimates: data.estimates, until: Date.now() + 300_000 });
           }
           return data.estimates;
-        } catch { return []; }
+        } catch (error) {
+          if (error?.code === "route_request") throw error;
+          throw Object.assign(new Error("No se pudo conectar con el servicio de rutas."), { code: "route_request" });
+        }
       })();
       pending.set(key, task);
       try { return await task; }

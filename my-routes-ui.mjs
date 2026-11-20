@@ -1,5 +1,5 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes6";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes6";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes7";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes7";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;
@@ -15,6 +15,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   const pilotControls = find("myRoutesPilotControls");
   const calculateButton = find("myRoutesCalculate");
   const pilotNotice = find("myRoutesPilotNotice");
+  const calcNotice = find("myRoutesCalculationNotice");
   if (pilotControls) pilotControls.hidden = true;
   let pilotAction = 0;
   let pilotBusy = false;
@@ -47,9 +48,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   calculateButton?.addEventListener("click", async () => {
     if (!provider?.manual || stopped || pilotBusy) return;
     pilotBusy = true;
+    if (calcNotice) calcNotice.textContent = "Calculando desplazamientos…";
     calculateButton.disabled = true;
     try { await refresh(true); }
-    finally { pilotBusy = false; calculateButton.disabled = stopped || pilotBusy; }
+    finally { pilotBusy = false; calculateButton.disabled = stopped; }
     await updatePilot("status");
   });
   find("myRoutesPilotStatus")?.addEventListener("click", () => void updatePilot("status"));
@@ -126,6 +128,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       stopped = false;
       if (calculateButton) calculateButton.disabled = false;
       if (pilotNotice) pilotNotice.textContent = "";
+      if (calcNotice) calcNotice.textContent = "";
       if (pilotControls) pilotControls.hidden = true;
       close();
       owner = id;
@@ -220,18 +223,31 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const edits = activityEdits.get(selectedDate) ?? new Map();
       const activities = combineActivities(appointments, ignored, preferences, edits);
       const legs = buildLegs(formatRouteLocation(preferences.home), activities);
-      const localOnly = activities.some(item => item.override || (item.travel === "undecided" && item.agendaAddress));
-      const estimatesProvider = localOnly ? null : provider;
-      const batch = estimatesProvider?.estimateJourney
-        ? await estimatesProvider.estimateJourney(legs, { date: selectedDate, ...(estimatesProvider.manual ? { cachedOnly: !explicit } : {}) }) : null;
-      const estimates = await Promise.all(legs.map((leg, index) => estimateLeg(leg,
-        batch === null ? estimatesProvider : { estimate: () => batch[index] }, { date: selectedDate })));
+      // Submit the original agenda. Match results to displayed stops; manual
+      // locations never leave the device, and no result is applied to a different leg.
+      const safeEdits = [...edits].filter(([, edit]) => edit.location === null);
+      const canonical = buildLegs(formatRouteLocation(preferences.home),
+        combineActivities(appointments, ignored, preferences, new Map(safeEdits)));
+      const key = leg => JSON.stringify([leg.from.key, leg.to.key, leg.from.address, leg.to.address]);
+      const positions = new Map(canonical.map((leg, index) => [key(leg), index]));
+      const eligible = leg => leg.from.key && leg.to.key && leg.from.address && leg.to.address;
+      const canEstimate = !provider?.manual || legs.some(leg => eligible(leg) && positions.has(key(leg)));
+      const estimatesProvider = provider;
+      const batch = estimatesProvider?.estimateJourney && canEstimate
+        ? await estimatesProvider.estimateJourney(canonical, { date: selectedDate, edits: safeEdits, ...(estimatesProvider.manual ? { cachedOnly: !explicit } : {}) }) : null;
+      const estimates = await Promise.all(legs.map(leg => estimateLeg(leg,
+        estimatesProvider?.estimateJourney ? { estimate: () => batch?.[positions.get(key(leg))] } : estimatesProvider,
+        { date: selectedDate })));
       if (!current()) return;
       notice.textContent = !activities.length ? "No hay actividades para esta fecha."
         : legs.length && !preferences.home ? "Añade tu domicilio para completar la ida y el regreso." : "";
       if (!provider) add(list, "p", "Los tiempos de conducción están desactivados. Puedes abrir en Google Maps los tramos con ubicación completa.");
 
-      if (localOnly && provider) add(list, "p", "Los ajustes de esta jornada siguen disponibles para abrir tramos en Google Maps.");
+      if (explicit && calcNotice) calcNotice.textContent = !canEstimate
+        ? "No se envió la consulta. Se necesitan dos actividades consecutivas de Oracle con dirección completa."
+        : estimates.some(Boolean)
+          ? "Desplazamientos calculados. Consulta los minutos y kilómetros de cada tramo."
+          : "La consulta no devolvió tramos válidos. Revisa el portal y el municipio. Las ubicaciones editadas y el domicilio quedan fuera del piloto.";
       if (activities.some(item => item.editableTravel || (item.travel === "travel" && !item.address))) {
         add(list, "p", "Los cambios de las actividades duran hasta cerrar sesión o recargar la aplicación.");
       }
@@ -330,8 +346,12 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           add(list, "p", "Conducción total no disponible.");
         }
       }
-    } catch {
-      if (current()) notice.textContent = "No se pudo cargar la ruta. Vuelve a intentarlo.";
+    } catch (error) {
+      if (current()) {
+        notice.textContent = "No se pudo cargar la ruta. Vuelve a intentarlo.";
+        if (explicit && calcNotice) calcNotice.textContent = error?.code === "route_request"
+          ? error.message : "No se pudo calcular la ruta. Comprueba la conexión y vuelve a intentarlo.";
+      }
     }
   }
   tab.addEventListener("click", () => {
