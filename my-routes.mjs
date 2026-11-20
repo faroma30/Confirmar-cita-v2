@@ -25,7 +25,7 @@ function configuredAddress(type, preferences) {
   if (/^(?:recogida (?:de )?llaves|recoger (?:las )?llaves)(?: (?:en|del?|de la) .+)?$/.test(name)) {
     return formatRouteLocation(preferences.keys);
   }
-  if (/^(?:tour ?line(?: express)?(?: recogida(?: (?:de )?material(?:es)?)?)?|recogida (?:de )?material(?:es)?(?: tour ?line)?)$/.test(name)) {
+  if (/^(?:tour ?line(?: express| alianzas)?(?: recogida(?: (?:de )?material(?:es)?)?)?|recogida (?:de )?material(?:es)?(?: tour ?line(?: express| alianzas)?)?)$/.test(name)) {
     return formatRouteLocation(preferences.tourline);
   }
   return "";
@@ -57,7 +57,7 @@ export function combineActivities(appointments, ignored, preferences = {}, overr
       : editableTravel && needsTravelDecision.test(name) ? "undecided" : "travel";
     const override = overrides.get(key);
     const travel = override?.travel ?? defaultTravel;
-    const agendaAddress = (editableTravel ? configuredAddress(type, preferences) : "") || originalAddress;
+    const agendaAddress = originalAddress || (editableTravel ? configuredAddress(type, preferences) : "");
     const address = travel === "travel"
       ? formatRouteLocation(override?.location) || agendaAddress
       : "";

@@ -1,5 +1,5 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes7";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes7";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes8";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes8";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;
@@ -261,7 +261,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         const leg = legs[index];
         const url = mapsLink(leg);
         if (!url) {
-          add(item, "p", "Tramo pendiente: falta una ubicación o una decisión de desplazamiento.");
+          const missing = [leg.from, leg.to].filter(stop => !stop.address)
+            .map(stop => stop.time ? `${stop.type} (${stop.time})` : stop.type);
+          add(item, "p", missing.length ? `Tramo pendiente: revisa ${missing.join(" y ")}.`
+            : "Tramo pendiente: revisa la decisión de desplazamiento.");
           return;
         }
         add(item, "p", label(leg.from) + " → " + label(leg.to));
