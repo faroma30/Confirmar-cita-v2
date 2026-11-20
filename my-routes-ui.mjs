@@ -1,5 +1,5 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes8";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes8";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes9";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes9";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;

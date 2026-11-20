@@ -21,3 +21,4 @@
 
 /* Keep the hero clear of iPhone safe areas while retaining its full-bleed background. */
 @supports (padding: max(0px)) { .shell{padding-top:calc(24px + env(safe-area-inset-top));padding-bottom:calc(36px + env(safe-area-inset-bottom))}.header.hero{margin-top:calc(-24px - env(safe-area-inset-top));padding-top:calc(18px + env(safe-area-inset-top))}.hero-actions{top:calc(30px + env(safe-area-inset-top))} @media(max-width:680px){.shell{padding-top:calc(16px + env(safe-area-inset-top))}.header.hero{margin-top:calc(-16px - env(safe-area-inset-top));padding-top:calc(18px + env(safe-area-inset-top))}.hero-actions{top:calc(17px + env(safe-area-inset-top))}} }
+.running-build{font-size:.68em;font-weight:600;white-space:nowrap}.release-updater[hidden]{display:none}.release-updater{margin:8px 0 14px}.release-updater p{margin:0 0 7px}
