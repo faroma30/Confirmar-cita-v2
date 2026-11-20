@@ -52,12 +52,18 @@ export function createCloudRoutes({ invoke, getActor }) {
               403: "Esta cuenta no tiene acceso al piloto.",
               409: "La agenda cambió. Actualiza Mis rutas e inténtalo de nuevo.",
               429: "Se alcanzó el límite de consultas o la cuota del piloto.",
+              500: "El servidor no pudo completar el cálculo de rutas.",
+              502: "El proveedor de rutas devolvió un error.",
               503: "El servicio de rutas o el piloto está temporalmente desactivado.",
             };
             throw Object.assign(new Error(messages[status] ?? "No se pudo conectar con el servicio de rutas."), { code: "route_request" });
           }
           if (!Array.isArray(data?.estimates) || data.estimates.length !== legs.length
             || getActor()?.id !== actor.id || getActor()?.role !== "technician" || generation !== revision) return [];
+          if (Array.isArray(data.reasons) && data.reasons.length === legs.length) {
+            const allowed = new Set(["privacy", "incomplete", "not_found", "no_route"]);
+            Object.defineProperty(data.estimates, "reasons", { value: data.reasons.map(reason => allowed.has(reason) ? reason : null) });
+          }
           if (data.estimates.some(Boolean)) {
             if (cache.size >= 8) cache.delete(cache.keys().next().value);
             cache.set(key, { estimates: data.estimates, until: Date.now() + 300_000 });

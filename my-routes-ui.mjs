@@ -1,5 +1,5 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes9";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes9";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes10";
+import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes10";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
   const settings = preferencesStore;
@@ -247,14 +247,15 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         ? "No se envió la consulta. Se necesitan dos actividades consecutivas de Oracle con dirección completa."
         : estimates.some(Boolean)
           ? "Desplazamientos calculados. Consulta los minutos y kilómetros de cada tramo."
-          : "La consulta no devolvió tramos válidos. Revisa el portal y el municipio. Las ubicaciones editadas y el domicilio quedan fuera del piloto.";
+          : "La consulta no devolvió tramos válidos. Consulta el motivo junto a cada tramo.";
       if (activities.some(item => item.editableTravel || (item.travel === "travel" && !item.address))) {
         add(list, "p", "Los cambios de las actividades duran hasta cerrar sesión o recargar la aplicación.");
       }
       const departure = activities[0] === legs[0]?.to && estimates[0]
         && recommendedDeparture(legs[0].to.time, estimates[0].durationSeconds, preferences.margin);
       if (departure) add(list, "p", "Salida recomendada: " + departure.time + (departure.dayOffset < 0 ? " (día anterior)" : ""));
-      else if (estimatesProvider && legs.length) add(list, "p", "Hora de salida no disponible.");
+      else if (estimatesProvider && legs.length) add(list, "p", batch?.reasons?.[0] === "privacy"
+        ? "Hora de salida no disponible: el domicilio queda fuera del piloto." : "Hora de salida no disponible.");
       if (activities.some(activity => !activity.time)) add(list, "p", "Las actividades sin hora fiable aparecen al final.");
 
       function renderLeg(item, index) {
@@ -286,7 +287,14 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           }
         } else if (estimatesProvider) {
           add(item, "p", "Tiempo y distancia no disponibles.");
-          if (batch?.length === legs.length) add(item, "p", "Revisa el portal y el municipio de este tramo.");
+          const reason = batch?.reasons?.[positions.get(key(leg))];
+          const explanation = {
+            privacy: "Tramo excluido por privacidad.",
+            incomplete: "La dirección no contiene una vía, portal y municipio utilizables.",
+            not_found: "Geoapify no encontró una coincidencia única para la dirección.",
+            no_route: "Geoapify no devolvió una ruta utilizable para este tramo.",
+          }[reason];
+          if (explanation) add(item, "p", explanation);
         }
         const link = add(item, "a", "Abrir tramo en Google Maps");
         link.className = "button secondary";
