@@ -16,7 +16,8 @@ export function createCloudRoutes({ invoke, getActor }) {
     async pilot(operation = "status") {
       if (!["status", "stop"].includes(operation)) return null;
       const actor = getActor();
-      if (!actor?.id || actor.role !== "technician") return null;
+      // CONFIRMAR_CITAS-007: "stop" solo lo pide el Administrador (el servidor responde 403 a los demás).
+      if (!actor?.id || actor.role !== (operation === "stop" ? "admin" : "technician")) return null;
       try {
         const { data, error } = await invoke("my-routes-estimate", {
           body: { operation, expectedActor: actor.id },

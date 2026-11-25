@@ -1,6 +1,7 @@
 import { currentUser, jsonResponse, preflightOrReject, serviceClient } from "../_shared/runtime.ts";
 import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddresses, journeyFingerprint, providerAddresses } from "./core.mjs";
 import { canAutocomplete, parseActivityEdits, routeAccess } from "./policy.mjs";
+import { pilotStopRejection } from "./pilot-control.mjs";
 
 Deno.serve(async (request: Request) => {
   const preflight = preflightOrReject(request);
@@ -38,6 +39,19 @@ Deno.serve(async (request: Request) => {
   catch { return reply({ error: "Sesión no válida." }, 401); }
   const denied = () => reply({ error: "Acceso denegado." }, 403);
   if (auth.user.id !== input.expectedActor) return denied();
+  if (input.operation === "stop") {
+    // CONFIRMAR_CITAS-007: only an active Administrator may stop the pilot for everyone (403 otherwise).
+    const rejection = await pilotStopRejection(() => auth.client.rpc("cc_my_profile"), auth.claims);
+    if (rejection) return reply(rejection.body, rejection.status);
+    try {
+      const backend = serviceClient();
+      const stopped = await backend.rpc("cc_route_pilot_configure", { p_external_usage: null, p_stop: true });
+      if (stopped.error || stopped.data !== true) return disabled();
+      const status = await backend.rpc("cc_route_pilot_status");
+      if (status.error || !status.data) return disabled();
+      return reply({ ...status.data, enabled });
+    } catch { return disabled(); }
+  }
   const access = routeAccess(Deno.env.get("MY_ROUTES_GEOAPIFY_ACCESS"), auth.user.id);
   if (!access) return denied();
   if (autocomplete && (Deno.env.get("MY_ROUTES_GEOAPIFY_AUTOCOMPLETE_APPROVED") !== "yes"
@@ -50,11 +64,8 @@ Deno.serve(async (request: Request) => {
     if (prefs.error || !prefs.data || !Object.hasOwn(prefs.data, "home")) return disabled();
 
     if (control) {
+      // Only "status" reaches this point: "stop" is handled above for Administrators.
       const backend = serviceClient();
-      if (input.operation === "stop") {
-        const stopped = await backend.rpc("cc_route_pilot_configure", { p_external_usage: null, p_stop: true });
-        if (stopped.error || stopped.data !== true) return disabled();
-      }
       const status = await backend.rpc("cc_route_pilot_status");
       if (status.error || !status.data) return disabled();
       return reply({ ...status.data, enabled });

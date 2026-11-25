@@ -1,7 +1,8 @@
 // Estados del piloto y botones de Mis rutas (CONFIRMAR_CITAS-006). Datos ficticios, sin red.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { describePilot, madridClock, madridDayTime } from "../my-routes-pilot.mjs";
+import { canOfferPilotStop, describePilot, madridClock, madridDayTime, stopConfirmation } from "../my-routes-pilot.mjs";
+import { createCloudRoutes } from "../my-routes-cloud.mjs";
 import { mountMyRoutes } from "../my-routes-ui.mjs";
 import { fakePanel, settle, texts } from "./my-routes-fake-dom.mjs";
 
@@ -35,7 +36,8 @@ test("stopped por rechazo de Geoapify: causa concreta con fecha, sin «Quedan» 
 });
 
 test("stopped sin error del proveedor y por distancia", () => {
-  assert.match(describePilot({ ...base, active: false, stopped: true }, now).message, /^Piloto parado: se desactivó desde la aplicación/);
+  assert.equal(describePilot({ ...base, active: false, stopped: true }, now).message,
+    "Piloto parado: lo desactivó el administrador. Avisa al administrador para reactivarlo.");
   const lejos = describePilot({ ...base, active: false, stopped: true, lastError: "route_estimate_exceeded", lastErrorAt: "2026-11-24T16:05:00Z" }, now);
   assert.equal(lejos.message, "Piloto parado: un tramo superó la distancia reservada el 24/11 a las 17:05. Avisa al administrador.");
 });
@@ -138,29 +140,43 @@ test("«Consultar consumo» muestra carga y hora de actualización", async () =>
   assert.match(texts(get("List")).join("\n"), /Tiempo y distancia no disponibles: aún no se han calculado; pulsa «Calcular desplazamientos»\./);
 });
 
-test("«Desactivar piloto» pide confirmación, avisa de que afecta a todos y deja de ofrecerse una vez parado", async () => {
+test("técnico (CONFIRMAR_CITAS-007): no ve «Desactivar piloto» aunque el piloto esté activo y pulsarlo no hace nada", async () => {
   const asked = [];
-  let answer = false;
-  let state = { ...base };
-  const { get, calls } = mount(async op => (op === "stop" ? (state = { ...state, stopped: true, active: false }) : state),
-    { confirm: message => { asked.push(message); return answer; } });
+  const { get, calls } = mount(async () => ({ ...base }), { confirm: message => { asked.push(message); return true; } });
   get("Tab").events.click();
   await settle();
-  assert.equal(get("PilotStop").hidden, false);
-  get("PilotStop").events.click();
-  await settle();
-  assert.match(asked[0], /para todos los técnicos/);
-  assert.deepEqual(calls.pilot, ["status"]);
-  answer = true;
-  get("PilotStop").events.click();
-  await settle();
-  assert.deepEqual(calls.pilot, ["status", "stop"]);
+  assert.equal(describePilot(base, now).canStop, true, "el piloto está activo: antes del 007 se ofrecía");
   assert.equal(get("PilotStop").hidden, true);
-  assert.equal(get("Calculate").disabled, true);
-  assert.match(get("PilotNotice").textContent, /^Piloto parado: se desactivó desde la aplicación/);
   get("PilotStop").events.click();
   await settle();
-  assert.deepEqual(calls.pilot, ["status", "stop"]);
+  assert.deepEqual(asked, []);
+  assert.deepEqual(calls.pilot, ["status"]);
+});
+
+test("solo el Administrador puede ver «Desactivar piloto», y solo si tiene efecto", () => {
+  const activo = describePilot(base, now);
+  assert.equal(canOfferPilotStop({ id: "admin-ficticio", role: "admin" }, activo), true);
+  assert.equal(canOfferPilotStop({ id: "admin-ficticio", role: "admin" }, describePilot(parado, now)), false);
+  assert.equal(canOfferPilotStop({ id: "tecnico-ficticio", role: "technician" }, activo), false);
+  assert.equal(canOfferPilotStop({ id: "master-ficticio", role: "master" }, activo), false);
+  assert.equal(canOfferPilotStop(null, activo), false);
+  assert.match(stopConfirmation, /para todos los técnicos/);
+});
+
+test("el cliente solo envía «stop» con rol Administrador; «status» sigue siendo del técnico", async () => {
+  const sent = [];
+  let actor = { id: "tecnico-ficticio", role: "technician" };
+  const cloud = createCloudRoutes({
+    invoke: async (name, { body }) => { sent.push([name, body.operation, body.expectedActor]); return { data: { ...base, stopped: body.operation === "stop" }, error: null }; },
+    getActor: () => actor,
+  });
+  assert.equal(await cloud.pilot("stop"), null);
+  assert.equal((await cloud.pilot("status")).stopped, false);
+  actor = { id: "master-ficticio", role: "master" };
+  assert.equal(await cloud.pilot("stop"), null);
+  actor = { id: "admin-ficticio", role: "admin" };
+  assert.equal((await cloud.pilot("stop")).stopped, true);
+  assert.deepEqual(sent, [["my-routes-estimate", "status", "tecnico-ficticio"], ["my-routes-estimate", "stop", "admin-ficticio"]]);
 });
 
 test("si la consulta de estado falla se dice, con la hora", async () => {

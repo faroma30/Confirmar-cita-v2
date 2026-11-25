@@ -1,6 +1,6 @@
 import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes12";
 import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes12";
-import { describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes12";
+import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes12";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;
@@ -47,7 +47,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     renderedStopped = false;
     setPilotLoading(false);
     if (calculateButton) calculateButton.disabled = false;
-    if (stopButton) stopButton.hidden = false;
+    if (stopButton) stopButton.hidden = true;
     if (pilotNotice) pilotNotice.textContent = "";
     if (calcNotice) calcNotice.textContent = "";
     showCalculateReason();
@@ -75,8 +75,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     stopped = !pilot.canCalculate;
     calculateButton.disabled = stopped || pilotBusy;
     showCalculateReason();
-    // «Desactivar piloto» solo se ofrece si tiene efecto (piloto aprobado y no parado).
-    if (stopButton) stopButton.hidden = !pilot.canStop;
+    // «Desactivar piloto» solo para el Administrador y solo si tiene efecto (CONFIRMAR_CITAS-007).
+    if (stopButton) stopButton.hidden = !canOfferPilotStop(getActor(), pilot);
     pilotNotice.textContent = [pilot.message, ...pilot.lines,
       "El contador interno puede diferir del consumo de Geoapify."].join(" ") + stamp;
     if (operation === "stop" || (!view.hidden && stopped !== renderedStopped)) void refresh();
@@ -92,7 +92,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   });
   statusButton?.addEventListener("click", () => void updatePilot("status"));
   stopButton?.addEventListener("click", () => {
-    if (pilot && !pilot.canStop) return;
+    if (!canOfferPilotStop(getActor(), pilot)) return;
     if (confirmAction && !confirmAction(stopConfirmation)) return;
     void updatePilot("stop");
   });

@@ -68,7 +68,7 @@ export function describePilot(state, now = new Date()) {
     } else {
       cause = "stopped";
       short = "piloto parado";
-      message = "Piloto parado: se desactivó desde la aplicación o lo paró el administrador. Avisa al administrador para reactivarlo.";
+      message = "Piloto parado: lo desactivó el administrador. Avisa al administrador para reactivarlo.";
     }
   } else if (!state.active) {
     cause = "verification_expired";
@@ -100,6 +100,14 @@ export function describePilot(state, now = new Date()) {
     ? `Quedan ${creditLimit - credits} créditos internos y ${Math.max(0, routeLimit - routes)} consultas de ruta (últimas 24 h: ${credits}/${creditLimit} créditos, ${routes}/${routeLimit} consultas).`
     : `Consumo de las últimas 24 h: ${credits}/${creditLimit} créditos, ${routes}/${routeLimit} consultas de ruta.`);
   return { canCalculate, canStop: Boolean(state.enabled) && !state.stopped, cause, short, message, lines };
+}
+
+/**
+ * CONFIRMAR_CITAS-007: «Desactivar piloto» solo se ofrece al Administrador y solo si tiene efecto.
+ * El servidor lo exige igualmente (403 para técnico y Master); ocultarlo no es la barrera de seguridad.
+ */
+export function canOfferPilotStop(actor, described) {
+  return actor?.role === "admin" && Boolean(described?.canStop);
 }
 
 export const stopConfirmation = "Desactivar el piloto detiene el cálculo de desplazamientos para todos los técnicos y solo el administrador puede reactivarlo. ¿Quieres continuar?";
