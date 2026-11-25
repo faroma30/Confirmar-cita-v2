@@ -1,0 +1,2 @@
+# Servidor desplegado: conservar los bytes exactos (hash identico al desplegado).
+supabase/functions/** -text
