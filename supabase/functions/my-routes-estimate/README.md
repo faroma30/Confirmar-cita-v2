@@ -13,7 +13,7 @@ Edge Function de Supabase que calcula los desplazamientos de la jornada de un t�
 | Cuerpo | Qué hace |
 |---|---|
 | `{ operation: "status", expectedActor }` | Devuelve el estado del piloto (`cc_route_pilot_status`) y `enabled` |
-| `{ operation: "stop", expectedActor }` | Para el piloto para **todos** (`cc_route_pilot_configure(null, true)`) y devuelve el estado |
+| `{ operation: "stop", expectedActor }` | **Solo Administrador** (CONFIRMAR_CITAS-007, `pilot-control.mjs`): perfil propio por `cc_my_profile` con `role = admin`, activo, verificado y sesión vigente; si no, **403** «Solo el administrador puede desactivar el piloto…» (`code: admin_only`). Para el piloto para **todos** (`cc_route_pilot_configure(null, true)`) y devuelve el estado. Técnico y Master no pueden |
 | `{ operation: "autocomplete", query, kind, expectedActor }` | Sugerencias de calle (requiere `…_AUTOCOMPLETE_APPROVED = yes`) |
 | `{ date, fingerprint, expectedActor, edits? }` | Calcula los tramos de la jornada real del técnico; 409 si la huella no coincide |
 
@@ -33,6 +33,12 @@ No existe operación para **reactivar** el piloto desde la app (ver «Reactivaci
    Pone `stopped = false` y renueva `quota_verified_at`.
 3. **Caduca a las 24 h**: mientras dure el piloto hay que repetirlo cada día; si no, la PWA mostrará «Verificación de consumo caducada».
 
+## Parar el piloto (Administrador)
+El Administrador **no tiene la pestaña Mis rutas** (es solo para técnicos), así que en la app no ve «Desactivar piloto». Mientras no exista una opción en la zona de administración:
+- **SQL** (editor SQL del proyecto de la V2, como `service_role`, con autorización): `select public.cc_route_pilot_configure(null, true);` → `stopped = true`. Comprobar con `select public.cc_route_pilot_status();`.
+- **Función** (con su sesión de Administrador): `{ operation: "stop", expectedActor: <su id> }` a `my-routes-estimate`.
+- **Propuesta (no implementada):** en el panel de administración, una tarjeta «Piloto de Mis rutas» con el estado (`status`), «Desactivar piloto» (`stop`, con confirmación) y, si se aprueba, «Reactivar piloto» (diseño de abajo).
+
 ## Configuración
 - Secretos (solo nombres): `MY_ROUTES_GEOAPIFY_KEY`, `MY_ROUTES_GEOAPIFY_APPROVED` (= `yes`), `MY_ROUTES_GEOAPIFY_MANUAL_FREE_PILOT` (= `yes`), `MY_ROUTES_GEOAPIFY_ACCESS` (JSON `{ "<uuid técnico>": "activities" | "home-and-activities" }`), `MY_ROUTES_GEOAPIFY_AUTOCOMPLETE_APPROVED`, `SUPABASE_SECRET_KEY`/`SUPABASE_SERVICE_ROLE_KEY`, `APP_ORIGIN`. Nunca se guardan en el repositorio.
 - PWA: en producción `config.js` lleva **`myRoutesGeoapifyEnabled: true`**; con `false` la pantalla no muestra los controles del piloto y dice que los tiempos de conducción están desactivados.
@@ -42,7 +48,7 @@ No existe operación para **reactivar** el piloto desde la app (ver «Reactivaci
 - El administrador declara el **consumo real** de Geoapify (entero 0–2950) leído en el panel; la función llama a `cc_route_pilot_configure(externalUsage, false)` con `service_role`. Nunca se reactiva sin consumo declarado.
 - Registro de auditoría (quién, cuándo, consumo declarado, error anterior) en una tabla nueva solo de inserción; límite de 3 reactivaciones al día.
 - Rechazar si el último error es `provider_limited` de hace menos de 15 min (pausa global) y si `quota_verified_at` es de hace menos de 1 h (evita reactivaciones en bucle).
-- En la PWA: botón «Reactivar piloto» solo para administradores, con el campo de consumo y confirmación. **Decisión del Director**: quién puede parar y reactivar (hoy cualquier técnico del piloto puede parar).
+- En la PWA: botón «Reactivar piloto» solo para administradores, con el campo de consumo y confirmación. Parar ya es solo del Administrador (CONFIRMAR_CITAS-007); reactivar desde la app sigue pendiente de decisión del Director.
 
 ## Pruebas (sin red)
 Desde la raíz del repositorio: `node --test tests/*.test.mjs wifi-connect/tests/*.test.mjs`.
