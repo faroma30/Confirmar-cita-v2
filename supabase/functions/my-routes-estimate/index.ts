@@ -129,6 +129,9 @@ Deno.serve(async (request: Request) => {
       if (failure) {
         await backend.rpc("cc_route_pilot_report", { p_actor: auth.user.id, p_lease: lease, p_error: failure });
       }
+      // CONFIRMAR_CITAS-006: release the pilot reservation so other technicians are not blocked (429).
+      // Needs migration 20261125090000; until it is applied the RPC returns an error that is ignored.
+      await backend.rpc("cc_route_pilot_end", { p_actor: auth.user.id, p_lease: lease });
       await backend.rpc("cc_route_budget_end", { p_lease: lease, p_provider_limited: providerLimited });
     }
   } catch (error) {
