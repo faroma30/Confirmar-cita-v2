@@ -1,7 +1,8 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes11";
-import { arrivalAfter, buildLegs, combineActivities, estimateLeg, formatRouteLocation, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes11";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes12";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes12";
+import { describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes12";
 
-export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null }) {
+export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;
   const find = id => panel.querySelector("#" + id);
   const tab = find("myRoutesTab");
@@ -16,34 +17,69 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   const calculateButton = find("myRoutesCalculate");
   const pilotNotice = find("myRoutesPilotNotice");
   const calcNotice = find("myRoutesCalculationNotice");
+  const calculateReason = find("myRoutesCalculateReason");
+  const statusButton = find("myRoutesPilotStatus");
+  const stopButton = find("myRoutesPilotStop");
   if (pilotControls) pilotControls.hidden = true;
   let pilotAction = 0;
   let pilotBusy = false;
   let stopped = false;
+  let pilot = null;
+  let renderedStopped = false;
+  function setPilotLoading(loading) {
+    if (statusButton) {
+      statusButton.disabled = loading;
+      statusButton.setAttribute("aria-busy", loading ? "true" : "false");
+      statusButton.textContent = loading ? "Consultando…" : "Consultar consumo";
+    }
+    if (stopButton && loading) stopButton.disabled = true;
+    if (stopButton && !loading) stopButton.disabled = false;
+  }
+  function showCalculateReason() {
+    if (!calculateReason) return;
+    calculateReason.textContent = stopped && pilot ? "No se puede calcular: " + pilot.short + "." : "";
+    calculateReason.hidden = !calculateReason.textContent;
+  }
+  function resetPilot() {
+    pilotAction++;
+    stopped = false;
+    pilot = null;
+    renderedStopped = false;
+    setPilotLoading(false);
+    if (calculateButton) calculateButton.disabled = false;
+    if (stopButton) stopButton.hidden = false;
+    if (pilotNotice) pilotNotice.textContent = "";
+    if (calcNotice) calcNotice.textContent = "";
+    showCalculateReason();
+    if (pilotControls) pilotControls.hidden = true;
+  }
   async function updatePilot(operation) {
     const actor = technicianId();
     const action = ++pilotAction;
     if (!actor || !provider?.pilot || !pilotNotice) return;
-    const state = await provider.pilot(operation);
+    setPilotLoading(true);
+    pilotNotice.textContent = operation === "stop" ? "Desactivando el piloto…" : "Consultando el estado del piloto…";
+    let state = null;
+    try { state = await provider.pilot(operation); } catch { state = null; }
     if (actor !== technicianId() || action !== pilotAction) return;
-    if (!state) { pilotNotice.textContent = "No se pudo comprobar el estado del piloto."; return; }
+    setPilotLoading(false);
+    const updated = madridClock(now());
+    const stamp = updated ? ` Actualizado a las ${updated}.` : "";
+    const described = describePilot(state, now());
+    if (!described) {
+      pilotNotice.textContent = "No se pudo comprobar el estado del piloto. Vuelve a intentarlo." + stamp;
+      return;
+    }
+    pilot = described;
     if (pilotControls) pilotControls.hidden = false;
-    stopped = !state.active || state.stopped || !state.enabled || state.creditsReserved24h >= 50 || state.routingRequests24h >= 10;
+    stopped = !pilot.canCalculate;
     calculateButton.disabled = stopped || pilotBusy;
-    const errors = {
-      quota: "Cuota alcanzada", provider_limited: "Proveedor bloqueado",
-      provider_unavailable: "Proveedor no disponible", route_estimate_exceeded: "Distancia superior a la reserva",
-      timeout: "Tiempo de espera agotado",
-    };
-    const credits = Number(state.creditsReserved24h) || 0;
-    const requests = Number(state.routingRequests24h) || 0;
-    pilotNotice.textContent = [
-      stopped ? "Piloto desactivado." : "Piloto disponible.",
-      `Últimas 24 h: ${credits}/50 créditos reservados, ${requests}/10 consultas de ruta. Quedan ${Math.max(0, 50 - credits)} créditos internos.`,
-      errors[state.lastError] ? `Último error: ${errors[state.lastError]}.` : "",
-      "El contador interno puede diferir del consumo de Geoapify.",
-    ].filter(Boolean).join(" ");
-    if (operation === "stop") void refresh();
+    showCalculateReason();
+    // «Desactivar piloto» solo se ofrece si tiene efecto (piloto aprobado y no parado).
+    if (stopButton) stopButton.hidden = !pilot.canStop;
+    pilotNotice.textContent = [pilot.message, ...pilot.lines,
+      "El contador interno puede diferir del consumo de Geoapify."].join(" ") + stamp;
+    if (operation === "stop" || (!view.hidden && stopped !== renderedStopped)) void refresh();
   }
   calculateButton?.addEventListener("click", async () => {
     if (!provider?.manual || stopped || pilotBusy) return;
@@ -54,8 +90,12 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     finally { pilotBusy = false; calculateButton.disabled = stopped; }
     await updatePilot("status");
   });
-  find("myRoutesPilotStatus")?.addEventListener("click", () => void updatePilot("status"));
-  find("myRoutesPilotStop")?.addEventListener("click", () => void updatePilot("stop"));
+  statusButton?.addEventListener("click", () => void updatePilot("status"));
+  stopButton?.addEventListener("click", () => {
+    if (pilot && !pilot.canStop) return;
+    if (confirmAction && !confirmAction(stopConfirmation)) return;
+    void updatePilot("stop");
+  });
   const back = find("myRoutesBack");
   const saveButton = find("myRoutesSave");
   const settingsNotice = find("myRoutesSettingsNotice");
@@ -124,12 +164,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       settings.clear();
       activityEdits.clear();
       provider?.clear?.();
-      pilotAction++;
-      stopped = false;
-      if (calculateButton) calculateButton.disabled = false;
-      if (pilotNotice) pilotNotice.textContent = "";
-      if (calcNotice) calcNotice.textContent = "";
-      if (pilotControls) pilotControls.hidden = true;
+      resetPilot();
       close();
       owner = id;
     }
@@ -239,6 +274,23 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         estimatesProvider?.estimateJourney ? { estimate: () => batch?.[positions.get(key(leg))] } : estimatesProvider,
         { date: selectedDate })));
       if (!current()) return;
+      renderedStopped = stopped;
+      const computed = Array.isArray(batch) && batch.length > 0;
+      const reasonText = {
+        privacy: "tramo excluido por privacidad",
+        incomplete: "la dirección no contiene una vía, portal y municipio utilizables",
+        not_found: "Geoapify no encontró una coincidencia única para la dirección",
+        no_route: "Geoapify no devolvió una ruta utilizable",
+      };
+      // Why a leg has no time or distance, in the technician's words.
+      function whyUnavailable(leg) {
+        const reason = reasonText[batch?.reasons?.[positions.get(key(leg))]];
+        if (reason) return reason;
+        if (estimatesProvider?.manual && stopped && pilot) return "el cálculo está detenido (" + pilot.short + ")";
+        if (estimatesProvider?.manual && !canEstimate) return "se necesitan dos actividades consecutivas con dirección completa";
+        if (estimatesProvider?.manual && !computed) return "aún no se han calculado; pulsa «Calcular desplazamientos»";
+        return "la consulta no devolvió este tramo";
+      }
       notice.textContent = !activities.length ? "No hay actividades para esta fecha."
         : legs.length && !preferences.home ? "Añade tu domicilio para completar la ida y el regreso." : "";
       if (!provider) add(list, "p", "Los tiempos de conducción están desactivados. Puedes abrir en Google Maps los tramos con ubicación completa.");
@@ -254,8 +306,15 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const departure = activities[0] === legs[0]?.to && estimates[0]
         && recommendedDeparture(legs[0].to.time, estimates[0].durationSeconds, preferences.margin);
       if (departure) add(list, "p", "Salida recomendada: " + departure.time + (departure.dayOffset < 0 ? " (día anterior)" : ""));
-      else if (estimatesProvider && legs.length) add(list, "p", batch?.reasons?.[0] === "privacy"
-        ? "Hora de salida no disponible: el domicilio queda fuera del piloto." : "Hora de salida no disponible.");
+      else if (estimatesProvider && legs.length) {
+        const first = legs[0];
+        const why = batch?.reasons?.[0] === "privacy" ? "el domicilio queda fuera del piloto"
+          : !preferences.home ? "añade tu domicilio en Ajustes"
+          : activities[0] !== first.to ? "la jornada no empieza con un desplazamiento desde casa"
+          : !first.to.time ? "la primera actividad no tiene hora"
+          : "falta el primer tramo: " + whyUnavailable(first);
+        add(list, "p", "Hora de salida no disponible: " + why + ".");
+      }
       if (activities.some(activity => !activity.time)) add(list, "p", "Las actividades sin hora fiable aparecen al final.");
 
       function renderLeg(item, index) {
@@ -275,6 +334,11 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             + (estimate.distanceMeters / 1000).toLocaleString("es-ES") + " km");
           add(item, "p", "Estimación sin tráfico en tiempo real · " + new Date(estimate.calculatedAt).toLocaleString("es-ES"));
           if (mayArriveLate(leg, estimate)) add(item, "p", "Posible retraso: el trayecto supera el tiempo entre actividades.");
+          const slack = legSlack(leg, estimate);
+          if (slack?.reason === "no_end") add(item, "p", "Sin hora de fin: no se puede calcular si llegas a tiempo.");
+          else if (slack && slack.reason === null) add(item, "p", slack.late
+            ? `Llegarías ${slack.minutes} min tarde (tiempo libre menos desplazamiento).`
+            : `Te sobran ${slack.minutes} min (tiempo libre menos desplazamiento).`);
           const arrival = index === 0
             ? departure && arrivalAfter(departure.time, estimate.durationSeconds)
             : arrivalAfter(leg.from.endTime, estimate.durationSeconds);
@@ -286,7 +350,6 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             add(item, "p", "Llegada estimada no disponible.");
           }
         } else if (estimatesProvider) {
-          add(item, "p", "Tiempo y distancia no disponibles.");
           const reason = batch?.reasons?.[positions.get(key(leg))];
           const explanation = {
             privacy: "Tramo excluido por privacidad.",
@@ -294,7 +357,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             not_found: "Geoapify no encontró una coincidencia única para la dirección.",
             no_route: "Geoapify no devolvió una ruta utilizable para este tramo.",
           }[reason];
-          if (explanation) add(item, "p", explanation);
+          if (explanation) {
+            add(item, "p", "Tiempo y distancia no disponibles.");
+            add(item, "p", explanation);
+          } else add(item, "p", "Tiempo y distancia no disponibles: " + whyUnavailable(leg) + ".");
         }
         const link = add(item, "a", "Abrir tramo en Google Maps");
         link.className = "button secondary";
@@ -304,10 +370,19 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       }
 
       let legIndex = 0;
-      for (const activity of activities) {
+      for (const [index, activity] of activities.entries()) {
         const card = add(list, "article", "");
         card.className = "appointment-card";
         add(card, "h3", label(activity));
+        if (index > 0) {
+          const previous = activities[index - 1];
+          const gap = freeTimeBetween(previous, activity);
+          add(card, "p", gap.reason === "no_end"
+            ? `Sin hora de fin: no se puede calcular el tiempo libre (falta el fin de ${label(previous)}).`
+            : gap.reason === "no_start" ? "Sin hora de inicio: no se puede calcular el tiempo libre."
+            : gap.minutes >= 0 ? `Tiempo libre: ${formatMinutes(gap.minutes)} desde el fin de ${label(previous)}.`
+            : `Tiempo libre: 0 min. Se solapa ${formatMinutes(-gap.minutes)} con ${label(previous)}.`);
+        }
         if (activity.travel === "pause") add(card, "p", "Pausa sin desplazamiento");
         else {
           if (activity.travel === "undecided") add(card, "p", "Pendiente de decidir si requiere desplazamiento");
@@ -356,6 +431,18 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         } else {
           add(list, "p", "Conducción total no disponible.");
         }
+      }
+      const day = dayFreeTime(activities);
+      if (day.pairs) add(list, "p", day.counted
+        ? "Tiempo libre total: " + formatMinutes(day.minutes)
+          + (day.counted < day.pairs ? ` (${day.counted} de ${day.pairs} huecos; al resto le faltan horas)` : "") + "."
+        : "Tiempo libre total no disponible: faltan horas de fin en la agenda.");
+      const slacks = legs.map((leg, index) => legSlack(leg, estimates[index])).filter(slack => slack && slack.reason === null);
+      if (slacks.length) {
+        const net = slacks.reduce((total, slack) => total + slack.signed, 0);
+        add(list, "p", net >= 0
+          ? `Tiempo libre tras los desplazamientos entre actividades: ${formatMinutes(Math.floor(net))} (${slacks.length} tramos).`
+          : `Faltan ${formatMinutes(Math.ceil(-net))} en total para los desplazamientos entre actividades (${slacks.length} tramos).`);
       }
     } catch (error) {
       if (current()) {

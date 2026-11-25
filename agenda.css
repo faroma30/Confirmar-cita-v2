@@ -33,4 +33,4 @@
 .cancellation-recipient-row .button{width:auto;white-space:nowrap}
 .cancellation-recipient-status:empty{display:none}
 
-#myRoutesPilotControls{grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));align-items:stretch}#myRoutesPilotControls[hidden]{display:none}#myRoutesPilotControls button{min-width:0;min-height:44px;white-space:normal;overflow-wrap:anywhere}#myRoutesPilotNotice,#myRoutesCalculationNotice{grid-column:1/-1;min-width:0;margin:0}
+#myRoutesPilotControls{grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));align-items:stretch}#myRoutesPilotControls[hidden]{display:none}#myRoutesPilotControls button{min-width:0;min-height:44px;white-space:normal;overflow-wrap:anywhere}#myRoutesPilotNotice,#myRoutesCalculationNotice,#myRoutesCalculateReason{grid-column:1/-1;min-width:0;margin:0}#myRoutesCalculateReason{font-weight:600}#myRoutesCalculateReason[hidden],#myRoutesPilotStop[hidden]{display:none}

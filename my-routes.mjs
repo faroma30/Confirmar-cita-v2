@@ -134,6 +134,48 @@ export function arrivalAfter(time, durationSeconds) {
   return formatClock(Math.ceil(start + durationSeconds / 60));
 }
 
+// Tiempo entre actividades (CONFIRMAR_CITAS-006). Solo usa las horas de la agenda; funciona sin Geoapify.
+export function freeTimeBetween(previous, next) {
+  const start = clockMinutes(next?.time ?? "");
+  if (start === null) return { minutes: null, reason: "no_start" };
+  const end = clockMinutes(previous?.endTime ?? "");
+  if (end === null) return { minutes: null, reason: "no_end" };
+  return { minutes: Math.round(start - end), reason: null };
+}
+
+// Tiempo libre de un tramo entre dos actividades menos el desplazamiento estimado.
+// `leg.from.endTime` ya incluye las pausas intermedias (buildLegs). Los tramos desde o hacia casa no cuentan.
+export function legSlack(leg, estimate) {
+  if (!leg?.from?.key || !leg?.to?.key || !Number.isFinite(estimate?.durationSeconds)) return null;
+  const next = clockMinutes(leg.to.time ?? "");
+  if (next === null) return { minutes: null, late: false, reason: "no_start" };
+  const end = clockMinutes(leg.from.endTime ?? "");
+  if (end === null) return { minutes: null, late: false, reason: "no_end" };
+  const slack = next - end - estimate.durationSeconds / 60;
+  return slack >= 0
+    ? { minutes: Math.floor(slack), late: false, reason: null, signed: slack }
+    : { minutes: Math.ceil(-slack), late: true, reason: null, signed: slack };
+}
+
+export function dayFreeTime(activities) {
+  let minutes = 0, counted = 0;
+  const pairs = Math.max(0, activities.length - 1);
+  for (let index = 1; index < activities.length; index++) {
+    const gap = freeTimeBetween(activities[index - 1], activities[index]);
+    if (gap.minutes === null) continue;
+    counted++;
+    minutes += Math.max(0, gap.minutes);
+  }
+  return { minutes, counted, pairs };
+}
+
+export function formatMinutes(total) {
+  const value = Math.max(0, Math.round(total));
+  if (value < 60) return value + " min";
+  const hours = Math.floor(value / 60), rest = value % 60;
+  return value + " min (" + hours + " h" + (rest ? " " + rest + " min" : "") + ")";
+}
+
 export function mayArriveLate(leg, estimate) {
   const end = clockMinutes(leg.from.endTime);
   const next = clockMinutes(leg.to.time);

@@ -1,23 +1,23 @@
-import { setupReleaseUpdate } from "./release-update.mjs?v=3routes11";
-import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes11";
+import { setupReleaseUpdate } from "./release-update.mjs?v=3routes12";
+import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes12";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
-import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes11";
-import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes11";
-import { createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes11";
-import { captureSubmittedForm } from "./form-events.mjs?v=3routes11";
-import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes11";
-import { createIssuesUI } from "./issues-ui.mjs?v=3routes11";
-import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes11";
-import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v=3routes11";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes11";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes11";
-import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes11";
-import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes11";
-import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes11";
-import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes11";
-import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes11";
-import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes11";
-import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes11";
+import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes12";
+import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes12";
+import { createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes12";
+import { captureSubmittedForm } from "./form-events.mjs?v=3routes12";
+import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes12";
+import { createIssuesUI } from "./issues-ui.mjs?v=3routes12";
+import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes12";
+import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v=3routes12";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes12";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes12";
+import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes12";
+import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes12";
+import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes12";
+import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes12";
+import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes12";
+import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes12";
+import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes12";
 
 const $ = (id) => document.getElementById(id);
 // Keep the existing V2 workspace DOM intact while switching the two top-level tools.
@@ -67,7 +67,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3routes11";
+const APP_BUILD = "3routes12";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -2108,6 +2108,7 @@ const myRoutes = mountMyRoutes({
   agenda: $("myRoutesAgenda"),
   getActor: myRoutesActor,
   getDate: () => appointmentDate,
+  confirmAction: message => window.confirm(message),
   preferencesStore: createRpcRouteLocations({ rpc: (...args) => supabase.rpc(...args), getActor: myRoutesActor }),
   async loadActivities(date) {
     const args = { p_work_date: date };
