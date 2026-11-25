@@ -1,0 +1,100 @@
+# CONFIRMAR_CITAS-007: GitHub Pages publica SOLO la app (lista explícita), nunca supabase/, tests/,
+# wifi-connect/tests/ ni .github/. Requiere que en GitHub → Settings → Pages la fuente sea «GitHub Actions»;
+# con «Deploy from a branch», Pages seguiría publicando todo `main` y este flujo no tendría efecto.
+# Sin secretos. Solo se ejecuta con un push a main.
+name: Publicar la app en GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Construir el artefacto solo con los archivos web
+        env:
+          # Lista explícita. Si se añade un archivo a la app, hay que añadirlo aquí
+          # (la prueba tests/pages-workflow.test.mjs falla si falta).
+          PAGES_FILES: |
+            .nojekyll
+            index.html
+            manifest.webmanifest
+            config.js
+            startup-status.js
+            app.js
+            app.css
+            agenda.css
+            admin-directory.css
+            tool-categories.css
+            verisure-logo.png
+            admin-routes-ui.mjs
+            admin-wifi-ocr-source.mjs
+            agenda-parity.mjs
+            agenda-parser.mjs
+            cancellation-draft.mjs
+            cancellation-reason.mjs
+            cancellation-recipients.mjs
+            dashboard-insights.mjs
+            form-events.mjs
+            ignored-work.mjs
+            issues-ui.mjs
+            kpi-access.mjs
+            master-navigation.mjs
+            message-template.mjs
+            my-routes-autocomplete.mjs
+            my-routes-cloud.mjs
+            my-routes-pilot.mjs
+            my-routes-ui.mjs
+            my-routes.mjs
+            release-update.mjs
+            settings-navigation.mjs
+            wifi-ocr-report-submit.mjs
+            wifi-ocr-report.mjs
+            icons
+            wifi-connect/entry.mjs
+            wifi-connect/assets
+            wifi-connect/css
+            wifi-connect/src
+            wifi-connect/vendor
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir _site
+          while IFS= read -r item; do
+            [ -z "$item" ] && continue
+            if [ ! -e "$item" ]; then echo "Falta en el repositorio: $item"; exit 1; fi
+            cp -R --parents "$item" _site/
+          done <<< "$PAGES_FILES"
+          for forbidden in supabase tests wifi-connect/tests .github .git .gitattributes; do
+            if [ -e "_site/$forbidden" ]; then echo "No debe publicarse: $forbidden"; exit 1; fi
+          done
+          echo "Archivos publicados: $(find _site -type f | wc -l)"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
