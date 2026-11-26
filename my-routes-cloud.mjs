@@ -10,6 +10,8 @@ export const legDetails = new Set(["privacy", "incomplete", "missing_number", "s
 // Códigos de detalle de la dirección que bloquea el tramo (CONFIRMAR_CITAS-018; campo opcional `diagnostics`).
 export const addressDiagnostics = new Set(["no_results", "street_mismatch", "municipality_mismatch", "postcode_mismatch",
   "number_mismatch", "ambiguous", "missing_number", "missing_street"]);
+// Origen de cada dirección (CONFIRMAR_CITAS-020; campo opcional `sources`).
+export const routeSources = new Set(["cartociudad", "geoapify"]);
 
 export function createCloudRoutes({ invoke, getActor }) {
   const pending = new Map();
@@ -86,10 +88,21 @@ export function createCloudRoutes({ invoke, getActor }) {
               value: data.details.map((detail, index) => !data.estimates[index] && legDetails.has(detail) ? detail : null),
             });
           }
+          // CONFIRMAR_CITAS-020: tramo «aprox.» (calle sin ese portal en CartoCiudad) y origen por dirección
+          // (campos opcionales; la función v12 no los envía).
+          const approx = Array.isArray(data.approx) && data.approx.length === legs.length
+            ? data.approx.map((value, index) => value === true && Boolean(data.estimates[index])) : null;
+          if (approx) Object.defineProperty(data.estimates, "approx", { value: approx });
+          if (Array.isArray(data.sources) && data.sources.length === legs.length + 1) {
+            Object.defineProperty(data.estimates, "sources", {
+              value: data.sources.map(source => routeSources.has(source) ? source : null),
+            });
+          }
           // CONFIRMAR_CITAS-018: código de detalle por tramo (opcional; la función v11 no lo envía).
+          // Desde el 020 también en los tramos «aprox.».
           if (Array.isArray(data.diagnostics) && data.diagnostics.length === legs.length) {
             Object.defineProperty(data.estimates, "diagnostics", {
-              value: data.diagnostics.map((code, index) => !data.estimates[index] && addressDiagnostics.has(code) ? code : null),
+              value: data.diagnostics.map((code, index) => (!data.estimates[index] || approx?.[index]) && addressDiagnostics.has(code) ? code : null),
             });
           }
           if (data.estimates.some(Boolean)) {

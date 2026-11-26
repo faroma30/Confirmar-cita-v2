@@ -1,6 +1,6 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes16";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes16";
-import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes16";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes17";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes17";
+import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes17";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;
@@ -328,6 +328,13 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const detailOf = leg => batch?.details?.[positions.get(key(leg))] ?? null;
       // CONFIRMAR_CITAS-018: código de detalle de la dirección (campo opcional `diagnostics`) y dirección «S/N».
       const diagnosticOf = leg => batch?.diagnostics?.[positions.get(key(leg))] ?? null;
+      // CONFIRMAR_CITAS-020: campos opcionales `approx` (tramo) y `sources` (dirección) de la función nueva.
+      const approxOf = leg => batch?.approx?.[positions.get(key(leg))] === true;
+      const sourcesOf = leg => {
+        const index = positions.get(key(leg));
+        const pair = Array.isArray(batch?.sources) && index !== undefined ? [batch.sources[index], batch.sources[index + 1]] : [];
+        return pair.some(Boolean) ? pair.map(source => source ?? "—").join(" → ") : "";
+      };
       const withoutNumber = address => /(?:^|[\s,])s\s*[/.]\s*n\.?(?=$|[\s,])/iu.test(address || "");
       const failedKeys = new Set();
       for (const [index, leg] of legs.entries()) {
@@ -378,9 +385,17 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         const estimate = estimates[index];
         if (estimate) {
           add(item, "p", Math.ceil(estimate.durationSeconds / 60) + " min · "
-            + (estimate.distanceMeters / 1000).toLocaleString("es-ES") + " km");
+            + (estimate.distanceMeters / 1000).toLocaleString("es-ES") + " km" + (approxOf(leg) ? " (aprox.)" : ""));
           add(item, "p", "Estimación sin tráfico en tiempo real · " + new Date(estimate.calculatedAt).toLocaleString("es-ES"));
           if (mayArriveLate(leg, estimate)) add(item, "p", "Posible retraso: el trayecto supera el tiempo entre actividades.");
+          // CONFIRMAR_CITAS-020: posición de la calle (la base oficial no tiene ese portal) y origen de las direcciones.
+          if (approxOf(leg)) {
+            add(item, "p", "aprox.: la base oficial no tiene ese portal; se usa la calle.").className = "fine";
+            const diagnostic = diagnosticOf(leg);
+            if (diagnostic) add(item, "p", "detalle: " + diagnostic).className = "fine";
+          }
+          const origin = sourcesOf(leg);
+          if (origin) add(item, "p", "origen: " + origin).className = "fine";
           const slack = legSlack(leg, estimate);
           if (slack?.reason === "no_end") add(item, "p", "Sin hora de fin: no se puede calcular si llegas a tiempo.");
           else if (slack && slack.reason === null) add(item, "p", slack.late
