@@ -1,6 +1,6 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes15";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes15";
-import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes15";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes16";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes16";
+import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes16";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;
@@ -326,6 +326,9 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const ownAddress = new Set(["incomplete", "missing_number", "street_not_found", "portal_not_found", "ambiguous"]);
       const otherAddress = new Set(["other_end", "other_end_incomplete"]);
       const detailOf = leg => batch?.details?.[positions.get(key(leg))] ?? null;
+      // CONFIRMAR_CITAS-018: código de detalle de la dirección (campo opcional `diagnostics`) y dirección «S/N».
+      const diagnosticOf = leg => batch?.diagnostics?.[positions.get(key(leg))] ?? null;
+      const withoutNumber = address => /(?:^|[\s,])s\s*[/.]\s*n\.?(?=$|[\s,])/iu.test(address || "");
       const failedKeys = new Set();
       for (const [index, leg] of legs.entries()) {
         const detail = estimates[index] ? null : detailOf(leg);
@@ -404,8 +407,13 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           }[reason];
           if (explanation) {
             add(item, "p", "Tiempo y distancia no disponibles.");
-            add(item, "p", "Motivo: " + explanation);
-            if (ownAddress.has(detail) && failedKeys.has(leg.to.key)) {
+            const noNumber = detail === "missing_number" && withoutNumber(leg.to.address);
+            add(item, "p", "Motivo: " + (noNumber ? "Dirección sin número: corrígela en «Editar desplazamiento»." : explanation));
+            const diagnostic = diagnosticOf(leg);
+            if (diagnostic) add(item, "p", "detalle: " + diagnostic).className = "fine";
+            if (noNumber) {
+              // El motivo ya dice dónde corregirla.
+            } else if (ownAddress.has(detail) && failedKeys.has(leg.to.key)) {
               add(item, "p", "Corrígela en «Editar desplazamiento» de esta actividad y vuelve a calcular.");
             } else if (otherAddress.has(detail) && failedKeys.has(leg.from.key)) {
               add(item, "p", "Corrígela en «Editar desplazamiento» de " + label(leg.from) + " y vuelve a calcular.");

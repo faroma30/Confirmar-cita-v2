@@ -7,6 +7,9 @@ export async function routeFingerprint(legs) {
 // Códigos estables de motivo por tramo que devuelve my-routes-estimate desde CONFIRMAR_CITAS-017.
 export const legDetails = new Set(["privacy", "incomplete", "missing_number", "street_not_found", "portal_not_found",
   "ambiguous", "other_end", "other_end_incomplete", "pilot_limit", "no_route"]);
+// Códigos de detalle de la dirección que bloquea el tramo (CONFIRMAR_CITAS-018; campo opcional `diagnostics`).
+export const addressDiagnostics = new Set(["no_results", "street_mismatch", "municipality_mismatch", "postcode_mismatch",
+  "number_mismatch", "ambiguous", "missing_number", "missing_street"]);
 
 export function createCloudRoutes({ invoke, getActor }) {
   const pending = new Map();
@@ -81,6 +84,12 @@ export function createCloudRoutes({ invoke, getActor }) {
           if (Array.isArray(data.details) && data.details.length === legs.length) {
             Object.defineProperty(data.estimates, "details", {
               value: data.details.map((detail, index) => !data.estimates[index] && legDetails.has(detail) ? detail : null),
+            });
+          }
+          // CONFIRMAR_CITAS-018: código de detalle por tramo (opcional; la función v11 no lo envía).
+          if (Array.isArray(data.diagnostics) && data.diagnostics.length === legs.length) {
+            Object.defineProperty(data.estimates, "diagnostics", {
+              value: data.diagnostics.map((code, index) => !data.estimates[index] && addressDiagnostics.has(code) ? code : null),
             });
           }
           if (data.estimates.some(Boolean)) {
