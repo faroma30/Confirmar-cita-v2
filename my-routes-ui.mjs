@@ -1,10 +1,12 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes13";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes13";
-import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes13";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes14";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes14";
+import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes14";
 
-export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, now = () => new Date(), confirmAction = null }) {
+export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;
   const find = id => panel.querySelector("#" + id);
+  // CONFIRMAR_CITAS-015: «Usar mi domicilio…», desactivada por defecto y guardada en este dispositivo.
+  const useHomeInput = find("myRoutesUseHome");
   const tab = find("myRoutesTab");
   const agendaTab = find("myRoutesAgendaTab");
   const view = find("myRoutesView");
@@ -268,8 +270,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const eligible = leg => leg.from.key && leg.to.key && leg.from.address && leg.to.address;
       const canEstimate = !provider?.manual || legs.some(leg => eligible(leg) && positions.has(key(leg)));
       const estimatesProvider = provider;
+      // The home only takes part when it is saved and the technician turned the option on.
+      const useHome = Boolean(preferences.home) && homeConsent?.read() === true;
       const batch = estimatesProvider?.estimateJourney && canEstimate
-        ? await estimatesProvider.estimateJourney(canonical, { date: selectedDate, edits: safeEdits, ...(estimatesProvider.manual ? { cachedOnly: !explicit } : {}) }) : null;
+        ? await estimatesProvider.estimateJourney(canonical, { date: selectedDate, edits: safeEdits, ...(estimatesProvider.manual ? { cachedOnly: !explicit } : {}), ...(useHome ? { useHome: true } : {}) }) : null;
       const estimates = await Promise.all(legs.map(leg => estimateLeg(leg,
         estimatesProvider?.estimateJourney ? { estimate: () => batch?.[positions.get(key(leg))] } : estimatesProvider,
         { date: selectedDate })));
@@ -483,6 +487,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       if (!isCurrentSettings(actorId, run)) return;
       for (const kind of routeLocationKinds) fillLocation(kind, prefs[kind]);
       margin.value = prefs.margin;
+      if (useHomeInput) useHomeInput.checked = homeConsent?.read() === true;
       form.hidden = false;
       settingsNotice.textContent = autocomplete ? "" : "El autocompletado está desactivado. Introduce las direcciones manualmente.";
     } catch {
@@ -523,6 +528,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     settingsNotice.textContent = "Guardando ajustes…";
     try {
       await settings.write(prefs);
+      if (useHomeInput && homeConsent && isCurrentSettings(actorId, run)) homeConsent.write(useHomeInput.checked === true);
       if (isCurrentSettings(actorId, run)) returnToRoute({ refreshRoute: true });
     } catch {
       if (isCurrentSettings(actorId, run)) settingsNotice.textContent = "No se pudieron guardar los ajustes. Vuelve a intentarlo.";

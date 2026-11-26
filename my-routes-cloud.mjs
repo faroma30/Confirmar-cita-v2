@@ -27,7 +27,7 @@ export function createCloudRoutes({ invoke, getActor }) {
         return data;
       } catch { return null; }
     },
-    async estimateJourney(legs, { date, edits = [], cachedOnly = false }) {
+    async estimateJourney(legs, { date, edits = [], cachedOnly = false, useHome = false }) {
       if (!legs.length || !legs.some(leg => leg.from.address && leg.to.address)) return [];
       const actor = getActor();
       if (!actor?.id || actor.role !== "technician") return [];
@@ -35,7 +35,8 @@ export function createCloudRoutes({ invoke, getActor }) {
       if (getActor()?.id !== actor.id || getActor()?.role !== "technician") return [];
       if (owner !== actor.id) { clear(); owner = actor.id; }
       const generation = revision;
-      const key = JSON.stringify([actor.id, date, fingerprint, edits]);
+      const withHome = useHome === true;
+      const key = JSON.stringify([actor.id, date, fingerprint, edits, withHome]);
       const cached = cache.get(key);
       if (cached?.until > Date.now()) return cached.estimates;
       cache.delete(key);
@@ -44,7 +45,8 @@ export function createCloudRoutes({ invoke, getActor }) {
       const task = (async () => {
         try {
           const { data, error } = await invoke("my-routes-estimate", {
-            body: { date, fingerprint, expectedActor: actor.id, ...(edits.length ? { edits } : {}) },
+            // CONFIRMAR_CITAS-015: `useHome` solo viaja si el técnico activó «Usar mi domicilio».
+            body: { date, fingerprint, expectedActor: actor.id, ...(edits.length ? { edits } : {}), ...(withHome ? { useHome: true } : {}) },
           });
           if (error) {
             const status = error.context?.status ?? error.status;

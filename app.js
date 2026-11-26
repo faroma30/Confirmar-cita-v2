@@ -1,23 +1,23 @@
-import { setupReleaseUpdate } from "./release-update.mjs?v=3routes13";
-import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes13";
+import { setupReleaseUpdate } from "./release-update.mjs?v=3routes14";
+import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes14";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
-import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes13";
-import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes13";
-import { createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes13";
-import { captureSubmittedForm } from "./form-events.mjs?v=3routes13";
-import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes13";
-import { createIssuesUI } from "./issues-ui.mjs?v=3routes13";
-import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes13";
-import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v=3routes13";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes13";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes13";
-import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes13";
-import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes13";
-import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes13";
-import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes13";
-import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes13";
-import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes13";
-import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes13";
+import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes14";
+import { createHomeConsent, createRpcRouteLocations } from "./my-routes.mjs?v=3routes14";
+import { createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes14";
+import { captureSubmittedForm } from "./form-events.mjs?v=3routes14";
+import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes14";
+import { createIssuesUI } from "./issues-ui.mjs?v=3routes14";
+import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes14";
+import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v=3routes14";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes14";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes14";
+import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes14";
+import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes14";
+import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes14";
+import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes14";
+import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes14";
+import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes14";
+import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes14";
 
 const $ = (id) => document.getElementById(id);
 // Keep the existing V2 workspace DOM intact while switching the two top-level tools.
@@ -67,7 +67,7 @@ let activeLoginAttempt = null;
 let kpiAvailableUserId = null;
 let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3routes13";
+const APP_BUILD = "3routes14";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -2110,6 +2110,11 @@ const myRoutes = mountMyRoutes({
   getDate: () => appointmentDate,
   confirmAction: message => window.confirm(message),
   preferencesStore: createRpcRouteLocations({ rpc: (...args) => supabase.rpc(...args), getActor: myRoutesActor }),
+  // CONFIRMAR_CITAS-015: «Usar mi domicilio…» (desactivada por defecto) se guarda solo en este dispositivo.
+  homeConsent: createHomeConsent({
+    storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+    getActor: myRoutesActor,
+  }),
   async loadActivities(date) {
     const args = { p_work_date: date };
     const [appointments, ignored] = await Promise.all([

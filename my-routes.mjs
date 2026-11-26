@@ -272,6 +272,32 @@ export function createRpcRouteLocations(options) {
   };
 }
 
+// CONFIRMAR_CITAS-015: «Usar mi domicilio» se guarda solo en este dispositivo, por técnico,
+// y está desactivado por defecto. Sin esta opción el domicilio nunca se envía a Geoapify.
+export const homeConsentLabel = "Usar mi domicilio para calcular el primer y el último tramo y la hora de salida (se envía a Geoapify)";
+export function createHomeConsent({ storage, getActor }) {
+  const key = () => {
+    const actor = getActor();
+    return actor?.role === "technician" && actor.id ? "myRoutes.useHome." + actor.id : null;
+  };
+  return {
+    read() {
+      const name = key();
+      if (!name) return false;
+      try { return storage?.getItem(name) === "yes"; } catch { return false; }
+    },
+    write(value) {
+      const name = key();
+      if (!name || !storage) return false;
+      try {
+        if (value === true) storage.setItem(name, "yes");
+        else storage.removeItem(name);
+        return true;
+      } catch { return false; }
+    },
+  };
+}
+
 // Preview settings stay in memory when persistent storage is not configured.
 export function createRoutePreferences(getActor) {
   let owner, saved;
