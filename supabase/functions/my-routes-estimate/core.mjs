@@ -624,26 +624,229 @@ export function chooseCarto(data, fields) {
   return { point: unique(exact), approx: unique(streets) };
 }
 
+// CONFIRMAR_CITAS-022: the official street most similar to the Oracle name. Oracle may write the street
+// differently from the official street map (articles, one letter, «PTGE»…). The streets of the same
+// municipality and postcode are compared by their bare name (without type, articles, accents or capitals).
+export const OFFICIAL_THRESHOLD = 0.85;
+export const OFFICIAL_MARGIN = 0.1;
+const SUGGESTION_MIN = 0.5;
+
+// Bare name of a street: without its type, articles, accents or capitals («Carrer dels Clavataires» → «clavataires»).
+export function streetKey(value) {
+  return withoutArticles(streetParts(value).name);
+}
+
+// Normalized Levenshtein similarity (1 = equal, 0 = nothing in common).
+export function similarity(left, right) {
+  const a = [...field(left)];
+  const b = [...field(right)];
+  if (!a.length || !b.length) return 0;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    previous = row;
+  }
+  return 1 - previous[b.length] / Math.max(a.length, b.length);
+}
+
+const brokenText = value => value.includes(String.fromCharCode(0xfffd));
+
+// Official street of a CartoCiudad row, as it is written in the street map:
+// «PLAÇA AJUNTAMENT (DE L'), Ribes de Freser» → «Plaça de l'Ajuntament»; «MAS LA FARGA (Ripoll)» → «Mas la Farga»;
+// «PLAÇA L"AJUNTAMENT 3, Ripoll» (portal) → «Plaça l'Ajuntament». Empty if it is not a street or a portal.
+export function officialStreetName(row) {
+  if (!row || typeof row !== "object" || !["callejero", "portal"].includes(row.type)) return "";
+  const municipalities = [row.muni, row.poblacion].map(field).filter(Boolean);
+  const parts = field(row.address).replace(/["´`’]/gu, "'").split(",").map(part => part.trim()).filter(Boolean);
+  if (parts.length > 1 && municipalities.some(name => sameMunicipality(parts.at(-1).replace(/\s*\(.*\)$/u, ""), name))) parts.pop();
+  let name = parts.shift() ?? "";
+  let particle = parts.filter(part => part.split(/[\s']+/u).filter(Boolean).every(word => ARTICLES.has(normalized(word)))).join(" ");
+  // Trailing groups in brackets: the article («(DE L')») goes before the name; the municipality is dropped.
+  for (let group; (group = /\s*\(([^()]*)\)$/u.exec(name));) {
+    const inside = group[1].trim();
+    name = name.slice(0, group.index).trim();
+    if (inside && inside.split(/[\s']+/u).filter(Boolean).every(word => ARTICLES.has(normalized(word)))) particle = inside + (particle ? " " + particle : "");
+    else if (!municipalities.some(municipality => sameMunicipality(inside, municipality))) return "";
+  }
+  if (row.type === "portal") name = name.replace(/\s+\d{1,5}(?:\s*[\p{L}]{1,3})?$/u, "").trim();
+  const type = field(row.tip_via);
+  const words = name.split(/\s+/u).filter(Boolean);
+  if (type && words.length > 1 && normalized(words[0]) === normalized(type)) words.shift();
+  const knownType = type && !brokenText(type) && !streetTypes.has(normalized(words[0] ?? "")) ? type : "";
+  const glue = particle.endsWith("'") ? "" : " ";
+  const body = words.join(" ");
+  const text = [knownType, particle ? particle + glue + body : body].filter(Boolean).join(" ").replace(/\s+/gu, " ").trim();
+  if (!text || brokenText(text)) return "";
+  const result = cleanOracleText(text);
+  return STREET.test(result) ? result : "";
+}
+
+const inArea = (row, fields) => {
+  const postcodeMatch = Boolean(fields.postcode) && field(row.postalCode).split(/\s+/u).includes(fields.postcode);
+  const cityMatch = sameMunicipality(field(row.muni), fields.city) || sameMunicipality(field(row.poblacion), fields.city);
+  return postcodeMatch || cityMatch;
+};
+
+// The street of the request is already in the official base (same name, same municipality or postcode).
+function streetKnown(data, fields) {
+  return cartoRows(data).some(row => ["portal", "callejero"].includes(row.type) && inArea(row, fields)
+    && sameStreet(officialStreetName(row) || cartoStreet(row), fields.street));
+}
+
+const sameTypeClass = (left, right) => {
+  const a = streetParts(left).type;
+  const b = streetParts(right).type;
+  return !a || !b || a === b;
+};
+
+// Decides on one official street only when it is clearly the most similar one (≥ 0.85 and 0.1 above the
+// second, same class of street). With doubts it returns up to 3 official names of the same municipality.
+export function chooseOfficialStreet(data, fields) {
+  const wanted = streetKey(fields?.street);
+  const streets = new Map();
+  for (const row of (Array.isArray(data) ? data : cartoRows(data)).slice(0, 10)) {
+    if (!row || typeof row !== "object" || !inArea(row, fields)) continue;
+    const name = officialStreetName(row);
+    const key = name && streetKey(name);
+    if (!key || streets.has(key)) continue;
+    if (sameStreet(name, fields.street)) return { same: true, street: null, suggestions: [] };
+    const words = new Set(key.split(" "));
+    const contains = wanted.split(" ").every(word => words.has(word)) || [...words].every(word => wanted.split(" ").includes(word));
+    streets.set(key, { name, score: similarity(wanted, key), contains });
+  }
+  const ranked = [...streets.values()].sort((a, b) => b.score - a.score);
+  const [best, second] = ranked;
+  if (best && wanted && best.score >= OFFICIAL_THRESHOLD && (!second || best.score - second.score >= OFFICIAL_MARGIN)
+    && sameTypeClass(best.name, fields.street)) {
+    return { same: false, street: best.name, suggestions: [] };
+  }
+  const suggestions = ranked.filter(item => item.score >= SUGGESTION_MIN || item.contains).slice(0, 3).map(item => item.name);
+  return { same: false, street: null, suggestions };
+}
+
+// Streets of the municipality without the portal number (the third CartoCiudad call, CONFIRMAR_CITAS-022).
+export function cartoStreetQuery(fields) {
+  const name = cartoStreetName(fields?.street);
+  const city = field(fields?.city);
+  if (!name || !city) return null;
+  const postcode = /^\d{5}$/u.test(field(fields.postcode)) ? field(fields.postcode) : "";
+  return postcode ? { q: name, limit: "10", cod_postal_filter: postcode } : { q: `${name}, ${city}`, limit: "10" };
+}
+
+// At most 3 CartoCiudad calls per address: `findJsonp`; if the street is not known there, the streets of the
+// municipality (without number) to find the official name; then the portal in the official street (`findJsonp`)
+// or, as before, `candidates` with the number and the postcode. Nothing is charged to the pilot.
 async function geocodeCarto(fields, context) {
   const queries = cartoQueries(fields);
   if (!queries || !context.carto) return null;
   let approx = null;
-  for (const [path, params] of [["findJsonp", queries.find], ["candidates", queries.candidates]]) {
+  let suggestions = [];
+  const attempt = async (path, params, target = fields) => {
     const data = await readCarto(path, params, context);
-    if (data === null) break;
-    const choice = chooseCarto(data, fields);
-    if (choice.point) return { point: choice.point, approx: false };
-    approx ??= choice.approx;
+    if (data === null) return null;
+    const choice = chooseCarto(data, target);
+    if (!approx && choice.approx) approx = { point: choice.approx, official: target === fields ? null : target.street };
+    return { data, point: choice.point };
+  };
+  const first = await attempt("findJsonp", queries.find);
+  if (!first) return null;
+  if (first.point) return { point: first.point, approx: false };
+  let last;
+  if (streetKnown(first.data, fields)) {
+    last = await attempt("candidates", queries.candidates);
+  } else {
+    const list = await attempt("candidates", cartoStreetQuery(fields));
+    if (list?.point) return { point: list.point, approx: false };
+    if (list && cartoRows(list.data).length) {
+      const official = chooseOfficialStreet(list.data, fields);
+      if (official.street) {
+        const target = { ...fields, street: official.street };
+        last = await attempt("findJsonp", cartoQueries(target)?.find ?? queries.find, target);
+        if (last?.point) return { point: last.point, approx: false, official: official.street };
+        suggestions = [official.street];
+      } else {
+        // The same street (or no clear winner): the portal with the number and the postcode, as before.
+        suggestions = official.suggestions;
+        last = await attempt("candidates", queries.candidates);
+      }
+    }
   }
-  return approx ? { point: approx, approx: true } : null;
+  if (last?.point) return { point: last.point, approx: false };
+  if (approx) return { point: approx.point, approx: true, ...(approx.official ? { official: approx.official } : {}) };
+  return { point: null, suggestions };
 }
 
 async function geocode(fields, context) {
   const carto = await geocodeCarto(fields, context);
   // The approximate street position keeps its detail code (the portal is not in the official base).
-  if (carto) return { point: carto.point, code: null, diagnostic: carto.approx ? "number_mismatch" : null, approx: carto.approx, source: "cartociudad" };
+  if (carto?.point) return {
+    point: carto.point, code: null, diagnostic: carto.approx ? "number_mismatch" : null, approx: carto.approx,
+    source: "cartociudad", official: carto.official ?? null,
+  };
   const found = await geocodeGeoapify(fields, context);
-  return { ...found, approx: false, source: found.point ? "geoapify" : null };
+  return { ...found, approx: false, source: found.point ? "geoapify" : null, suggestions: found.point ? [] : carto?.suggestions ?? [] };
+}
+
+// A suggestion applied with one tap as `edits`: the official street with the portal, municipality and
+// postcode of the same address (the technician's own agenda; never another person's data).
+function suggestionLocation(street, fields) {
+  const location = { street, number: field(fields.housenumber), municipality: field(fields.city) };
+  location.postalCode = /^\d{5}$/u.test(field(fields.postcode)) ? field(fields.postcode) : "";
+  if (fields.province && LOCALITY.test(fields.province)) location.province = fields.province;
+  return location;
+}
+
+// ---- CONFIRMAR_CITAS-022: address assistant (`suggest`): CartoCiudad `candidates`, free, never Geoapify.
+const SUGGEST_TEXT = /^[\p{L}\p{N}][\p{L}\p{N} .’'ºª/-]{2,99}$/u;
+export function suggestQuery(input) {
+  const text = field(input?.query).replace(/\s+/gu, " ");
+  const municipality = field(input?.municipality).replace(/\s+/gu, " ");
+  const postcode = field(input?.postalCode);
+  if (!SUGGEST_TEXT.test(text) || text.replace(/\D/gu, "").length > 5) return null;
+  if (municipality && (!LOCALITY.test(municipality) || municipality.length > 100)) return null;
+  if (postcode && !/^\d{5}$/u.test(postcode)) return null;
+  const name = cartoStreetName(cleanOracleText(text));
+  if ([...name.replace(/[^\p{L}]/gu, "")].length < 3) return null;
+  return {
+    q: municipality ? `${name}, ${municipality}` : name, limit: "10",
+    ...(postcode ? { cod_postal_filter: postcode } : {}),
+  };
+}
+
+// Suggestions shown as «Calle Número · Pueblo (Provincia) CP». Only street map rows (streets and portals).
+export function suggestionRows(data, input = {}) {
+  const municipality = field(input.municipality);
+  const postcode = field(input.postalCode);
+  const items = new Map();
+  for (const row of (Array.isArray(data) ? data : cartoRows(data)).slice(0, 10)) {
+    const street = officialStreetName(row);
+    const town = municipalityName(field(row.muni) || field(row.poblacion));
+    if (!street || !LOCALITY.test(town) || brokenText(town)) continue;
+    if (municipality && !sameMunicipality(town, municipality) && !sameMunicipality(field(row.poblacion), municipality)) continue;
+    const codes = field(row.postalCode).split(/\s+/u).filter(code => /^\d{5}$/u.test(code));
+    const postalCode = codes.length === 1 ? codes[0] : postcode && codes.includes(postcode) ? postcode : "";
+    const number = row.type === "portal" && Number.isInteger(Number(row.portalNumber)) && Number(row.portalNumber) > 0
+      ? String(Number(row.portalNumber)) + (cartoExtension(row) ? cartoExtension(row).toUpperCase() : "") : "";
+    const named = field(row.province);
+    const province = named && !brokenText(named) && LOCALITY.test(named) ? named : provinceFromPostcode(postalCode);
+    const label = [street + (number ? " " + number : ""), town + (province && normalized(province) !== normalized(town) ? ` (${province})` : "")
+      + (postalCode ? " " + postalCode : "")].join(" · ");
+    if (items.has(label)) continue;
+    items.set(label, { street, number, municipality: town, ...(province ? { province } : {}), postalCode, label });
+  }
+  return [...items.values()].slice(0, 6);
+}
+
+export async function suggestAddresses(input, { fetcher = fetch, timeoutMs, signal } = {}) {
+  const params = suggestQuery(input);
+  if (!params) throw new RouteFailure(400);
+  const context = contextFor({ charge: async () => false, apiKey: "", signal, cartociudad: { fetcher, timeoutMs } });
+  const data = await readCarto("candidates", params, context);
+  if (data === null) throw new RouteFailure(503);
+  return suggestionRows(data, input);
 }
 
 // At most two provider calls per address: one structured search and, only if it finds
@@ -848,5 +1051,18 @@ export async function calculateJourney(addresses, options) {
   // Only the provider name per address; never the address or its coordinates.
   for (let index = 0; index < addresses.length; index++) sources[index] = points.get(addresses[index])?.source ?? null;
   sources.length = addresses.length;
+  // CONFIRMAR_CITAS-022 (optional): per address, the official street used and, for an address not found,
+  // up to 3 official streets of the same municipality to apply with one tap (never coordinates).
+  const officials = options.officials ?? [];
+  const suggestions = options.suggestions ?? [];
+  for (let index = 0; index < addresses.length; index++) {
+    const outcome = points.get(addresses[index]);
+    const fields = outcome && streetFields(addresses[index]);
+    officials[index] = outcome?.point && outcome.official ? outcome.official : null;
+    suggestions[index] = !outcome?.point && fields && outcome?.suggestions?.length
+      ? outcome.suggestions.slice(0, 3).map(street => suggestionLocation(street, fields)) : null;
+  }
+  officials.length = addresses.length;
+  suggestions.length = addresses.length;
   return estimates;
 }

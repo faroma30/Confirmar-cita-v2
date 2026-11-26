@@ -1,5 +1,5 @@
 import { currentUser, jsonResponse, preflightOrReject, serviceClient } from "../_shared/runtime.ts";
-import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddresses, journeyFingerprint, providerPlan } from "./core.mjs";
+import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddresses, journeyFingerprint, providerPlan, suggestAddresses, suggestQuery } from "./core.mjs";
 import { canAutocomplete, homeOptIn, parseActivityEdits, routeAccess } from "./policy.mjs";
 import { pilotStopRejection } from "./pilot-control.mjs";
 
@@ -22,18 +22,24 @@ Deno.serve(async (request: Request) => {
   } catch { return invalid(); }
   if (!input || typeof input !== "object" || Array.isArray(input) || typeof input.expectedActor !== "string") return invalid();
   const autocomplete = input.operation === "autocomplete";
+  // CONFIRMAR_CITAS-022: address assistant with CartoCiudad (free): no Geoapify key, no pilot booking, no credits.
+  const suggest = input.operation === "suggest";
+  const cartoOn = Deno.env.get("MY_ROUTES_CARTOCIUDAD") !== "no";
   const control = input.operation === "status" || input.operation === "stop";
-  if (!control && !enabled) return disabled();
-  if (!control && !autocomplete && Deno.env.get("MY_ROUTES_GEOAPIFY_MANUAL_FREE_PILOT") !== "yes") return disabled();
-  const allowedKeys = control ? ["operation", "expectedActor"] : autocomplete
+  if (suggest && !cartoOn) return disabled();
+  if (!control && !suggest && !enabled) return disabled();
+  if (!control && !suggest && !autocomplete && Deno.env.get("MY_ROUTES_GEOAPIFY_MANUAL_FREE_PILOT") !== "yes") return disabled();
+  const allowedKeys = control ? ["operation", "expectedActor"] : suggest
+    ? ["operation", "query", "municipality", "postalCode", "expectedActor"] : autocomplete
     ? ["operation", "query", "kind", "expectedActor"]
     : ["date", "fingerprint", "expectedActor", "edits", "useHome"];
   if (Object.keys(input).some(key => !allowedKeys.includes(key))) return invalid();
-  // CONFIRMAR_CITAS-015: the saved home goes to Geoapify only with an explicit `useHome: true`.
-  const useHome = homeOptIn(input);
-  if (useHome === null) return invalid();
+  // CONFIRMAR_CITAS-022: the saved home is always used (Director's decision; replaces the opt-in of the 015).
+  // `useHome` is still accepted for compatibility with 3routes17 (a boolean); any other type is invalid.
+  if (homeOptIn(input) === null) return invalid();
+  if (suggest && !suggestQuery(input)) return invalid();
   const query = autocomplete ? autocompleteQuery(input.query) : "";
-  if (!control && (autocomplete ? !query
+  if (!control && !suggest && (autocomplete ? !query
     : typeof input.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.fingerprint)
       || typeof input.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input.date))) return invalid();
 
@@ -66,6 +72,13 @@ Deno.serve(async (request: Request) => {
     if (prefs.error?.code === "42501") return reply({ error: "Acceso denegado." }, 403);
     if (prefs.error || !prefs.data || !Object.hasOwn(prefs.data, "home")) return disabled();
 
+    if (suggest) {
+      // Only public street names of the official street map; the typed text is never logged.
+      try {
+        return reply({ suggestions: await suggestAddresses(input, { fetcher: fetch, signal: request.signal }) });
+      } catch { return disabled(); }
+    }
+
     if (control) {
       // Only "status" reaches this point: "stop" is handled above for Administrators.
       const backend = serviceClient();
@@ -90,8 +103,8 @@ Deno.serve(async (request: Request) => {
       } catch { return invalid(); }
       if (await journeyFingerprint(addresses) !== input.fingerprint) return reply({ error: "Los datos de la ruta han cambiado." }, 409);
       if (addresses.length === 2) return reply({ estimates: [] });
-      // Only the caller's own saved home (cc_my_route_locations_v2 above) can be used.
-      const plan = providerPlan(addresses, useHome);
+      // Only the caller's own saved home (cc_my_route_locations_v2 above) can be used, always (CONFIRMAR_CITAS-022).
+      const plan = providerPlan(addresses, true);
       reasons = plan.reasons;
       addresses = plan.addresses;
       if (!addresses.slice(1).some((address, index) => address && addresses[index])) {
@@ -133,14 +146,18 @@ Deno.serve(async (request: Request) => {
       // gives the origin per address. Its failures only log the stage and kind: never the address.
       const approx: boolean[] = [];
       const sources: (string | null)[] = [];
-      const cartociudad = Deno.env.get("MY_ROUTES_CARTOCIUDAD") === "no" ? null : {
+      // CONFIRMAR_CITAS-022: optional `officials` (official street used, per address) and `suggestions` (up to 3
+      // official streets of the same municipality for an address not found, applied by the app as `edits`).
+      const officials: (string | null)[] = [];
+      const suggestions: (unknown[] | null)[] = [];
+      const cartociudad = !cartoOn ? null : {
         fetcher: fetch,
         onFailure: (fault: { stage: string; kind: string; http: number | null }) => console.warn(JSON.stringify({
           event: "cartociudad_attempt_failed", stage: fault.stage, kind: fault.kind, http: fault.http,
         })),
       };
       const estimates = await calculateJourney(addresses, {
-        ...context, reasons, details, diagnostics, approx, sources, cartociudad,
+        ...context, reasons, details, diagnostics, approx, sources, officials, suggestions, cartociudad,
         // The pilot budget ran out after some legs: the partial result is returned and recorded as before.
         onPilotLimit: () => { failure = "quota"; },
       });
@@ -149,6 +166,8 @@ Deno.serve(async (request: Request) => {
         diagnostics: estimates.map((_, index) => diagnostics[index] ?? null),
         approx: estimates.map((_, index) => approx[index] === true),
         sources: addresses.map((_, index) => sources[index] ?? null),
+        officials: addresses.map((_, index) => officials[index] ?? null),
+        suggestions: addresses.map((_, index) => suggestions[index] ?? null),
       });
     } catch (error) {
       providerLimited = typeof error === "object" && error !== null
