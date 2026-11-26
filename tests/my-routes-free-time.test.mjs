@@ -36,7 +36,9 @@ test("sobra o falta tiempo descontando el desplazamiento; los tramos de casa no 
   assert.deepEqual(legSlack(legs[1], veinte), { minutes: 10, late: false, reason: null, signed: 10 });
   assert.deepEqual(legSlack(legs[1], { durationSeconds: 2100 }), { minutes: 5, late: true, reason: null, signed: -5 });
   assert.equal(legSlack(legs[1], null), null);
-  assert.equal(legSlack(legs[4], veinte).reason, "no_end");
+  // CONFIRMAR_CITAS-016 (opción A): «Pausa comida larga» es pausa por defecto, así que no hay tramo hacia ella.
+  assert.equal(legs.length, 5);
+  assert.equal(legSlack(legs[3], veinte).reason, "no_end");
   // Una pausa intermedia alarga el fin del tramo (respeta la misma regla que el aviso de retraso).
   const conPausa = buildLegs(formatRouteLocation(casa), combineActivities(citas, [otras[0], otra("Pausa", "11:15", "12:00"), otras[2]], prefs));
   assert.equal(conPausa[2].from.endTime, "12:00");
@@ -75,21 +77,27 @@ test("con estimación: «Te sobran» y «Llegarías tarde», y respeta las edici
   get("Tab").events.click();
   await settle();
   let list = texts(get("List")).join("\n");
-  assert.match(list, /Te sobran 10 min \(tiempo libre menos desplazamiento\)\./);
-  assert.match(list, /Sin hora de fin: no se puede calcular si llegas a tiempo\./);
-  assert.match(list, /Tiempo libre tras los desplazamientos entre actividades: 10 min \(1 tramos\)\./);
-  assert.match(list, /Conducción parcial/);
-  // El técnico marca «Pausa comida larga» como pausa (edición de la sesión): el tramo pasa a ir de Mantenimiento a Valoración.
-  const card = get("List").children.find(node => node.tag === "article" && node.children[0].textContent === "Pausa comida larga · 11:15");
-  const form = card.children.find(node => node.tag === "details").children.find(node => node.tag === "form");
-  const select = form.children[0].children[0];
-  select.value = "pause";
-  form.events.submit({ preventDefault() {} });
-  await settle();
-  list = texts(get("List")).join("\n");
+  // CONFIRMAR_CITAS-016 (opción A): «Pausa comida larga» sale por defecto como pausa sin desplazamiento,
+  // así que el tramo va de Mantenimiento a Valoración.
   assert.match(list, /Pausa sin desplazamiento/);
+  assert.doesNotMatch(list, /Pendiente de decidir/);
   assert.match(list, /Posible retraso: el trayecto supera el tiempo entre actividades\./);
   assert.match(list, /Llegarías 10 min tarde \(tiempo libre menos desplazamiento\)\./);
   assert.match(list, /Te sobran 10 min/);
   assert.match(list, /Tiempo libre total: 40 min/);
+  // El técnico la cambia a «Sí, con desplazamiento» (edición de la sesión) y se respeta.
+  const card = get("List").children.find(node => node.tag === "article" && node.children[0].textContent === "Pausa comida larga · 11:15");
+  const form = card.children.find(node => node.tag === "details").children.find(node => node.tag === "form");
+  const select = form.children[0].children[0];
+  assert.equal(select.value, "pause");
+  select.value = "travel";
+  form.events.submit({ preventDefault() {} });
+  await settle();
+  list = texts(get("List")).join("\n");
+  assert.doesNotMatch(list, /Pausa sin desplazamiento/);
+  assert.match(list, /Con desplazamiento · Falta dirección/);
+  assert.match(list, /Te sobran 10 min \(tiempo libre menos desplazamiento\)\./);
+  assert.match(list, /Sin hora de fin: no se puede calcular si llegas a tiempo\./);
+  assert.match(list, /Tiempo libre tras los desplazamientos entre actividades: 10 min \(1 tramos\)\./);
+  assert.match(list, /Conducción parcial/);
 });

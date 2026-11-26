@@ -178,6 +178,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     parent.append(node);
     return node;
   }
+  // CONFIRMAR_CITAS-016: una actividad «Desplazamiento» sin destino no se calcula ni gasta créditos.
+  const noDestinationText = "Actividad de desplazamiento sin destino: no se calcula.";
   function label(stop) {
     return [stop.type, stop.time].filter(Boolean).join(" · ");
   }
@@ -327,6 +329,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         if (!url) {
           const missing = [leg.from, leg.to].filter(stop => !stop.address)
             .map(stop => stop.time ? `${stop.type} (${stop.time})` : stop.type);
+          if (leg.to.noDestination || leg.from.noDestination) {
+            add(item, "p", "Tramo pendiente. " + noDestinationText);
+            return;
+          }
           add(item, "p", missing.length ? `Tramo pendiente: revisa ${missing.join(" y ")}.`
             : "Tramo pendiente: revisa la decisión de desplazamiento.");
           return;
@@ -390,6 +396,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         if (activity.travel === "pause") add(card, "p", "Pausa sin desplazamiento");
         else {
           if (activity.travel === "undecided") add(card, "p", "Pendiente de decidir si requiere desplazamiento");
+          else if (activity.noDestination) add(card, "p", noDestinationText);
           else if (activity.address) {
             add(card, "p", "Con desplazamiento");
             add(card, "p", activity.address);

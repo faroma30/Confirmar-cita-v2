@@ -25,7 +25,7 @@ const escenarios = {
   "domicilio con provincia": [{ home: { ...casa, province: "Provincia Ficticia" }, keys: null, tourline: null }, [cita("a", "09:00", "Calle Uno 10"), cita("b", "11:00", "Calle Dos 20")], []],
   "recogida de llaves con dirección propia en la agenda": [{ home: casa, keys: llaves, tourline: null }, [cita("a", "11:00", "Calle Uno 10")], [otra("Recogida de llaves", "09:00", "Calle Agenda 5")]],
   "Tourline Alianzas sin dirección en la agenda": [{ home: casa, keys: null, tourline: tour }, [cita("a", "11:00", "Calle Uno 10")], [otra("Tourline Alianzas", "09:00")]],
-  "pausa con texto extra (pendiente de decidir)": [{ home: casa, keys: null, tourline: null }, [cita("a", "09:00", "Calle Uno 10"), cita("b", "13:00", "Calle Dos 20")], [otra("Pausa comida larga", "11:00")]],
+  "pausa con texto extra (pausa por defecto, CONFIRMAR_CITAS-016)": [{ home: casa, keys: null, tourline: null }, [cita("a", "09:00", "Calle Uno 10"), cita("b", "13:00", "Calle Dos 20")], [otra("Pausa comida larga", "11:00")]],
 };
 
 for (const [nombre, [prefs, citas, otras]] of Object.entries(escenarios)) {
