@@ -190,7 +190,8 @@ test("modo suggest: solo CartoCiudad `candidates`, sin piloto ni créditos ni Ge
       ]);
     },
   });
-  assert.deepEqual(sent, [{ q: "Font, Ripoll", limit: "10", cod_postal_filter: "17500" }]);
+  // CONFIRMAR_CITAS-023: con municipio, el CP ya no es filtro (solo ordena).
+  assert.deepEqual(sent, [{ q: "Font, Ripoll", limit: "10" }]);
   assert.deepEqual(items.map(item => item.label), ["Calle Font 5 · Ripoll (Girona) 17500", "Plaça de la Font · Ripoll (Girona) 17500"]);
   assert.deepEqual(items[0], { street: "Calle Font", number: "5", municipality: "Ripoll", province: "Girona", postalCode: "17500", label: items[0].label });
   await assert.rejects(suggestAddresses({ query: "Font" }, { fetcher: async () => new Response("x", { status: 500 }) }), error => error.status === 503);

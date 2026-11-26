@@ -1,6 +1,6 @@
-import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes18";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes18";
-import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes18";
+import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes19";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes19";
+import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes19";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;
@@ -372,8 +372,13 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         // Un toque aplica la calle oficial como `edits` y se recalcula (si el piloto lo permite).
         void (provider?.manual && !stopped && !pilotBusy ? calculate() : refresh());
       };
+      // CONFIRMAR_CITAS-023: el bloque de una dirección sale una sola vez; en el tramo siguiente basta el motivo.
+      const offered = new Set();
       function offerSuggestions(item, stop, list) {
         if (!list?.length) return;
+        const same = (stop.key || "") + "|" + (stop.address || "");
+        if (offered.has(same)) return;
+        offered.add(same);
         add(item, "p", "¿Querías decir…?");
         const box = add(item, "div", "");
         box.className = "route-address-options";

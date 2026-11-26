@@ -153,13 +153,14 @@ export function bindAddressAssistant({ fields, search, eligible = () => true, ca
   function choose(item) {
     const sameTown = municipality.value.trim().toLowerCase() === item.municipality.toLowerCase();
     street.value = item.street;
-    if (item.number) number.value = item.number;
+    // CONFIRMAR_CITAS-023: sin número en la sugerencia, el anterior (de otra calle) se vacía.
+    number.value = item.number || "";
     municipality.value = item.municipality;
     if (province) province.value = item.province || (sameTown ? province.value : "");
     if (postalCode) postalCode.value = item.postalCode || (sameTown ? postalCode.value : "");
     clear();
-    // Sin número en la sugerencia: el técnico lo escribe.
-    (number.value.trim() ? street : number).focus();
+    // Sin número en la sugerencia: el técnico lo escribe en «Número o S/N».
+    (item.number ? street : number).focus();
   }
   async function lookup(query, controller) {
     const isCurrent = () => !controller.signal.aborted && pending === controller && eligible();
