@@ -255,9 +255,11 @@ test("pantalla: motivo por tramo, invitación a corregir, totales de los tramos 
   const log = [], bodies = [];
   const get = mountApp({ log, bodies });
   const list = await calculate(get);
-  assert.match(list, /Motivo: Geoapify no encuentra esta calle en ese municipio\.\nCorrígela en «Editar desplazamiento» de esta actividad y vuelve a calcular\./);
+  assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\nCorrígela en «Editar desplazamiento» de esta actividad y vuelve a calcular\./);
   assert.match(list, /Motivo: La otra dirección del tramo no se encontró\.\nCorrígela en «Editar desplazamiento» de Instalación · 11:00 y vuelve a calcular\./);
-  assert.match(list, /Motivo: Tramo excluido por privacidad\./);
+  // CONFIRMAR_CITAS-022: el domicilio se usa siempre (antes «Tramo excluido por privacidad»); aquí no se encuentra.
+  assert.match(list, /Casa → Instalación · 09:00\nTiempo y distancia no disponibles\.\nMotivo: La otra dirección del tramo no se encontró\./);
+  assert.doesNotMatch(list, /privacidad/);
   assert.match(list, /Conducción total \(1 de 5 tramos\): 30 min · 12 km/);
   assert.doesNotMatch(list, /la consulta no devolvió este tramo/);
   assert.equal(get("CalculationNotice").textContent,
@@ -274,7 +276,8 @@ test("corrección con edits: la dirección escrita en «Editar desplazamiento» 
   await calculate(get);
   const form = card(get, "Instalación · 11:00").children.find(node => node.tag === "details").children.find(node => node.tag === "form");
   const inputs = form.children[0].children.filter(node => node.tag === "label").map(label => label.children[0]);
-  [inputs[0].value, inputs[1].value, inputs[2].value, inputs[3].value] = ["Carrer Nou", "5", "Vilafictícia", CP];
+  // CONFIRMAR_CITAS-022: el formulario tiene también «Provincia (opcional)» (inputs[3]); el CP es inputs[4].
+  [inputs[0].value, inputs[1].value, inputs[2].value, inputs[4].value] = ["Carrer Nou", "5", "Vilafictícia", CP];
   form.events.submit({ preventDefault() {} });
   await settle();
   log.length = 0;
@@ -285,7 +288,9 @@ test("corrección con edits: la dirección escrita en «Editar desplazamiento» 
   assert.ok(log.includes("estructurada:nou"), "Geoapify recibe la dirección corregida");
   assert.ok(!log.some(item => item.endsWith(":inexistent")), "y ya no la de la agenda");
   assert.match(list, /Conducción total \(3 de 5 tramos\): 90 min · 36 km/);
-  assert.doesNotMatch(list, /no encuentra esta calle|La otra dirección/);
+  // CONFIRMAR_CITAS-022: el domicilio (ficticio, sin resultado en este simulador) ahora también se busca; solo
+  // ese tramo de ida da «La otra dirección…». Ninguna invitación a corregir la actividad ya corregida.
+  assert.doesNotMatch(list, /no encuentra esta calle|Corrígela en «Editar desplazamiento» de Instalación · 11:00/);
 });
 
 test("paridad de huella con una dirección corregida en una instalación de Oracle", async () => {
@@ -305,7 +310,7 @@ test("paridad de huella con una dirección corregida en una instalación de Orac
 test("compatibilidad: la web nueva con la función v10 (sin `details`) muestra los motivos de siempre", async () => {
   const get = mountApp({ log: [], bodies: [], legacy: true });
   const list = await calculate(get);
-  assert.match(list, /Tiempo y distancia no disponibles\.\nMotivo: Geoapify no encontró una coincidencia única para la dirección\./);
+  assert.match(list, /Tiempo y distancia no disponibles\.\nMotivo: No se encontró una coincidencia única para la dirección\./);
   assert.match(list, /Conducción total \(1 de 5 tramos\)/);
   assert.doesNotMatch(list, /Corrígela/);
 });
@@ -331,8 +336,8 @@ test("compatibilidad: la función nueva solo añade un campo opcional; `reasons`
 test("cada código de motivo tiene su texto en pantalla", async () => {
   const textos = {
     privacy: "Tramo excluido por privacidad.", incomplete: "La dirección no tiene calle, portal y municipio utilizables.",
-    missing_number: "Falta el número del portal.", street_not_found: "Geoapify no encuentra esta calle en ese municipio.",
-    portal_not_found: "Geoapify encuentra la calle, pero no este número de portal.", ambiguous: "Hay varios sitios posibles con esta dirección.",
+    missing_number: "Falta el número del portal.", street_not_found: "No se encuentra esta calle en ese municipio.",
+    portal_not_found: "Se encuentra la calle, pero no este número de portal.", ambiguous: "Hay varios sitios posibles con esta dirección.",
     other_end: "La otra dirección del tramo no se encontró.", other_end_incomplete: "A la otra dirección del tramo le falta calle, portal o municipio.",
     pilot_limit: "Tope diario del piloto alcanzado.", no_route: "Geoapify no devolvió una ruta utilizable para este tramo.",
   };
@@ -365,7 +370,8 @@ test("una instalación sin dirección completada a mano se envía en edits: sus 
   assert.equal(details.children[0].textContent, "Completar dirección");
   const form = details.children.find(node => node.tag === "form");
   const inputs = form.children[0].children.filter(node => node.tag === "label").map(label => label.children[0]);
-  [inputs[0].value, inputs[1].value, inputs[2].value, inputs[3].value] = ["Carrer Nou", "5", "Vilafictícia", CP];
+  // CONFIRMAR_CITAS-022: el formulario tiene también «Provincia (opcional)» (inputs[3]); el CP es inputs[4].
+  [inputs[0].value, inputs[1].value, inputs[2].value, inputs[4].value] = ["Carrer Nou", "5", "Vilafictícia", CP];
   form.events.submit({ preventDefault() {} });
   await settle();
   list = await calculate(get, false);

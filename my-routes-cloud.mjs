@@ -54,7 +54,7 @@ export function createCloudRoutes({ invoke, getActor }) {
       const task = (async () => {
         try {
           const { data, error } = await invoke("my-routes-estimate", {
-            // CONFIRMAR_CITAS-015: `useHome` solo viaja si el técnico activó «Usar mi domicilio».
+            // CONFIRMAR_CITAS-022: con domicilio guardado `useHome: true` viaja siempre (la v13 lo necesita; la función nueva ya no).
             body: { date, fingerprint, expectedActor: actor.id, ...(edits.length ? { edits } : {}), ...(withHome ? { useHome: true } : {}) },
           });
           if (error) {
@@ -98,6 +98,10 @@ export function createCloudRoutes({ invoke, getActor }) {
               value: data.sources.map(source => routeSources.has(source) ? source : null),
             });
           }
+          // CONFIRMAR_CITAS-022: calle oficial usada y sugerencias «¿Querías decir…?» por dirección (opcionales).
+          const official = officialAddressData(data, legs.length + 1);
+          if (official.officials) Object.defineProperty(data.estimates, "officials", { value: official.officials });
+          if (official.suggestions) Object.defineProperty(data.estimates, "suggestions", { value: official.suggestions });
           // CONFIRMAR_CITAS-018: código de detalle por tramo (opcional; la función v11 no lo envía).
           // Desde el 020 también en los tramos «aprox.».
           if (Array.isArray(data.diagnostics) && data.diagnostics.length === legs.length) {
@@ -144,4 +148,53 @@ export function createCloudRouteAutocomplete({ invoke, getActor }) {
       ...(typeof displayPostalCode === "string" && /^\d{5}$/.test(displayPostalCode) ? { displayPostalCode } : {}),
     }));
   };
+}
+
+// CONFIRMAR_CITAS-022: sugerencias del asistente de direcciones (modo `suggest` de my-routes-estimate:
+// CartoCiudad desde el servidor, sin créditos del piloto ni Geoapify). Con la función v13 (sin este modo)
+// la respuesta es un error y el asistente deja escribir a mano.
+const suggestionText = /^[\p{L}\p{N}][\p{L}\p{N} .\u2019'ºª/-]*$/u;
+const suggestionTown = /^[\p{L}][\p{L} .\u2019'-]*$/u;
+export function createCloudAddressSuggest({ invoke, getActor }) {
+  return async ({ query, municipality = "", postalCode = "" }, signal) => {
+    const actor = getActor();
+    if (signal?.aborted || !actor?.id || actor.role !== "technician") return [];
+    const body = { operation: "suggest", query, expectedActor: actor.id,
+      ...(municipality ? { municipality } : {}), ...(/^\d{5}$/.test(postalCode) ? { postalCode } : {}) };
+    const { data, error } = await invoke("my-routes-estimate", { body, signal });
+    const current = getActor();
+    if (signal?.aborted || current?.id !== actor.id || current.role !== "technician") return [];
+    if (error || !Array.isArray(data?.suggestions)) throw new Error("No se pudieron cargar sugerencias.");
+    return data.suggestions.slice(0, 6).filter(item =>
+      typeof item?.street === "string" && item.street.length <= 200 && suggestionText.test(item.street)
+      && typeof item.municipality === "string" && item.municipality.length <= 100 && suggestionTown.test(item.municipality)
+      && (item.number === undefined || (typeof item.number === "string" && item.number.length <= 30 && (!item.number || suggestionText.test(item.number))))
+      && (item.postalCode === undefined || (typeof item.postalCode === "string" && /^(?:\d{5})?$/.test(item.postalCode)))
+    ).map(item => {
+      const province = typeof item.province === "string" && item.province.length <= 100 && suggestionTown.test(item.province) ? item.province : "";
+      const number = item.number ?? "";
+      const postal = item.postalCode ?? "";
+      const label = [item.street + (number ? " " + number : ""),
+        item.municipality + (province && province !== item.municipality ? " (" + province + ")" : "") + (postal ? " " + postal : "")].join(" · ");
+      return { street: item.street, number, municipality: item.municipality, ...(province ? { province } : {}), postalCode: postal, label };
+    });
+  };
+}
+
+// CONFIRMAR_CITAS-022: calle oficial usada y sugerencias por dirección (campos opcionales; la v13 no los envía).
+export function officialAddressData(data, length) {
+  const officials = Array.isArray(data?.officials) && data.officials.length === length
+    ? data.officials.map(name => typeof name === "string" && name.length <= 200 && suggestionText.test(name) ? name : null) : null;
+  const valid = location => location && typeof location === "object" && typeof location.street === "string"
+    && location.street.length <= 200 && suggestionText.test(location.street)
+    && typeof location.municipality === "string" && location.municipality.length <= 100 && suggestionTown.test(location.municipality)
+    && typeof location.number === "string" && location.number.length <= 30 && (!location.number || suggestionText.test(location.number))
+    && typeof location.postalCode === "string" && /^(?:\d{5})?$/.test(location.postalCode)
+    && (location.province === undefined || (typeof location.province === "string" && location.province.length <= 100 && suggestionTown.test(location.province)));
+  const suggestions = Array.isArray(data?.suggestions) && data.suggestions.length === length
+    ? data.suggestions.map(list => Array.isArray(list) ? list.filter(valid).slice(0, 3).map(location => ({
+      street: location.street, number: location.number, municipality: location.municipality, postalCode: location.postalCode,
+      ...(location.province ? { province: location.province } : {}),
+    })) : []).map(list => list.length ? list : null) : null;
+  return { officials, suggestions };
 }

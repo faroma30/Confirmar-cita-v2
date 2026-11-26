@@ -222,8 +222,10 @@ test("sin CartoCiudad activado el cálculo es el de la v12 (Geoapify primero)", 
 // ---------- Servidor (index.ts) y app ----------
 test("index.ts: CartoCiudad primero, interruptor MY_ROUTES_CARTOCIUDAD=no, campos opcionales y avisos sin direcciones", async () => {
   const source = await readFile(new URL("../supabase/functions/my-routes-estimate/index.ts", import.meta.url), "utf8");
-  assert.match(source, /Deno\.env\.get\("MY_ROUTES_CARTOCIUDAD"\) === "no" \? null/);
-  assert.match(source, /\.\.\.context, reasons, details, diagnostics, approx, sources, cartociudad,/);
+  // CONFIRMAR_CITAS-022: el interruptor se lee una vez (`cartoOn`) y la llamada añade `officials` y `suggestions`.
+  assert.match(source, /const cartoOn = Deno\.env\.get\("MY_ROUTES_CARTOCIUDAD"\) !== "no";/);
+  assert.match(source, /const cartociudad = !cartoOn \? null/);
+  assert.match(source, /\.\.\.context, reasons, details, diagnostics, approx, sources, officials, suggestions, cartociudad,/);
   assert.match(source, /approx: estimates\.map\(\(_, index\) => approx\[index\] === true\)/);
   assert.match(source, /sources: addresses\.map\(\(_, index\) => sources\[index\] \?\? null\)/);
   const warn = source.slice(source.indexOf("cartociudad_attempt_failed") - 80, source.indexOf("cartociudad_attempt_failed") + 120);
@@ -275,7 +277,7 @@ test("pantalla: tramo «(aprox.)» con su detalle y el origen de las direcciones
   const list = await mountApp();
   assert.match(list, /30 min · 12 km\nEstimación sin tráfico[^\n]*\norigen: cartociudad → geoapify/);
   assert.match(list, /30 min · 12 km \(aprox\.\)\nEstimación sin tráfico[^\n]*\naprox\.: la base oficial no tiene ese portal; se usa la calle\.\ndetalle: number_mismatch\norigen: geoapify → cartociudad/);
-  assert.match(list, /Motivo: Geoapify no encuentra esta calle en ese municipio\.\ndetalle: no_results/);
+  assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\ndetalle: no_results/);
 });
 
 test("compatibilidad: la web nueva con la función v12 (sin `approx` ni `sources`) no muestra «aprox.» ni origen", async () => {

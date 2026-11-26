@@ -260,18 +260,41 @@ async function calculate(get) {
   return texts(get("List")).join("\n");
 }
 
-test("opción desactivada (por defecto): petición y pantalla idénticas a las de hoy", async () => {
+// CONFIRMAR_CITAS-022 (decisión del Director, 26/11/2026): el domicilio guardado se usa siempre y ya no hay
+// casilla. Sustituye a la prueba del 015 «opción desactivada (por defecto)…».
+test("sin casilla: el domicilio guardado se usa siempre, aunque la preferencia antigua del dispositivo esté desactivada", async () => {
   const log = [], bodies = [];
   const consent = createHomeConsent({ storage: storage(), getActor: () => ({ id: "tecnico-ficticio", role: "technician" }) });
-  assert.equal(consent.read(), false, "desactivada por defecto");
+  assert.equal(consent.read(), false, "preferencia antigua desactivada");
   const list = await calculate(mountApp({ consent, log, bodies }));
   assert.equal(bodies.length, 1);
-  assert.deepEqual(Object.keys(bodies[0]).sort(), ["date", "expectedActor", "fingerprint"]);
-  assert.deepEqual(log, ["geocoding", "geocoding", "ruta"], "el domicilio no se busca ni se cobra");
-  assert.match(list, /Hora de salida no disponible: el domicilio queda fuera del piloto\./);
-  assert.match(list, /Tramo excluido por privacidad\./);
-  assert.match(list, /30 min · 12 km/);
-  assert.doesNotMatch(list, /Salida recomendada|Llegada estimada a casa/);
+  assert.deepEqual(Object.keys(bodies[0]).sort(), ["date", "expectedActor", "fingerprint", "useHome"]);
+  assert.equal(bodies[0].useHome, true, "la función v13 sigue recibiendo el domicilio");
+  assert.equal(log.filter(item => item === "geocoding").length, 3, "domicilio + dos visitas");
+  assert.match(list, /Salida recomendada: 08:20/);
+  assert.match(list, /Llegada estimada a casa: 12:30/);
+  assert.doesNotMatch(list, /privacidad|fuera del piloto/);
+});
+
+test("sin domicilio guardado: no se envía `useHome` y el aviso invita a guardarlo", async () => {
+  const log = [], bodies = [];
+  const { panel, get } = fakePanel();
+  const actor = { id: "tecnico-ficticio", role: "technician" };
+  const sinCasa = { ...prefs, home: null };
+  const provider = createCloudRoutes({ getActor: () => actor, invoke: async (name, { body }) => {
+    if (body.operation) return { data: null, error: null };
+    bodies.push(body);
+    return { data: { estimates: [null, { distanceMeters: 1000, durationSeconds: 600, calculatedAt: new Date().toISOString() }, null] }, error: null };
+  } });
+  const ui = mountMyRoutes({ panel, agenda: { hidden: false }, getActor: () => actor, getDate: () => "2026-11-25", provider,
+    preferencesStore: { read: async () => sinCasa, write: async () => {}, clear() {} },
+    loadActivities: async () => ({ appointments: citas, ignored: [] }) });
+  ui.sync();
+  const list = await calculate(get);
+  assert.equal(get("Notice").textContent, "Guarda tu domicilio en Ajustes para calcular la salida.");
+  assert.match(list, /Hora de salida no disponible: guarda tu domicilio en Ajustes para calcular la salida\./);
+  assert.equal(bodies.every(body => !Object.hasOwn(body, "useHome")), true);
+  assert.equal(log.length, 0);
 });
 
 test("opción activada: salen el primer y el último tramo y la hora de salida, y el domicilio se cobra igual", async () => {
@@ -312,7 +335,7 @@ test("la preferencia es por técnico y por dispositivo; Master, Administrador o 
   assert.equal(broken.write(true), false);
 });
 
-test("Ajustes de Mis rutas guarda la opción solo al guardar los cambios", async () => {
+test("CONFIRMAR_CITAS-022: Ajustes ya no tiene la casilla; guardar no toca la preferencia antigua", async () => {
   const shared = storage();
   const actor = { id: "tecnico-ficticio", role: "technician" };
   const consent = createHomeConsent({ storage: shared, getActor: () => actor });
@@ -325,20 +348,18 @@ test("Ajustes de Mis rutas guarda la opción solo al guardar los cambios", async
   get("OpenSettings").events.click();
   await settle();
   const box = panel.querySelector("#myRoutesUseHome");
-  assert.equal(box.checked, false);
   box.checked = true;
-  assert.equal(consent.read(), false, "marcar la casilla no basta");
   get("Margin").valueAsNumber = 10;
   await get("Settings").events.submit({ preventDefault() {} });
   await settle();
-  assert.equal(consent.read(), true);
+  assert.equal(consent.read(), false, "la app ya no lee ni guarda la casilla");
+  assert.equal(shared.values.size, 0);
 });
 
-test("la casilla de Ajustes tiene el texto acordado y el aviso de Google Maps", async () => {
+test("CONFIRMAR_CITAS-022: Ajustes muestra el texto informativo del domicilio y ya no tiene la casilla", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
-  assert.equal(homeConsentLabel, "Usar mi domicilio para calcular el primer y el último tramo y la hora de salida (se envía a Geoapify)");
-  assert.match(html, new RegExp('<input id="myRoutesUseHome" type="checkbox"> ' + homeConsentLabel.replace(/[()]/g, "\\$&") + "</label>"));
-  assert.doesNotMatch(html, /id="myRoutesUseHome" type="checkbox" checked/);
-  assert.match(html, /Desactivada por defecto\./);
-  assert.match(html, /«Abrir tramo en Google Maps» de la ida y del regreso abre Google Maps con tu domicilio, pero solo si lo pulsas\./);
+  assert.ok(homeConsentLabel, "la etiqueta antigua se conserva solo por compatibilidad del módulo");
+  assert.doesNotMatch(html, /myRoutesUseHome|type="checkbox"> Usar mi domicilio/);
+  assert.match(html, /Tu domicilio se usa para calcular el primer y el último tramo y la hora de salida; se envía a CartoCiudad y Geoapify\./);
+  assert.match(html, /Si no quieres que se use, no guardes ningún domicilio\./);
 });
