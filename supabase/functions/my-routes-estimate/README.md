@@ -15,7 +15,13 @@ Edge Function de Supabase que calcula los desplazamientos de la jornada de un t�
 | `{ operation: "status", expectedActor }` | Devuelve el estado del piloto (`cc_route_pilot_status`) y `enabled` |
 | `{ operation: "stop", expectedActor }` | **Solo Administrador** (CONFIRMAR_CITAS-007, `pilot-control.mjs`): perfil propio por `cc_my_profile` con `role = admin`, activo, verificado y sesión vigente; si no, **403** «Solo el administrador puede desactivar el piloto…» (`code: admin_only`). Para el piloto para **todos** (`cc_route_pilot_configure(null, true)`) y devuelve el estado. Técnico y Master no pueden |
 | `{ operation: "autocomplete", query, kind, expectedActor }` | Sugerencias de calle (requiere `…_AUTOCOMPLETE_APPROVED = yes`) |
-| `{ date, fingerprint, expectedActor, edits? }` | Calcula los tramos de la jornada real del técnico; 409 si la huella no coincide |
+| `{ date, fingerprint, expectedActor, edits?, useHome? }` | Calcula los tramos de la jornada real del técnico; 409 si la huella no coincide. Con `useHome: true` (CONFIRMAR_CITAS-015) incluye el domicilio guardado del propio técnico; sin él, los tramos de casa salen como `privacy`. Un `useHome` que no sea booleano → 400 |
+
+## Domicilio opcional y búsqueda de direcciones (CONFIRMAR_CITAS-015, sin desplegar)
+- **Domicilio:** solo con `useHome: true`, que la PWA envía cuando el técnico activa «Usar mi domicilio…» en Ajustes de Mis rutas (desactivada por defecto, guardada en su dispositivo). El domicilio sale siempre de `cc_my_route_locations_v2` del propio llamante. El ámbito `home-and-activities` de `MY_ROUTES_GEOAPIFY_ACCESS` ya **no** envía el domicilio por sí solo; sigue sirviendo para el autocompletado `kind: "home"`.
+- **Normalización** (`cleanOracleText`, `streetFields`): prefijos de vía duplicados, apóstrofos `´ ’`, mayúsculas, número en su propia parte. Provincia deducida del código postal (`provinceFromPostcode`, 01–52).
+- **Elección** (`chooseCandidate`): mismo portal y calle; código postal **o** municipio coincidentes; gana el que coincide en ambos y tiene más confianza. Si dos destacan por igual, sigue siendo `not_found` (ambiguo).
+- **Llamadas:** como máximo 2 por dirección (estructurada y, solo si no encuentra nada utilizable, texto libre con provincia y «España»). Cada una se reserva en el piloto (1 crédito) como hasta ahora; 401/403/429 sin cambios.
 
 No existe operación para **reactivar** el piloto desde la app (ver «Reactivación diaria» y el diseño de administrador).
 
