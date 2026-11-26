@@ -125,12 +125,18 @@ Deno.serve(async (request: Request) => {
       // CONFIRMAR_CITAS-017: `details` (optional, one stable code per leg) explains every leg left
       // without time; `reasons` keeps the codes that 3routes14 understands. No provider data or coordinates.
       const details: (string | null)[] = reasons.map(reason => reason === "privacy" ? "privacy" : null);
+      // CONFIRMAR_CITAS-018: `diagnostics` (optional) gives, per leg, the code of the address that blocks it
+      // (no_results, street_mismatch, ...). Only codes: never the address, the provider response or coordinates.
+      const diagnostics: (string | null)[] = [];
       const estimates = await calculateJourney(addresses, {
-        ...context, reasons, details,
+        ...context, reasons, details, diagnostics,
         // The pilot budget ran out after some legs: the partial result is returned and recorded as before.
         onPilotLimit: () => { failure = "quota"; },
       });
-      return reply({ estimates, reasons, details: estimates.map((_, index) => details[index] ?? null) });
+      return reply({
+        estimates, reasons, details: estimates.map((_, index) => details[index] ?? null),
+        diagnostics: estimates.map((_, index) => diagnostics[index] ?? null),
+      });
     } catch (error) {
       providerLimited = typeof error === "object" && error !== null
         && "providerLimited" in error && error.providerLimited === true;
