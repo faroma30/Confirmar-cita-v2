@@ -4,15 +4,19 @@ const MAX_ACTIVITIES = 100;
 const MAX_LEG_METERS = 500000;
 
 const field = value => typeof value === "string" ? value.trim() : "";
-const normalized = value => field(value).normalize("NFD").replace(/\p{Diacritic}/gu, "")
+// The acute accent used as an apostrophe («D´EN») separates words, like «'» (CONFIRMAR_CITAS-017).
+const normalized = value => field(value).replace(/[´`‘’ʼ′]/gu, " ").normalize("NFD").replace(/\p{Diacritic}/gu, "")
   .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 // CONFIRMAR_CITAS-015: Oracle writes addresses in capitals, with duplicated street types
 // ("CALLE CARRER DE ...") and acute accents used as apostrophes ("L´ESTACIÓ").
 const APOSTROPHES = /[´`‘’ʼ′]/gu;
-const ABBREVIATED_TYPE = /^(c|cl|av|avda|pza|pl|ps)\s*[/.]\s*/iu;
-const EXPANDED_TYPE = { c: "Calle", cl: "Calle", av: "Avenida", avda: "Avenida", pza: "Plaza", pl: "Plaza", ps: "Paseo" };
-const GENERIC_TYPES = new Set(["calle", "cl", "c", "avenida", "av", "avda", "plaza", "pza", "pl", "paseo", "ps"]);
+const ABBREVIATED_TYPE = /^(c|cl|av|avda|pza|pl|ps|pg|ctra)\s*[/.]\s*/iu;
+const EXPANDED_TYPE = {
+  c: "Calle", cl: "Calle", av: "Avenida", avda: "Avenida", pza: "Plaza", pl: "Plaza", ps: "Paseo", pg: "Paseo", ctra: "Carretera",
+};
+const GENERIC_TYPES = new Set(["calle", "cl", "c", "avenida", "av", "avda", "plaza", "pza", "pl", "paseo", "ps", "pg",
+  "camino", "carretera", "ctra"]);
 const PARTICLES = new Set(["de", "del", "la", "las", "los", "el", "y", "i", "en", "les", "dels", "els", "al", "a", "da", "do", "das", "dos"]);
 const capitalize = word => word.replace(/(^|-)(\p{L})/gu, (_, start, letter) => start + letter.toUpperCase());
 
@@ -91,7 +95,7 @@ export function providerAddresses(addresses, includeHome) {
     // A saved home can also appear as an agenda stop or a hand-entered location.
     if (candidate && sameStreet(home.street, candidate.street)
       && samePortal(home.housenumber, candidate.housenumber)
-      && normalized(home.city) === normalized(candidate.city)) return "";
+      && sameMunicipality(home.city, candidate.city)) return "";
     return address;
   });
 }
@@ -122,24 +126,40 @@ const streetTypes = new Map([
   ["via", "way"], ["cl", "street"], ["pza", "square"], ["pl", "square"], ["ps", "promenade"],
   ["ronda", "ronda"], ["rambla", "rambla"], ["camino", "path"], ["cami", "path"],
   ["travesia", "crossing"], ["travessera", "crossing"], ["carretera", "road"], ["ctra", "road"],
+  ["pg", "promenade"], ["pca", "square"],
 ]);
 
+// CONFIRMAR_CITAS-017: Catalan and Spanish articles and prepositions that Oracle, autocomplete and
+// Geoapify write differently ("Carrer d'en Prova" / "CARRER PROVA", "de les", "dels", "de la", "del").
+const ARTICLES = new Set(["de", "del", "dels", "d", "la", "las", "los", "l", "el", "els", "les", "en", "na", "n"]);
+const withoutArticles = name => name.split(" ").filter(word => word && !ARTICLES.has(word)).join(" ");
+
 function streetParts(value) {
-  const name = normalized(value);
-  const separator = name.indexOf(" ");
-  const type = streetTypes.get(separator > 0 ? name.slice(0, separator) : "");
-  return { type, name: type ? name.slice(separator + 1) : name };
+  const words = normalized(value).split(" ").filter(Boolean);
+  let type;
+  // A duplicated or translated type ("Calle Carrer de ...") counts once.
+  while (words.length > 1 && streetTypes.has(words[0]) && (!type || streetTypes.get(words[0]) === type)) {
+    type = streetTypes.get(words.shift());
+  }
+  return { type, name: words.join(" ") };
 }
 
-function sameStreet(left, right) {
+export function sameStreet(left, right) {
   const a = streetParts(left);
   const b = streetParts(right);
+  // Equivalent types (Calle/Carrer/C., Avenida/Avinguda/Av., ...) share a class; different classes never match.
   if (a.type && b.type && a.type !== b.type) return false;
-  if (a.name === b.name) return true;
-  // Autocomplete and portal geocoding may include or omit the initial preposition.
-  // Oracle, autocomplete and Geoapify also differ in articles ("de l'Estació" / "Estació").
-  const bare = name => name.replace(/^(?:(?:de|del|d|la|las|los|el|l|les|dels|els) )+/u, "");
-  return Boolean(a.type && b.type) && bare(a.name) !== "" && bare(a.name) === bare(b.name);
+  if (a.name === b.name) return a.name !== "";
+  const bare = withoutArticles(a.name);
+  return bare !== "" && bare === withoutArticles(b.name);
+}
+
+// Municipality equal without accents, apostrophes or leading articles ("Campdevanol" / "Campdevànol").
+export function sameMunicipality(left, right) {
+  const a = normalized(left);
+  const b = normalized(right);
+  if (!a || !b) return false;
+  return a === b || (withoutArticles(a) !== "" && withoutArticles(a) === withoutArticles(b));
 }
 
 function samePortal(left, right) {
@@ -246,7 +266,8 @@ function candidate(location, fields, province) {
     || !["building", "amenity"].includes(location.result_type)
     || !["full_match", "match_by_building", "inner_part"].includes(match)) return null;
   const postcodeMatch = Boolean(fields.postcode) && location.postcode === fields.postcode;
-  const cityMatch = normalized(municipality(location)) === normalized(fields.city);
+  const cityMatch = [location.city, location.town, location.village, location.municipality]
+    .some(name => sameMunicipality(field(name), fields.city));
   // A postcode that differs (or is missing) is accepted only in the same municipality, ranked lower.
   if (!postcodeMatch && !cityMatch) return null;
   // A venue inside a building can match the full portal even with an inner-part rank.
@@ -287,18 +308,55 @@ export function freeTextQuery(fields) {
     normalized(province) !== normalized(fields.city) ? province : "", "España"].filter(Boolean).join(", ");
 }
 
+// CONFIRMAR_CITAS-017: why nothing fitted, as a stable code. Only the Geoapify fields are compared
+// in memory; neither the provider response nor any coordinate is returned or logged.
+export function missReason(results, fields, limit = 5) {
+  const rows = Array.isArray(results) ? results.slice(0, limit) : [];
+  const sameArea = location => location?.country_code === "es"
+    && ((Boolean(fields.postcode) && location.postcode === fields.postcode)
+      || [location.city, location.town, location.village, location.municipality].some(name => sameMunicipality(field(name), fields.city)));
+  return rows.some(location => sameArea(location) && sameStreet(location.street, fields.street))
+    ? "portal_not_found" : "street_not_found";
+}
+
 // At most two provider calls per address: one structured search and, only if it finds
 // nothing usable, one free-text search. A real ambiguity is reported as before.
 async function geocode(fields, context) {
   const { province, ...params } = fields;
   const structured = await readProvider("geocode/search", { ...params, format: "json" }, 1, context);
   const first = chooseCandidate(structured?.results, fields, Number(params.limit));
-  if (first.outcome !== "none") return first.point;
+  if (first.outcome === "found") return { point: first.point, code: null };
+  if (first.outcome === "ambiguous") return { point: null, code: "ambiguous" };
+  const firstMiss = missReason(structured?.results, fields, Number(params.limit));
   const text = await readProvider("geocode/search", {
     text: freeTextQuery(fields), filter: params.filter, limit: params.limit, format: "json",
   }, 1, context);
-  return chooseCandidate(text?.results, fields, Number(params.limit)).point;
+  const second = chooseCandidate(text?.results, fields, Number(params.limit));
+  if (second.outcome === "found") return { point: second.point, code: null };
+  if (second.outcome === "ambiguous") return { point: null, code: "ambiguous" };
+  const secondMiss = missReason(text?.results, fields, Number(params.limit));
+  return { point: null, code: firstMiss === "portal_not_found" || secondMiss === "portal_not_found" ? "portal_not_found" : "street_not_found" };
 }
+
+// An address that cannot be searched: without a portal number, or without street and municipality.
+export function incompleteReason(address) {
+  const parts = field(address).split(",").map(cleanOracleText).filter(Boolean);
+  if (parts.length < 2) return "incomplete";
+  const street = parts[0].replace(/\s+s\s*\/?\s*n$/iu, "").trim();
+  const hasLocality = /\p{L}/u.test(parts.at(-1)) && !/^\d+$/u.test(parts.at(-1));
+  return hasLocality && STREET.test(street) && !/\d\s*$/u.test(street) && !/(?:\p{N}[ .()\p{Pd}]*){9,}/u.test(street)
+    ? "missing_number" : "incomplete";
+}
+
+// Per-leg detail codes (CONFIRMAR_CITAS-017). `reasons` keeps the vocabulary that 3routes14 understands.
+export const LEG_DETAILS = ["privacy", "incomplete", "missing_number", "street_not_found", "portal_not_found", "ambiguous",
+  "other_end", "other_end_incomplete", "pilot_limit", "no_route"];
+const LEGACY_REASON = {
+  privacy: "privacy", incomplete: "incomplete", missing_number: "incomplete", other_end_incomplete: "incomplete",
+  street_not_found: "not_found", portal_not_found: "not_found", ambiguous: "not_found", other_end: "not_found",
+  no_route: "no_route", pilot_limit: null,
+};
+export const legacyReason = detail => LEGACY_REASON[detail] ?? null;
 
 export function autocompleteQuery(value) {
   const query = field(value).replace(/ +/g, " ");
@@ -354,27 +412,41 @@ export async function calculateJourney(addresses, options) {
   const routed = new Map();
   const estimates = Array(addresses.length - 1).fill(null);
   const reasons = options.reasons;
-  async function pointFor(address) {
+  // CONFIRMAR_CITAS-017: one detail code per leg. A failed address only blocks the legs that touch it.
+  const details = options.details ?? [];
+  const settle = (index, detail) => {
+    details[index] ??= reasons?.[index] === "privacy" ? "privacy" : detail;
+    if (reasons) reasons[index] ??= legacyReason(details[index]);
+  };
+  async function outcomeFor(address) {
     if (!points.has(address)) {
       const fields = streetFields(address);
-      points.set(address, fields ? await geocode(fields, context) : null);
+      points.set(address, fields ? await geocode(fields, context) : { point: null, code: incompleteReason(address) });
     }
     return points.get(address);
   }
-  for (let index = 0; index < estimates.length; index++) {
-    if (!streetFields(addresses[index]) || !streetFields(addresses[index + 1])) {
-      if (reasons) reasons[index] ??= "incomplete";
-      continue;
+  async function leg(index) {
+    const fromFields = streetFields(addresses[index]);
+    const toFields = streetFields(addresses[index + 1]);
+    if (!fromFields || !toFields) {
+      // Unusable text is never searched; an empty (privacy or missing) stop keeps its earlier reason.
+      const to = addresses[index + 1];
+      settle(index, !toFields ? (to ? incompleteReason(to) : "incomplete")
+        : addresses[index] ? "other_end_incomplete" : "incomplete");
+      return;
     }
-    const from = await pointFor(addresses[index]);
-    const to = await pointFor(addresses[index + 1]);
-    if (!from || !to) { if (reasons) reasons[index] = "not_found"; continue; }
+    const from = await outcomeFor(addresses[index]);
+    const to = await outcomeFor(addresses[index + 1]);
+    // No routing call for a leg with an unresolved end.
+    if (!to.point) { if (reasons) reasons[index] = "not_found"; settle(index, to.code); return; }
+    if (!from.point) { if (reasons) reasons[index] = "not_found"; settle(index, "other_end"); return; }
     // This service-area filter is separate from the billable-distance bound.
-    if (Math.abs(from[0] - to[0]) > 1 || Math.abs(from[1] - to[1]) > 1) {
+    if (Math.abs(from.point[0] - to.point[0]) > 1 || Math.abs(from.point[1] - to.point[1]) > 1) {
       if (reasons) reasons[index] = "no_route";
-      continue;
+      settle(index, "no_route");
+      return;
     }
-    const waypoints = from.join(",") + "|" + to.join(",");
+    const waypoints = from.point.join(",") + "|" + to.point.join(",");
     if (!routed.has(waypoints)) {
       const data = await readProvider("routing", {
         waypoints, mode: "drive", units: "metric", traffic: "free_flow",
@@ -391,7 +463,28 @@ export async function calculateJourney(addresses, options) {
       routed.set(waypoints, estimate);
     }
     estimates[index] = routed.get(waypoints);
-    if (reasons && !estimates[index]) reasons[index] = "no_route";
+    if (!estimates[index]) {
+      if (reasons) reasons[index] = "no_route";
+      settle(index, "no_route");
+    } else details[index] = null;
   }
+  for (let index = 0; index < estimates.length; index++) {
+    try {
+      await leg(index);
+    } catch (error) {
+      // The pilot's own budget refused a call (not a provider 401/403/429): keep the legs already
+      // calculated and mark the rest. With nothing calculated yet, the 429 is returned as before.
+      if (!(error instanceof RouteFailure) || error.status !== 429 || error.providerLimited || !estimates.some(Boolean)) throw error;
+      for (let rest = index; rest < estimates.length; rest++) {
+        if (details[rest] === "privacy") continue;
+        details[rest] = "pilot_limit";
+        if (reasons && reasons[rest] !== "privacy") reasons[rest] = null;
+      }
+      options.onPilotLimit?.();
+      break;
+    }
+  }
+  for (let index = 0; index < estimates.length; index++) if (estimates[index]) details[index] = null;
+  details.length = estimates.length;
   return estimates;
 }

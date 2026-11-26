@@ -64,3 +64,11 @@ El Administrador **no tiene la pestaña Mis rutas** (es solo para técnicos), as
 ## Pruebas (sin red)
 Desde la raíz del repositorio: `node --test tests/*.test.mjs wifi-connect/tests/*.test.mjs`.
 La prueba SQL `supabase/tests/isolated/route-pilot-release-isolated.sql` necesita una base local o desechable con el esquema de la V2 y **no** se ejecuta contra el proyecto real.
+
+## Tramos parciales y motivo por tramo (CONFIRMAR_CITAS-017, build 3routes15)
+- **Cálculo parcial:** si una dirección no se resuelve, se calculan igualmente los tramos cuyos dos extremos sí se resolvieron. Los tramos que tocan la dirección fallida no consultan ruta (0 llamadas de `routing`).
+- **Respuesta:** `{ estimates, reasons, details }`. `reasons` mantiene el vocabulario de 3routes14 (`privacy`, `incomplete`, `not_found`, `no_route`); `details` es **opcional** y da un código estable por tramo: `privacy`, `incomplete`, `missing_number`, `street_not_found`, `portal_not_found`, `ambiguous`, `other_end`, `other_end_incomplete`, `pilot_limit`, `no_route` (o `null` si el tramo se calculó). Nunca se devuelve ni se registra la respuesta de Geoapify ni coordenadas.
+- **Comparación tolerante** (`sameStreet`, `sameMunicipality`): acentos y apóstrofos (también `´`), artículos catalanes y castellanos (`de`, `del`, `dels`, `de la`, `de les`, `d'`, `d'en`, `de l'`, `la`, `el`, `els`, `les`, `na`) en cualquier posición, tipos de vía equivalentes (Calle/Carrer/C., Avenida/Avinguda/Av., Plaza/Plaça/Pl., Paseo/Passeig/Pg., Camino/Camí, Carretera/Ctra.) y municipio igual sin acentos (también en `town`/`village`). Sigue exigiendo España, el mismo portal y código postal **o** municipio coincidentes; dos sitios igual de probables siguen siendo `ambiguous`.
+- **Tope del piloto:** si el presupuesto del piloto rechaza una llamada cuando ya hay tramos calculados, se devuelven esos tramos y el resto sale como `pilot_limit` (el piloto lo registra como `quota`, igual que antes). Sin ningún tramo calculado, 429 como antes. Los rechazos de Geoapify (401/403/429) siguen deteniendo el piloto.
+- **Corrección:** la PWA 3routes15 envía en `edits` la dirección corregida en «Editar desplazamiento» (mismas reglas que `parseActivityEdits`); el recálculo la usa y la huella coincide.
+- **Compatibilidad:** la web 3routes14 ignora `details`; la web 3routes15 con la función v10 usa `reasons`.

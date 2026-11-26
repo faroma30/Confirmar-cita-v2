@@ -76,6 +76,7 @@ Deno.serve(async (request: Request) => {
 
     let addresses: string[] = [];
     let reasons: (string | null)[] = [];
+    let failure = "";
     if (!autocomplete) {
       const date = { p_work_date: input.date };
       const [jobs, ignored] = await Promise.all([
@@ -94,7 +95,8 @@ Deno.serve(async (request: Request) => {
       reasons = plan.reasons;
       addresses = plan.addresses;
       if (!addresses.slice(1).some((address, index) => address && addresses[index])) {
-        return reply({ estimates: Array(addresses.length - 1).fill(null), reasons: reasons.map(reason => reason ?? "incomplete") });
+        const none = reasons.map(reason => reason ?? "incomplete");
+        return reply({ estimates: Array(addresses.length - 1).fill(null), reasons: none, details: none });
       }
     }
 
@@ -107,7 +109,6 @@ Deno.serve(async (request: Request) => {
     if (booking.error) return disabled();
     if (booking.data !== true) return quota();
     let providerLimited = false;
-    let failure = "";
     try {
       const context = {
         apiKey,
@@ -121,8 +122,15 @@ Deno.serve(async (request: Request) => {
         },
       };
       if (autocomplete) return reply({ suggestions: await autocompleteStreets(query, context) });
-      const estimates = await calculateJourney(addresses, { ...context, reasons });
-      return reply({ estimates, reasons });
+      // CONFIRMAR_CITAS-017: `details` (optional, one stable code per leg) explains every leg left
+      // without time; `reasons` keeps the codes that 3routes14 understands. No provider data or coordinates.
+      const details: (string | null)[] = reasons.map(reason => reason === "privacy" ? "privacy" : null);
+      const estimates = await calculateJourney(addresses, {
+        ...context, reasons, details,
+        // The pilot budget ran out after some legs: the partial result is returned and recorded as before.
+        onPilotLimit: () => { failure = "quota"; },
+      });
+      return reply({ estimates, reasons, details: estimates.map((_, index) => details[index] ?? null) });
     } catch (error) {
       providerLimited = typeof error === "object" && error !== null
         && "providerLimited" in error && error.providerLimited === true;
