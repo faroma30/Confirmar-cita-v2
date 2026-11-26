@@ -165,11 +165,12 @@ test("vial sin portal: se usa la calle, el tramo queda «aprox.» y conserva el 
   assert.deepEqual(r.sources.slice(1, 3), ["cartociudad", "cartociudad"]);
 });
 
-test("municipio solo o sin resultados: Geoapify como hoy (máximo 2 llamadas por servicio y dirección)", async () => {
+// CONFIRMAR_CITAS-023: sin nada con el CP, un reintento por municipio (máximo 3 a CartoCiudad y 2 a Geoapify).
+test("municipio solo o sin resultados: Geoapify como hoy (máximo 3 llamadas a CartoCiudad y 2 a Geoapify por dirección)", async () => {
   const r = await plan([casa, oracle("CARRER DEL ROURE 9"), oracle("CARRER DELS PINS 9"), oracle("CARRER NOU 7"), casa]);
   assert.deepEqual(r.estimates.map(e => e?.durationSeconds ?? null), [null, 1800, null, null]);
-  assert.deepEqual(r.log, ["carto-find:roure", "carto-find:pins", "carto-candidates:pins", "geo-estructurada:pins", "ruta",
-    "carto-find:nou", "carto-candidates:nou", "geo-estructurada:nou", "geo-texto:nou"]);
+  assert.deepEqual(r.log, ["carto-find:roure", "carto-find:pins", "carto-candidates:pins", "carto-candidates:pins", "geo-estructurada:pins", "ruta",
+    "carto-find:nou", "carto-candidates:nou", "carto-candidates:nou", "geo-estructurada:nou", "geo-texto:nou"]);
   assert.deepEqual(r.sources, [null, "cartociudad", "geoapify", null, null]);
   assert.deepEqual(r.details, ["privacy", null, "street_not_found", "privacy"]);
   assert.equal(r.diagnostics[2], "no_results");
@@ -178,7 +179,7 @@ test("municipio solo o sin resultados: Geoapify como hoy (máximo 2 llamadas por
     const [servicio, calle] = [item.split("-")[0], item.split(":")[1]];
     porDireccion.set(servicio + calle, (porDireccion.get(servicio + calle) ?? 0) + 1);
   }
-  for (const [key, calls] of porDireccion) assert.ok(calls <= 2, key);
+  for (const [key, calls] of porDireccion) assert.ok(calls <= (key.startsWith("carto") ? 3 : 2), key);
 });
 
 for (const fail of ["http", "network", "slow"]) {

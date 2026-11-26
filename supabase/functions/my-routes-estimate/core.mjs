@@ -704,22 +704,29 @@ const sameTypeClass = (left, right) => {
 
 // Decides on one official street only when it is clearly the most similar one (≥ 0.85 and 0.1 above the
 // second, same class of street). With doubts it returns up to 3 official names of the same municipality.
+// CONFIRMAR_CITAS-023: streets with the same bare name and a different type («Avinguda X», «Plaça X»,
+// «Passeig X») are different streets: all of them are offered (up to 3), with their type visible. If the
+// Oracle type (e.g. «PTGE») is not among the official ones, nothing is chosen automatically.
 export function chooseOfficialStreet(data, fields) {
   const wanted = streetKey(fields?.street);
+  const wantedType = streetParts(fields?.street).type;
   const streets = new Map();
   for (const row of (Array.isArray(data) ? data : cartoRows(data)).slice(0, 10)) {
     if (!row || typeof row !== "object" || !inArea(row, fields)) continue;
     const name = officialStreetName(row);
     const key = name && streetKey(name);
-    if (!key || streets.has(key)) continue;
+    const id = key && (streetParts(name).type ?? "") + "|" + key;
+    if (!key || streets.has(id)) continue;
     if (sameStreet(name, fields.street)) return { same: true, street: null, suggestions: [] };
     const words = new Set(key.split(" "));
     const contains = wanted.split(" ").every(word => words.has(word)) || [...words].every(word => wanted.split(" ").includes(word));
-    streets.set(key, { name, score: similarity(wanted, key), contains });
+    streets.set(id, { name, score: similarity(wanted, key), contains });
   }
+  // Stable: equal scores keep the order of CartoCiudad.
   const ranked = [...streets.values()].sort((a, b) => b.score - a.score);
   const [best, second] = ranked;
-  if (best && wanted && best.score >= OFFICIAL_THRESHOLD && (!second || best.score - second.score >= OFFICIAL_MARGIN)
+  const typeKnown = !wantedType || ranked.some(item => sameTypeClass(item.name, fields.street));
+  if (best && wanted && typeKnown && best.score >= OFFICIAL_THRESHOLD && (!second || best.score - second.score >= OFFICIAL_MARGIN)
     && sameTypeClass(best.name, fields.street)) {
     return { same: false, street: best.name, suggestions: [] };
   }
@@ -733,7 +740,15 @@ export function cartoStreetQuery(fields) {
   const city = field(fields?.city);
   if (!name || !city) return null;
   const postcode = /^\d{5}$/u.test(field(fields.postcode)) ? field(fields.postcode) : "";
-  return postcode ? { q: name, limit: "10", cod_postal_filter: postcode } : { q: `${name}, ${city}`, limit: "10" };
+  return postcode ? { q: name, limit: "10", cod_postal_filter: postcode } : cartoTownStreetQuery(fields);
+}
+
+// CONFIRMAR_CITAS-023: the same streets by municipality, without the postcode (a saved or Oracle postcode
+// may not be the official one: with `cod_postal_filter` CartoCiudad then returns nothing).
+export function cartoTownStreetQuery(fields) {
+  const name = cartoStreetName(fields?.street);
+  const city = field(fields?.city);
+  return name && city ? { q: `${name}, ${city}`, limit: "10" } : null;
 }
 
 // At most 3 CartoCiudad calls per address: `findJsonp`; if the street is not known there, the streets of the
@@ -758,9 +773,19 @@ async function geocodeCarto(fields, context) {
   if (streetKnown(first.data, fields)) {
     last = await attempt("candidates", queries.candidates);
   } else {
-    const list = await attempt("candidates", cartoStreetQuery(fields));
+    const streetQuery = cartoStreetQuery(fields);
+    const list = await attempt("candidates", streetQuery);
     if (list?.point) return { point: list.point, approx: false };
-    if (list && cartoRows(list.data).length) {
+    if (list && !cartoRows(list.data).length && streetQuery?.cod_postal_filter) {
+      // CONFIRMAR_CITAS-023: nothing with the postcode → once more by municipality (3rd and last call).
+      // With no call left to look for the portal, the official streets are only suggested.
+      const retry = await attempt("candidates", cartoTownStreetQuery(fields));
+      if (retry?.point) return { point: retry.point, approx: false };
+      if (retry && cartoRows(retry.data).length) {
+        const official = chooseOfficialStreet(retry.data, fields);
+        suggestions = official.street ? [official.street] : official.suggestions;
+      }
+    } else if (list && cartoRows(list.data).length) {
       const official = chooseOfficialStreet(list.data, fields);
       if (official.street) {
         const target = { ...fields, street: official.street };
@@ -810,23 +835,35 @@ export function suggestQuery(input) {
   if (postcode && !/^\d{5}$/u.test(postcode)) return null;
   const name = cartoStreetName(cleanOracleText(text));
   if ([...name.replace(/[^\p{L}]/gu, "")].length < 3) return null;
-  return {
-    q: municipality ? `${name}, ${municipality}` : name, limit: "10",
-    ...(postcode ? { cod_postal_filter: postcode } : {}),
-  };
+  // CONFIRMAR_CITAS-023: with a municipality, the postcode is never a filter (a saved postcode may not be the
+  // official one); it only orders the results. Without a municipality, as before.
+  return municipality ? { q: `${name}, ${municipality}`, limit: "10" }
+    : { q: name, limit: "10", ...(postcode ? { cod_postal_filter: postcode } : {}) };
+}
+
+// Second and last call, only if the first one gives nothing: the street with the postcode as a filter.
+export function suggestFallbackQuery(input) {
+  const first = suggestQuery(input);
+  const postcode = field(input?.postalCode);
+  if (!first || first.cod_postal_filter || !postcode) return null;
+  return { q: cartoStreetName(cleanOracleText(field(input.query).replace(/\s+/gu, " "))), limit: "10", cod_postal_filter: postcode };
 }
 
 // Suggestions shown as «Calle Número · Pueblo (Provincia) CP». Only street map rows (streets and portals).
-export function suggestionRows(data, input = {}) {
+// Only the same municipality (or, with `byPostcode`, the same postcode); those with the given postcode first.
+export function suggestionRows(data, input = {}, { byPostcode = false } = {}) {
   const municipality = field(input.municipality);
   const postcode = field(input.postalCode);
   const items = new Map();
+  const matches = [];
   for (const row of (Array.isArray(data) ? data : cartoRows(data)).slice(0, 10)) {
     const street = officialStreetName(row);
     const town = municipalityName(field(row.muni) || field(row.poblacion));
     if (!street || !LOCALITY.test(town) || brokenText(town)) continue;
-    if (municipality && !sameMunicipality(town, municipality) && !sameMunicipality(field(row.poblacion), municipality)) continue;
     const codes = field(row.postalCode).split(/\s+/u).filter(code => /^\d{5}$/u.test(code));
+    const samePostcode = Boolean(postcode) && codes.includes(postcode);
+    if (municipality && !sameMunicipality(town, municipality) && !sameMunicipality(field(row.poblacion), municipality)
+      && !(byPostcode && samePostcode)) continue;
     const postalCode = codes.length === 1 ? codes[0] : postcode && codes.includes(postcode) ? postcode : "";
     const number = row.type === "portal" && Number.isInteger(Number(row.portalNumber)) && Number(row.portalNumber) > 0
       ? String(Number(row.portalNumber)) + (cartoExtension(row) ? cartoExtension(row).toUpperCase() : "") : "";
@@ -836,17 +873,28 @@ export function suggestionRows(data, input = {}) {
       + (postalCode ? " " + postalCode : "")].join(" · ");
     if (items.has(label)) continue;
     items.set(label, { street, number, municipality: town, ...(province ? { province } : {}), postalCode, label });
+    matches.push(samePostcode);
   }
-  return [...items.values()].slice(0, 6);
+  const ordered = [...items.values()].map((item, index) => ({ item, first: matches[index] }));
+  // Stable: the given postcode only moves its matches to the front.
+  return ordered.filter(entry => entry.first).concat(ordered.filter(entry => !entry.first)).map(entry => entry.item).slice(0, 6);
 }
 
+// At most 2 CartoCiudad calls per suggestion: by municipality and, only if nothing usable came back, with the
+// postcode as a filter. Never Geoapify, never the pilot.
+export const SUGGEST_MAX_CALLS = 2;
 export async function suggestAddresses(input, { fetcher = fetch, timeoutMs, signal } = {}) {
   const params = suggestQuery(input);
   if (!params) throw new RouteFailure(400);
   const context = contextFor({ charge: async () => false, apiKey: "", signal, cartociudad: { fetcher, timeoutMs } });
   const data = await readCarto("candidates", params, context);
   if (data === null) throw new RouteFailure(503);
-  return suggestionRows(data, input);
+  const items = suggestionRows(data, input);
+  const fallback = items.length ? null : suggestFallbackQuery(input);
+  if (!fallback) return items;
+  const second = await readCarto("candidates", fallback, context);
+  // The first answer was valid (empty): a failing second call is not an error for the technician.
+  return second === null ? items : suggestionRows(second, input, { byPostcode: true });
 }
 
 // At most two provider calls per address: one structured search and, only if it finds
