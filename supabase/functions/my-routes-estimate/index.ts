@@ -128,14 +128,27 @@ Deno.serve(async (request: Request) => {
       // CONFIRMAR_CITAS-018: `diagnostics` (optional) gives, per leg, the code of the address that blocks it
       // (no_results, street_mismatch, ...). Only codes: never the address, the provider response or coordinates.
       const diagnostics: (string | null)[] = [];
+      // CONFIRMAR_CITAS-020: CartoCiudad (IGN-CNIG) first for the addresses, Geoapify as the fallback and for
+      // the routes. `approx` marks a leg placed on the street (no portal in the official base) and `sources`
+      // gives the origin per address. Its failures only log the stage and kind: never the address.
+      const approx: boolean[] = [];
+      const sources: (string | null)[] = [];
+      const cartociudad = Deno.env.get("MY_ROUTES_CARTOCIUDAD") === "no" ? null : {
+        fetcher: fetch,
+        onFailure: (fault: { stage: string; kind: string; http: number | null }) => console.warn(JSON.stringify({
+          event: "cartociudad_attempt_failed", stage: fault.stage, kind: fault.kind, http: fault.http,
+        })),
+      };
       const estimates = await calculateJourney(addresses, {
-        ...context, reasons, details, diagnostics,
+        ...context, reasons, details, diagnostics, approx, sources, cartociudad,
         // The pilot budget ran out after some legs: the partial result is returned and recorded as before.
         onPilotLimit: () => { failure = "quota"; },
       });
       return reply({
         estimates, reasons, details: estimates.map((_, index) => details[index] ?? null),
         diagnostics: estimates.map((_, index) => diagnostics[index] ?? null),
+        approx: estimates.map((_, index) => approx[index] === true),
+        sources: addresses.map((_, index) => sources[index] ?? null),
       });
     } catch (error) {
       providerLimited = typeof error === "object" && error !== null

@@ -320,8 +320,14 @@ class RouteFailure extends Error {
   }
 }
 
-function contextFor({ charge, apiKey, fetcher = fetch, signal, manualFreePilot }) {
-  return { charge, apiKey, fetcher, signal, manualFreePilot, nextRequestAt: 0, deadline: Date.now() + 55000 };
+function contextFor({ charge, apiKey, fetcher = fetch, signal, manualFreePilot, cartociudad = null }) {
+  // CONFIRMAR_CITAS-020: CartoCiudad only when the caller turns it on (the handler does; older tests do not).
+  // `timeoutMs` can only lower the 5 s limit per call (the tests use it to simulate a slow service).
+  const carto = cartociudad ? {
+    fetcher: cartociudad.fetcher ?? fetch, onFailure: cartociudad.onFailure, off: false, calls: 0,
+    timeoutMs: Math.min(CARTOCIUDAD_TIMEOUT_MS, Math.max(1, Number(cartociudad.timeoutMs) || CARTOCIUDAD_TIMEOUT_MS)),
+  } : null;
+  return { charge, apiKey, fetcher, signal, manualFreePilot, carto, nextRequestAt: 0, deadline: Date.now() + 55000 };
 }
 
 async function readProvider(path, params, credits, context) {
@@ -473,11 +479,178 @@ export function addressDiagnostic(results, fields, limit = 5) {
 
 const unusableDiagnostic = address => address ? (incompleteReason(address) === "missing_number" ? "missing_number" : "missing_street") : null;
 
+// CONFIRMAR_CITAS-020: CartoCiudad (IGN-CNIG, CC BY 4.0) is searched first, with at most two calls per
+// address (`findJsonp` and, if needed, `candidates` with `cod_postal_filter`). Only the street name, the
+// portal number, the postcode and the municipality are sent: never the floor, door, staircase, names or
+// phones. Its failures never stop the pilot, never charge Geoapify credits and never set `provider_limited`:
+// the address simply goes on to Geoapify as before. Neither the response nor the address is logged.
+const CARTOCIUDAD = "https://www.cartociudad.es/geocoder/api/geocoder/";
+export const CARTOCIUDAD_TIMEOUT_MS = 5000;
+// Time kept for Geoapify within the 55 s budget of the request.
+const CARTOCIUDAD_RESERVE_MS = 10000;
+
+// Fase A (2.ª ronda): CartoCiudad finds the portal with the bare street name (without its type or leading
+// articles: «Plaça de l'Ajuntament» → «Ajuntament»), the number and the municipality.
+export function cartoStreetName(street) {
+  const words = field(street).replace(/['’´`"]/gu, " ").split(/\s+/u).filter(Boolean);
+  while (words.length > 1 && streetTypes.has(normalized(words[0]))) words.shift();
+  while (words.length > 1 && ARTICLES.has(normalized(words[0]))) words.shift();
+  return words.join(" ");
+}
+
+export function cartoQueries(fields) {
+  const name = cartoStreetName(fields?.street);
+  const number = basePortal(fields?.housenumber);
+  const city = field(fields?.city);
+  if (!name || !/^\d{1,5}$/u.test(number) || !city) return null;
+  const postcode = /^\d{5}$/u.test(field(fields.postcode)) ? field(fields.postcode) : "";
+  return {
+    find: { q: `${name} ${number}, ${city}` },
+    candidates: postcode ? { q: `${name} ${number}`, limit: "5", cod_postal_filter: postcode }
+      : { q: `${name} ${number}, ${city}`, limit: "5" },
+  };
+}
+
+// The response may come in ISO-8859-1 / windows-1252 (the Fase A fixtures show broken accents in UTF-8).
+export function decodeCarto(bytes, contentType = "") {
+  const charset = /charset=["']?([\w-]+)/iu.exec(contentType)?.[1]?.toLowerCase();
+  if (charset && !["utf-8", "utf8"].includes(charset)) {
+    try { return new TextDecoder(charset).decode(bytes); } catch { /* Unknown label: try UTF-8 below. */ }
+  }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return new TextDecoder("windows-1252").decode(bytes); }
+}
+
+export function parseCarto(text) {
+  const body = field(text);
+  const jsonp = /^[A-Za-z_$][\w$.]*\(([\s\S]*)\)\s*;?$/u.exec(body);
+  return JSON.parse(jsonp ? jsonp[1] : body);
+}
+
+async function readCarto(path, params, context) {
+  const carto = context.carto;
+  if (!carto || carto.off || context.signal?.aborted) return null;
+  const left = context.deadline - Date.now() - CARTOCIUDAD_RESERVE_MS;
+  const fail = (kind, http = null) => {
+    // Slow or failing: the rest of the journey goes straight to Geoapify (no more waiting).
+    carto.off = true;
+    if (!context.signal?.aborted) carto.onFailure?.({ stage: "cartociudad", kind, http });
+    return null;
+  };
+  if (left < 1000) return fail("no_time");
+  const url = new URL(path, CARTOCIUDAD);
+  url.search = new URLSearchParams(params);
+  carto.calls = (carto.calls ?? 0) + 1;
+  const timeout = AbortSignal.timeout(Math.min(carto.timeoutMs, left));
+  const signal = context.signal ? AbortSignal.any([timeout, context.signal]) : timeout;
+  let response;
+  try {
+    response = await carto.fetcher(url, { redirect: "error", signal });
+  } catch {
+    return context.signal?.aborted ? null : fail(timeout.aborted ? "timeout" : "network");
+  }
+  if (!response || response.status !== 200) return fail("provider_http", response?.status ?? null);
+  try {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return parseCarto(decodeCarto(bytes, response.headers?.get?.("content-type") ?? ""));
+  } catch {
+    return context.signal?.aborted ? null : fail(timeout.aborted ? "timeout" : "invalid_json", response.status);
+  }
+}
+
+const cartoRows = data => (Array.isArray(data) ? data : data && typeof data === "object" ? [data] : [])
+  .filter(row => row && typeof row === "object").slice(0, 5);
+
+// Street of a CartoCiudad row: `tip_via` + `address` without the portal and the municipality
+// («PLAÇA L"AJUNTAMENT 3, Ripoll» → «PLAÇA L"AJUNTAMENT»). A broken type (with U+FFFD) is left out.
+function cartoStreet(row) {
+  const type = field(row.tip_via);
+  let name = field(row.address);
+  if (name.includes(",")) name = name.slice(0, name.lastIndexOf(",")).trim();
+  if (row.type === "portal") name = name.replace(/\s+\d{1,5}(?:\s*[\p{L}]{1,3})?$/u, "").trim();
+  const words = name.split(/\s+/u);
+  if (type && normalized(words[0]) === normalized(type)) words.shift();
+  const knownType = type && !type.includes(String.fromCharCode(0xfffd)) ? type : "";
+  return [knownType, ...words].filter(Boolean).join(" ");
+}
+
+function cartoPoint(row) {
+  const lat = Number(row.lat);
+  const lng = Number(row.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= 27 && lat <= 44.5 && lng >= -18.5 && lng <= 4.6
+    ? [lat, lng] : null;
+}
+
+// Letter or «bis» of the portal («9A» → «a»), from `extension` or the end of `address` («MAYOR 1 C»).
+function cartoExtension(row) {
+  const extension = normalized(row.extension ?? "");
+  if (extension) return extension.replace(/\s+/gu, "");
+  const text = field(row.address).split(",")[0];
+  return normalized(/\d{1,5}\s*([\p{L}]{1,3})$/u.exec(text)?.[1] ?? "");
+}
+
+// Accepted: a portal with the same number and the same postcode or municipality (and the same street).
+// A street («callejero») with coordinates is kept only as an approximate position: the official base
+// has no portal there (Director's decision for this case only).
+export function chooseCarto(data, fields) {
+  const wanted = Number(basePortal(fields.housenumber));
+  const letter = normalized(field(fields.housenumber).replace(/^\d{1,5}/u, "")).replace(/\s+/gu, "");
+  const province = fields.province || provinceFromPostcode(fields.postcode);
+  const exact = new Map();
+  const streets = new Map();
+  for (const row of cartoRows(data)) {
+    const point = cartoPoint(row);
+    if (!point || !["portal", "callejero"].includes(row.type) || !sameStreet(cartoStreet(row), fields.street)) continue;
+    const postcodeMatch = Boolean(fields.postcode) && field(row.postalCode).split(/\s+/u).includes(fields.postcode);
+    const cityMatch = sameMunicipality(field(row.muni), fields.city) || sameMunicipality(field(row.poblacion), fields.city);
+    if (!postcodeMatch && !cityMatch) continue;
+    if (province && field(row.province) && !sameProvince(province, { county: row.province }) && !(postcodeMatch && cityMatch)) continue;
+    let fit = (postcodeMatch ? 2 : 0) + (cityMatch ? 1 : 0);
+    const target = row.type === "portal" ? exact : streets;
+    if (row.type === "portal") {
+      if (Number(row.portalNumber) !== wanted) continue;
+      const extension = cartoExtension(row);
+      if (extension === letter) fit += 0.25;
+      // Asked «9A» and found «9»: accepted below the exact portal. Asked «9» and found «9A»: never.
+      else if (extension || !letter) continue;
+    }
+    const key = point.map(value => value.toFixed(5)).join(",");
+    target.set(key, { point, fit: Math.max(fit, target.get(key)?.fit ?? 0) });
+  }
+  const unique = map => {
+    const [best, second] = [...map.values()].sort((a, b) => b.fit - a.fit);
+    return best && (!second || best.fit > second.fit) ? best.point : null;
+  };
+  return { point: unique(exact), approx: unique(streets) };
+}
+
+async function geocodeCarto(fields, context) {
+  const queries = cartoQueries(fields);
+  if (!queries || !context.carto) return null;
+  let approx = null;
+  for (const [path, params] of [["findJsonp", queries.find], ["candidates", queries.candidates]]) {
+    const data = await readCarto(path, params, context);
+    if (data === null) break;
+    const choice = chooseCarto(data, fields);
+    if (choice.point) return { point: choice.point, approx: false };
+    approx ??= choice.approx;
+  }
+  return approx ? { point: approx, approx: true } : null;
+}
+
+async function geocode(fields, context) {
+  const carto = await geocodeCarto(fields, context);
+  // The approximate street position keeps its detail code (the portal is not in the official base).
+  if (carto) return { point: carto.point, code: null, diagnostic: carto.approx ? "number_mismatch" : null, approx: carto.approx, source: "cartociudad" };
+  const found = await geocodeGeoapify(fields, context);
+  return { ...found, approx: false, source: found.point ? "geoapify" : null };
+}
+
 // At most two provider calls per address: one structured search and, only if it finds
 // nothing usable, one free-text search. A real ambiguity is reported as before.
 // CONFIRMAR_CITAS-018: the free-text search uses the bare portal number ("9" for "9A", "9 bis"),
 // so both forms are tried within the same two calls. Floor and door never reach Geoapify.
-async function geocode(fields, context) {
+async function geocodeGeoapify(fields, context) {
   const { province, ...params } = fields;
   const limit = Number(params.limit);
   const structured = await readProvider("geocode/search", { ...params, format: "json" }, 1, context);
@@ -581,6 +754,9 @@ export async function calculateJourney(addresses, options) {
   const details = options.details ?? [];
   // CONFIRMAR_CITAS-018: optional diagnostic code of the address that blocks each leg (ADDRESS_DIAGNOSTICS).
   const diagnostics = options.diagnostics ?? [];
+  // CONFIRMAR_CITAS-020: optional per-leg «aprox.» mark and per-address origin ("cartociudad" / "geoapify").
+  const approx = options.approx ?? [];
+  const sources = options.sources ?? [];
   const settle = (index, detail, diagnostic = null) => {
     details[index] ??= reasons?.[index] === "privacy" ? "privacy" : detail;
     if (reasons) reasons[index] ??= legacyReason(details[index]);
@@ -635,7 +811,14 @@ export async function calculateJourney(addresses, options) {
     if (!estimates[index]) {
       if (reasons) reasons[index] = "no_route";
       settle(index, "no_route");
-    } else details[index] = null;
+    } else {
+      details[index] = null;
+      // A street position (no portal in the official base): the leg is approximate and keeps its code.
+      if (from.approx || to.approx) {
+        approx[index] = true;
+        diagnostics[index] = (to.approx ? to : from).diagnostic;
+      }
+    }
   }
   for (let index = 0; index < estimates.length; index++) {
     try {
@@ -656,9 +839,14 @@ export async function calculateJourney(addresses, options) {
   }
   for (let index = 0; index < estimates.length; index++) {
     if (estimates[index]) details[index] = null;
-    if (estimates[index] || !ADDRESS_DIAGNOSTICS.includes(diagnostics[index])) diagnostics[index] = null;
+    approx[index] = Boolean(estimates[index]) && approx[index] === true;
+    if ((estimates[index] && !approx[index]) || !ADDRESS_DIAGNOSTICS.includes(diagnostics[index])) diagnostics[index] = null;
   }
   details.length = estimates.length;
   diagnostics.length = estimates.length;
+  approx.length = estimates.length;
+  // Only the provider name per address; never the address or its coordinates.
+  for (let index = 0; index < addresses.length; index++) sources[index] = points.get(addresses[index])?.source ?? null;
+  sources.length = addresses.length;
   return estimates;
 }
