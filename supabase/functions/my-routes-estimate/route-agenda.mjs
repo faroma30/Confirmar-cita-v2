@@ -31,8 +31,11 @@ function configuredAddress(type, preferences) {
   return "";
 }
 
-const knownPause = /^(?:pausa(?: (?:para|de) (?:comida|descanso))?|descanso|almuerzo|comida)$/;
-const needsTravelDecision = /^(?:pausa|descanso|almuerzo|comida) /;
+// CONFIRMAR_CITAS-016 (opción A): toda actividad cuyo nombre empiece por Comida, Almuerzo, Pausa o Descanso
+// es por defecto una pausa sin desplazamiento; el técnico puede cambiarlo en la tarjeta (edits).
+const defaultPause = /^(?:pausa|descanso|almuerzo|comida)s?(?: |$)/;
+// Actividad «Desplazamiento» de la agenda sin destino: tramo pendiente que no se calcula (no se pregunta).
+const transitActivity = /^desplazamiento(?: |$)/;
 
 export function combineActivities(appointments, ignored, preferences = {}, overrides = new Map()) {
   const occurrences = new Map();
@@ -53,18 +56,18 @@ export function combineActivities(appointments, ignored, preferences = {}, overr
     occurrences.set(identity, occurrence + 1);
     const key = JSON.stringify([identity, occurrence]);
     const name = activityName(type);
-    const defaultTravel = editableTravel && knownPause.test(name) ? "pause"
-      : editableTravel && needsTravelDecision.test(name) ? "undecided" : "travel";
+    const defaultTravel = editableTravel && defaultPause.test(name) ? "pause" : "travel";
     const override = overrides.get(key);
     const travel = override?.travel ?? defaultTravel;
     const agendaAddress = originalAddress || (editableTravel ? configuredAddress(type, preferences) : "");
     const address = travel === "travel"
       ? formatRouteLocation(override?.location) || agendaAddress
       : "";
+    const noDestination = editableTravel && travel === "travel" && !address && transitActivity.test(name);
     return {
       key, type, time: start === null ? "" : time.slice(0, 5),
       endTime: start !== null && end !== null && end >= start ? endTime : "",
-      address, agendaAddress, travel, defaultTravel, editableTravel, override,
+      address, agendaAddress, travel, defaultTravel, editableTravel, override, noDestination,
     };
   }).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
 }

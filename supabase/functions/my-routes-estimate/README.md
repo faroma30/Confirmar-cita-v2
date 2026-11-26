@@ -23,6 +23,11 @@ Edge Function de Supabase que calcula los desplazamientos de la jornada de un t�
 - **Elección** (`chooseCandidate`): mismo portal y calle; código postal **o** municipio coincidentes; gana el que coincide en ambos y tiene más confianza. Si dos destacan por igual, sigue siendo `not_found` (ambiguo).
 - **Llamadas:** como máximo 2 por dirección (estructurada y, solo si no encuentra nada utilizable, texto libre con provincia y «España»). Cada una se reserva en el piloto (1 crédito) como hasta ahora; 401/403/429 sin cambios.
 
+## Pausas y «Desplazamiento» (CONFIRMAR_CITAS-016, opción A)
+- Toda actividad cuyo nombre empiece por Comida, Almuerzo, Pausa o Descanso (también en plural y con texto extra) es por defecto una **pausa sin desplazamiento**. El técnico puede cambiarlo en la tarjeta; la app lo envía en `edits` (`travel: "travel"`). Ya no hay actividades «pendientes de decidir».
+- Una actividad «Desplazamiento» sin dirección queda como tramo pendiente («Actividad de desplazamiento sin destino: no se calcula»): su dirección vacía no se busca en Geoapify y no gasta créditos.
+- La regla es la misma en `route-agenda.mjs` y en `my-routes.mjs` de la PWA (misma huella). **La función v9 y la web 3routes13 usan la regla anterior:** se publican juntas, primero la función.
+
 No existe operación para **reactivar** el piloto desde la app (ver «Reactivación diaria» y el diseño de administrador).
 
 ## Piloto
