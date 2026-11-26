@@ -1,6 +1,6 @@
 import { currentUser, jsonResponse, preflightOrReject, serviceClient } from "../_shared/runtime.ts";
-import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddresses, journeyFingerprint, providerAddresses } from "./core.mjs";
-import { canAutocomplete, parseActivityEdits, routeAccess } from "./policy.mjs";
+import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddresses, journeyFingerprint, providerPlan } from "./core.mjs";
+import { canAutocomplete, homeOptIn, parseActivityEdits, routeAccess } from "./policy.mjs";
 import { pilotStopRejection } from "./pilot-control.mjs";
 
 Deno.serve(async (request: Request) => {
@@ -27,8 +27,11 @@ Deno.serve(async (request: Request) => {
   if (!control && !autocomplete && Deno.env.get("MY_ROUTES_GEOAPIFY_MANUAL_FREE_PILOT") !== "yes") return disabled();
   const allowedKeys = control ? ["operation", "expectedActor"] : autocomplete
     ? ["operation", "query", "kind", "expectedActor"]
-    : ["date", "fingerprint", "expectedActor", "edits"];
+    : ["date", "fingerprint", "expectedActor", "edits", "useHome"];
   if (Object.keys(input).some(key => !allowedKeys.includes(key))) return invalid();
+  // CONFIRMAR_CITAS-015: the saved home goes to Geoapify only with an explicit `useHome: true`.
+  const useHome = homeOptIn(input);
+  if (useHome === null) return invalid();
   const query = autocomplete ? autocompleteQuery(input.query) : "";
   if (!control && (autocomplete ? !query
     : typeof input.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.fingerprint)
@@ -86,11 +89,10 @@ Deno.serve(async (request: Request) => {
       } catch { return invalid(); }
       if (await journeyFingerprint(addresses) !== input.fingerprint) return reply({ error: "Los datos de la ruta han cambiado." }, 409);
       if (addresses.length === 2) return reply({ estimates: [] });
-      const allowed = providerAddresses(addresses, access.includeHome);
-      reasons = addresses.slice(1).map((address, i) =>
-        (address && !allowed[i + 1]) || (addresses[i] && !allowed[i]) || (!access.includeHome && (i === 0 || i === addresses.length - 2))
-          ? "privacy" : null);
-      addresses = allowed;
+      // Only the caller's own saved home (cc_my_route_locations_v2 above) can be used.
+      const plan = providerPlan(addresses, useHome);
+      reasons = plan.reasons;
+      addresses = plan.addresses;
       if (!addresses.slice(1).some((address, index) => address && addresses[index])) {
         return reply({ estimates: Array(addresses.length - 1).fill(null), reasons: reasons.map(reason => reason ?? "incomplete") });
       }

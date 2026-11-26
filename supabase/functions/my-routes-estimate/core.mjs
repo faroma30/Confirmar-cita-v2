@@ -7,6 +7,64 @@ const field = value => typeof value === "string" ? value.trim() : "";
 const normalized = value => field(value).normalize("NFD").replace(/\p{Diacritic}/gu, "")
   .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
+// CONFIRMAR_CITAS-015: Oracle writes addresses in capitals, with duplicated street types
+// ("CALLE CARRER DE ...") and acute accents used as apostrophes ("L´ESTACIÓ").
+const APOSTROPHES = /[´`‘’ʼ′]/gu;
+const ABBREVIATED_TYPE = /^(c|cl|av|avda|pza|pl|ps)\s*[/.]\s*/iu;
+const EXPANDED_TYPE = { c: "Calle", cl: "Calle", av: "Avenida", avda: "Avenida", pza: "Plaza", pl: "Plaza", ps: "Paseo" };
+const GENERIC_TYPES = new Set(["calle", "cl", "c", "avenida", "av", "avda", "plaza", "pza", "pl", "paseo", "ps"]);
+const PARTICLES = new Set(["de", "del", "la", "las", "los", "el", "y", "i", "en", "les", "dels", "els", "al", "a", "da", "do", "das", "dos"]);
+const capitalize = word => word.replace(/(^|-)(\p{L})/gu, (_, start, letter) => start + letter.toUpperCase());
+
+function titleCase(value) {
+  return value.split(" ").map((word, index) => word.toLowerCase().split("'").map((part, position, all) => {
+    if (!part) return part;
+    const first = index === 0 && position === 0;
+    // Elided articles keep their lower case: l'Estació, d'Espanya.
+    if (position < all.length - 1 && [...part].length <= 2) return first ? capitalize(part) : part;
+    return !first && PARTICLES.has(part) ? part : capitalize(part);
+  }).join("'")).join(" ");
+}
+
+export function cleanOracleText(value) {
+  let text = field(value).replace(APOSTROPHES, "'").replace(/\s*'\s*/gu, "'").replace(/\s+/gu, " ").trim();
+  const capitals = /\p{Lu}/u.test(text) && !/\p{Ll}/u.test(text);
+  text = text.replace(ABBREVIATED_TYPE, (_, type) => EXPANDED_TYPE[type.toLowerCase()] + " ");
+  const words = text.split(" ");
+  // "CALLE CARRER DE ..." keeps the specific type ("Carrer de ...").
+  while (words.length > 2 && GENERIC_TYPES.has(normalized(words[0])) && streetTypes.has(normalized(words[1]))) words.shift();
+  text = words.join(" ");
+  return capitals ? titleCase(text) : text;
+}
+
+// Province of a Spanish postcode: its first two digits (01-52).
+const PROVINCES = ["Álava", "Albacete", "Alicante", "Almería", "Ávila", "Badajoz", "Illes Balears", "Barcelona", "Burgos",
+  "Cáceres", "Cádiz", "Castellón", "Ciudad Real", "Córdoba", "A Coruña", "Cuenca", "Girona", "Granada", "Guadalajara",
+  "Gipuzkoa", "Huelva", "Huesca", "Jaén", "León", "Lleida", "La Rioja", "Lugo", "Madrid", "Málaga", "Murcia", "Navarra",
+  "Ourense", "Asturias", "Palencia", "Las Palmas", "Pontevedra", "Salamanca", "Santa Cruz de Tenerife", "Cantabria",
+  "Segovia", "Sevilla", "Soria", "Tarragona", "Teruel", "Toledo", "Valencia", "Valladolid", "Bizkaia", "Zamora",
+  "Zaragoza", "Ceuta", "Melilla"];
+const PROVINCE_ALIASES = {
+  "Álava": ["Araba", "Araba/Álava", "Álava/Araba"], "Alicante": ["Alacant", "Alicante/Alacant"],
+  "Illes Balears": ["Baleares", "Islas Baleares", "Balears", "Balearic Islands"], "Castellón": ["Castelló", "Castellón/Castelló"],
+  "A Coruña": ["La Coruña", "Coruña"], "Girona": ["Gerona"], "Gipuzkoa": ["Guipúzcoa"], "Lleida": ["Lérida"],
+  "La Rioja": ["Rioja"], "Madrid": ["Comunidad de Madrid", "Community of Madrid", "Provincia de Madrid"],
+  "Murcia": ["Región de Murcia", "Region of Murcia"], "Navarra": ["Nafarroa", "Comunidad Foral de Navarra"],
+  "Ourense": ["Orense"], "Asturias": ["Principado de Asturias"], "Valencia": ["València", "Valencia/València"],
+  "Bizkaia": ["Vizcaya", "Biscay"],
+};
+
+export function provinceFromPostcode(postcode) {
+  const prefix = /^(\d{2})\d{3}$/u.exec(field(postcode));
+  const number = prefix ? Number(prefix[1]) : 0;
+  return number >= 1 && number <= PROVINCES.length ? PROVINCES[number - 1] : "";
+}
+
+function sameProvince(province, location) {
+  const names = new Set([province, ...(PROVINCE_ALIASES[province] ?? [])].map(normalized));
+  return [location?.county, location?.state].some(value => names.has(normalized(value)));
+}
+
 export function journeyAddresses(preferences, appointments, ignored, edits = new Map()) {
   const home = formatRouteLocation(preferences.home);
   const agenda = combineActivities(appointments, ignored, preferences);
@@ -38,6 +96,16 @@ export function providerAddresses(addresses, includeHome) {
   });
 }
 
+// CONFIRMAR_CITAS-015: the saved home reaches Geoapify only when the technician turned on
+// «Usar mi domicilio» (explicit useHome in the request). Otherwise both home legs stay "privacy".
+export function providerPlan(addresses, includeHome) {
+  const allowed = providerAddresses(addresses, includeHome === true);
+  const reasons = addresses.slice(1).map((address, i) =>
+    (address && !allowed[i + 1]) || (addresses[i] && !allowed[i]) || (includeHome !== true && (i === 0 || i === addresses.length - 2))
+      ? "privacy" : null);
+  return { addresses: allowed, reasons };
+}
+
 export async function journeyFingerprint(addresses) {
   const bytes = new TextEncoder().encode(JSON.stringify(addresses));
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), b => b.toString(16).padStart(2, "0")).join("");
@@ -51,7 +119,9 @@ const streetTypes = new Map([
   ["calle", "street"], ["carrer", "street"], ["rua", "street"], ["c", "street"],
   ["avenida", "avenue"], ["avinguda", "avenue"], ["av", "avenue"], ["avda", "avenue"],
   ["plaza", "square"], ["placa", "square"], ["passeig", "promenade"], ["paseo", "promenade"],
-  ["via", "way"],
+  ["via", "way"], ["cl", "street"], ["pza", "square"], ["pl", "square"], ["ps", "promenade"],
+  ["ronda", "ronda"], ["rambla", "rambla"], ["camino", "path"], ["cami", "path"],
+  ["travesia", "crossing"], ["travessera", "crossing"], ["carretera", "road"], ["ctra", "road"],
 ]);
 
 function streetParts(value) {
@@ -67,7 +137,9 @@ function sameStreet(left, right) {
   if (a.type && b.type && a.type !== b.type) return false;
   if (a.name === b.name) return true;
   // Autocomplete and portal geocoding may include or omit the initial preposition.
-  return Boolean(a.type && b.type) && a.name.replace(/^de /, "") === b.name.replace(/^de /, "");
+  // Oracle, autocomplete and Geoapify also differ in articles ("de l'Estació" / "Estació").
+  const bare = name => name.replace(/^(?:(?:de|del|d|la|las|los|el|l|les|dels|els) )+/u, "");
+  return Boolean(a.type && b.type) && bare(a.name) !== "" && bare(a.name) === bare(b.name);
 }
 
 function samePortal(left, right) {
@@ -77,8 +149,12 @@ function samePortal(left, right) {
 
 // Use only the street/house number and the last locality fields, never interior details.
 export function streetFields(address) {
-  const parts = field(address).split(",").map(field).filter(Boolean);
+  const parts = field(address).split(",").map(cleanOracleText).filter(Boolean);
   if (parts.length < 2) return null;
+  // "CALLE X, 8, 17001, GIRONA": the portal can come in its own comma-separated part.
+  if (parts.length > 2 && !HOUSE.test(parts[0]) && /^\d{1,4}(?:\s?[A-Za-z]|\s*(?:bis|ter))?$/iu.test(parts[1])) {
+    parts.splice(0, 2, parts[0] + " " + parts[1]);
+  }
   // Oracle can append positional building details without comma separators.
   // Strip only the observed structured suffix; never geocode the interior.
   const exterior = parts[0].replace(/(\s+\d{1,5})\s+\d{1,2}\s+[\p{L}]{1,12}\s+\d{1,3}[\p{L}]{1,3}\s+[\p{L}]{1,12}\s+\d{1,3}[\p{L}]{1,3}$/iu, "$1");
@@ -159,31 +235,69 @@ function coordinates(location) {
     && Math.abs(location.lat) <= 90 && Math.abs(location.lon) <= 180 ? [location.lat, location.lon] : null;
 }
 
+// One Geoapify result checked against the separated Oracle fields (null if it does not fit).
+function candidate(location, fields, province) {
+  const point = coordinates(location);
+  const match = location?.rank?.match_type;
+  if (!point || location?.country_code !== "es"
+    || (fields.province && normalized(provinceOf(location)) !== (madridProvince(fields.province) ? "madrid" : normalized(fields.province)))
+    || !sameStreet(location.street, fields.street)
+    || !samePortal(location.housenumber, fields.housenumber)
+    || !["building", "amenity"].includes(location.result_type)
+    || !["full_match", "match_by_building", "inner_part"].includes(match)) return null;
+  const postcodeMatch = Boolean(fields.postcode) && location.postcode === fields.postcode;
+  const cityMatch = normalized(municipality(location)) === normalized(fields.city);
+  // A postcode that differs (or is missing) is accepted only in the same municipality, ranked lower.
+  if (!postcodeMatch && !cityMatch) return null;
+  // A venue inside a building can match the full portal even with an inner-part rank.
+  const score = location.rank.confidence_building_level ?? (match === "full_match" ? location.rank.confidence : null);
+  const both = postcodeMatch && cityMatch;
+  const reliable = match === "inner_part"
+    ? location.result_type === "amenity" && location.rank.confidence === 1 && score === 1
+    : Number.isFinite(score) && (score >= 0.9 || (both && score >= 0.8));
+  const fit = (postcodeMatch ? 2 : 0) + (cityMatch ? 1 : 0) + (province && sameProvince(province, location) ? 0.5 : 0);
+  return { point, reliable, fit, score: Number.isFinite(score) ? score : 0 };
+}
+
+// Prefer the result that matches postcode and municipality with the highest confidence.
+// Several results only block the leg when none of them clearly stands out.
+export function chooseCandidate(results, fields, limit = 5) {
+  const province = fields.province || provinceFromPostcode(fields.postcode);
+  const points = new Map();
+  for (const location of Array.isArray(results) ? results.slice(0, limit) : []) {
+    const found = candidate(location, fields, province);
+    if (!found) continue;
+    const key = found.point.map(value => value.toFixed(5)).join(",");
+    const current = points.get(key);
+    points.set(key, !current ? found : {
+      point: current.point, reliable: current.reliable || found.reliable,
+      fit: Math.max(current.fit, found.fit), score: Math.max(current.score, found.score),
+    });
+  }
+  const ranked = [...points.values()].sort((a, b) => b.fit - a.fit || b.score - a.score);
+  const [best, second] = ranked;
+  if (!best?.reliable) return { point: null, outcome: ranked.some(item => item.reliable) ? "ambiguous" : "none" };
+  const clear = !second || best.fit > second.fit || best.score - second.score >= 0.15;
+  return clear ? { point: best.point, outcome: "found" } : { point: null, outcome: "ambiguous" };
+}
+
+export function freeTextQuery(fields) {
+  const province = fields.province || provinceFromPostcode(fields.postcode);
+  return [[fields.street, fields.housenumber].join(" "), [fields.postcode, fields.city].filter(Boolean).join(" "),
+    normalized(province) !== normalized(fields.city) ? province : "", "España"].filter(Boolean).join(", ");
+}
+
+// At most two provider calls per address: one structured search and, only if it finds
+// nothing usable, one free-text search. A real ambiguity is reported as before.
 async function geocode(fields, context) {
   const { province, ...params } = fields;
-  const data = await readProvider("geocode/search", { ...params, format: "json" }, 1, context);
-  const points = new Map();
-  for (const location of Array.isArray(data?.results) ? data.results.slice(0, Number(params.limit)) : []) {
-    const point = coordinates(location);
-    const match = location?.rank?.match_type;
-    if (!point || location?.country_code !== "es" || (fields.postcode && location.postcode !== fields.postcode)
-      || (province && normalized(provinceOf(location)) !== (madridProvince(province) ? "madrid" : normalized(province)))
-      || !sameStreet(location.street, fields.street)
-      || normalized(municipality(location)) !== normalized(fields.city)
-      || !samePortal(location.housenumber, fields.housenumber)
-      || !["building", "amenity"].includes(location.result_type)
-      || !["full_match", "match_by_building", "inner_part"].includes(match)) continue;
-    // A venue inside a building can match the full portal even with an inner-part rank.
-    const score = location.rank.confidence_building_level ?? (match === "full_match" ? location.rank.confidence : null);
-    const key = point.join(",");
-    const reliable = match === "inner_part"
-      ? location.result_type === "amenity" && location.rank.confidence === 1 && score === 1
-      : Number.isFinite(score) && score >= 0.9;
-    points.set(key, { point, reliable: reliable || points.get(key)?.reliable });
-  }
-  if (points.size !== 1) return null;
-  const [match] = points.values();
-  return match.reliable ? match.point : null;
+  const structured = await readProvider("geocode/search", { ...params, format: "json" }, 1, context);
+  const first = chooseCandidate(structured?.results, fields, Number(params.limit));
+  if (first.outcome !== "none") return first.point;
+  const text = await readProvider("geocode/search", {
+    text: freeTextQuery(fields), filter: params.filter, limit: params.limit, format: "json",
+  }, 1, context);
+  return chooseCandidate(text?.results, fields, Number(params.limit)).point;
 }
 
 export function autocompleteQuery(value) {

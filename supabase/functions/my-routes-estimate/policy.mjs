@@ -29,6 +29,13 @@ export function routeAccess(raw, actorId) {
   return { includeHome: config[actorId] === "home-and-activities" };
 }
 
+// CONFIRMAR_CITAS-015: «Usar mi domicilio» is off unless the request says `useHome: true`.
+// Returns null for a malformed value (the request is rejected with 400).
+export function homeOptIn(input) {
+  if (!isRecord(input) || !Object.hasOwn(input, "useHome")) return false;
+  return typeof input.useHome === "boolean" ? input.useHome : null;
+}
+
 export function canAutocomplete(access, kind) {
   if (typeof access?.includeHome !== "boolean") return false;
   return kind === "keys" || kind === "tourline" || (kind === "home" && access.includeHome);
