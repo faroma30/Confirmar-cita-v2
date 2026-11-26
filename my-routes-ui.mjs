@@ -1,6 +1,6 @@
-import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes14";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes14";
-import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes14";
+import { bindRouteAutocomplete } from "./my-routes-autocomplete.mjs?v=3routes15";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes15";
+import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes15";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;
@@ -183,10 +183,11 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   function label(stop) {
     return [stop.type, stop.time].filter(Boolean).join(" · ");
   }
-  function editActivity(card, activity, save) {
+  function editActivity(card, activity, save, failed = false) {
     const details = add(card, "details", "");
     details.className = "subpanel";
-    add(details, "summary", activity.editableTravel ? "Editar desplazamiento" : "Completar dirección");
+    // CONFIRMAR_CITAS-017: si Geoapify no encontró la dirección, también se puede corregir la de una instalación.
+    add(details, "summary", activity.editableTravel || failed ? "Editar desplazamiento" : "Completar dirección");
     const form = add(details, "form", "");
     form.className = "dialog-form";
     let kind;
@@ -239,6 +240,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         if (Object.values(values).some(Boolean)) {
           try { location = validateRouteLocation(values); }
           catch (error) { status.textContent = error.message; return; }
+          if (!sendableRouteLocation(location)) {
+            status.textContent = "Usa solo letras, números, espacios y . ' º ª / - en la calle y el portal, y solo letras en el municipio y la provincia.";
+            return;
+          }
         }
       }
       save(travel === activity.defaultTravel && !location ? null : { travel, location });
@@ -262,9 +267,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const edits = activityEdits.get(selectedDate) ?? new Map();
       const activities = combineActivities(appointments, ignored, preferences, edits);
       const legs = buildLegs(formatRouteLocation(preferences.home), activities);
-      // Submit the original agenda. Match results to displayed stops; manual
-      // locations never leave the device, and no result is applied to a different leg.
-      const safeEdits = [...edits].filter(([, edit]) => edit.location === null);
+      // Submit the agenda with the technician's edits. CONFIRMAR_CITAS-017: an address corrected in
+      // «Editar desplazamiento» is sent too (same rules as the server), so the leg is recalculated with it.
+      // Results are matched to displayed stops; no result is applied to a different leg.
+      const safeEdits = [...edits].filter(([, edit]) => edit.location === null || sendableRouteLocation(edit.location));
       const canonical = buildLegs(formatRouteLocation(preferences.home),
         combineActivities(appointments, ignored, preferences, new Map(safeEdits)));
       const key = leg => JSON.stringify([leg.from.key, leg.to.key, leg.from.address, leg.to.address]);
@@ -290,6 +296,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       };
       // Why a leg has no time or distance, in the technician's words.
       function whyUnavailable(leg) {
+        const detail = detailText[detailOf(leg)];
+        if (detail) return (/^Geoapify/.test(detail) ? detail : detail.charAt(0).toLowerCase() + detail.slice(1)).replace(/\.$/, "");
         const reason = reasonText[batch?.reasons?.[positions.get(key(leg))]];
         if (reason) return reason;
         if (estimatesProvider?.manual && stopped && pilot) return "el cálculo está detenido (" + pilot.short + ")";
@@ -301,11 +309,37 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         : legs.length && !preferences.home ? "Añade tu domicilio para completar la ida y el regreso." : "";
       if (!provider) add(list, "p", "Los tiempos de conducción están desactivados. Puedes abrir en Google Maps los tramos con ubicación completa.");
 
+      // CONFIRMAR_CITAS-017: motivo concreto por tramo (`details`); con la función v10 se usan los `reasons` de siempre.
+      const detailText = {
+        privacy: "Tramo excluido por privacidad.",
+        incomplete: "La dirección no tiene calle, portal y municipio utilizables.",
+        missing_number: "Falta el número del portal.",
+        street_not_found: "Geoapify no encuentra esta calle en ese municipio.",
+        portal_not_found: "Geoapify encuentra la calle, pero no este número de portal.",
+        ambiguous: "Hay varios sitios posibles con esta dirección.",
+        other_end: "La otra dirección del tramo no se encontró.",
+        other_end_incomplete: "A la otra dirección del tramo le falta calle, portal o municipio.",
+        pilot_limit: "Tope diario del piloto alcanzado.",
+        no_route: "Geoapify no devolvió una ruta utilizable para este tramo.",
+      };
+      // Which stop has to be corrected: the destination of the leg, or its origin ("other_end").
+      const ownAddress = new Set(["incomplete", "missing_number", "street_not_found", "portal_not_found", "ambiguous"]);
+      const otherAddress = new Set(["other_end", "other_end_incomplete"]);
+      const detailOf = leg => batch?.details?.[positions.get(key(leg))] ?? null;
+      const failedKeys = new Set();
+      for (const [index, leg] of legs.entries()) {
+        const detail = estimates[index] ? null : detailOf(leg);
+        if (ownAddress.has(detail) && leg.to.key && leg.to.address) failedKeys.add(leg.to.key);
+        if (otherAddress.has(detail) && leg.from.key && leg.from.address) failedKeys.add(leg.from.key);
+      }
+      const done = estimates.filter(Boolean).length;
       if (explicit && calcNotice) calcNotice.textContent = !canEstimate
         ? "No se envió la consulta. Se necesitan dos actividades consecutivas de Oracle con dirección completa."
-        : estimates.some(Boolean)
+        : done === legs.length
           ? "Desplazamientos calculados. Consulta los minutos y kilómetros de cada tramo."
-          : "La consulta no devolvió tramos válidos. Consulta el motivo junto a cada tramo.";
+          : done
+            ? `Desplazamientos calculados en ${done} de ${legs.length} tramos. El motivo de los demás está junto a cada tramo.`
+            : "La consulta no devolvió tramos válidos. Consulta el motivo junto a cada tramo.";
       if (activities.some(item => item.editableTravel || (item.travel === "travel" && !item.address))) {
         add(list, "p", "Los cambios de las actividades duran hasta cerrar sesión o recargar la aplicación.");
       }
@@ -361,7 +395,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           }
         } else if (estimatesProvider) {
           const reason = batch?.reasons?.[positions.get(key(leg))];
-          const explanation = {
+          const detail = detailOf(leg);
+          const explanation = detailText[detail] ?? {
             privacy: "Tramo excluido por privacidad.",
             incomplete: "La dirección no contiene una vía, portal y municipio utilizables.",
             not_found: "Geoapify no encontró una coincidencia única para la dirección.",
@@ -369,7 +404,12 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           }[reason];
           if (explanation) {
             add(item, "p", "Tiempo y distancia no disponibles.");
-            add(item, "p", explanation);
+            add(item, "p", "Motivo: " + explanation);
+            if (ownAddress.has(detail) && failedKeys.has(leg.to.key)) {
+              add(item, "p", "Corrígela en «Editar desplazamiento» de esta actividad y vuelve a calcular.");
+            } else if (otherAddress.has(detail) && failedKeys.has(leg.from.key)) {
+              add(item, "p", "Corrígela en «Editar desplazamiento» de " + label(leg.from) + " y vuelve a calcular.");
+            }
           } else add(item, "p", "Tiempo y distancia no disponibles: " + whyUnavailable(leg) + ".");
         }
         const link = add(item, "a", "Abrir tramo en Google Maps");
@@ -403,7 +443,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           } else add(card, "p", "Con desplazamiento · Falta dirección");
           renderLeg(card, legIndex++);
         }
-        if (activity.editableTravel || !activity.address || activity.override) {
+        const failed = failedKeys.has(activity.key);
+        if (activity.editableTravel || !activity.address || activity.override || failed) {
           editActivity(card, activity, change => {
             if (!current() || date.value !== selectedDate) return;
             if (change) {
@@ -414,7 +455,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
               if (!edits.size) activityEdits.delete(selectedDate);
             }
             void refresh();
-          });
+          }, failed);
         }
       }
       if (legs.length) {
@@ -437,7 +478,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           const seconds = available.reduce((total, leg) => total + leg.durationSeconds, 0);
           const meters = available.reduce((total, leg) => total + leg.distanceMeters, 0);
           const partial = available.length !== legs.length;
-          add(list, "p", (partial ? "Conducción parcial (" + available.length + "/" + legs.length + " tramos): " : "Conducción total: ")
+          // CONFIRMAR_CITAS-017: los totales suman solo los tramos calculados.
+          add(list, "p", (partial ? "Conducción total (" + available.length + " de " + legs.length + " tramos): " : "Conducción total: ")
             + Math.ceil(seconds / 60) + " min · " + (meters / 1000).toLocaleString("es-ES") + " km");
         } else {
           add(list, "p", "Conducción total no disponible.");

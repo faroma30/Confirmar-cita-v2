@@ -251,6 +251,24 @@ export function validateRouteLocation(location) {
   return trimmed;
 }
 
+// CONFIRMAR_CITAS-017: la dirección corregida en «Editar desplazamiento» viaja en `edits` para recalcular
+// el tramo. Mismas reglas que parseActivityEdits del servidor: si no las cumple, se queda en el dispositivo.
+const sendableText = {
+  street: /^[\p{L}\p{N} .’'ºª/-]+$/u, number: /^[\p{L}\p{N} .’'ºª/-]+$/u,
+  municipality: /^[\p{L} .’'-]+$/u, postalCode: /^[0-9]{5}$/, province: /^[\p{L} .’'-]+$/u,
+};
+export function sendableRouteLocation(location) {
+  if (!location || typeof location !== "object") return false;
+  if (Object.keys(location).some(field => !Object.hasOwn(routeLocationFields, field))) return false;
+  for (const [field, max] of Object.entries(routeLocationFields)) {
+    const raw = Object.hasOwn(location, field) ? location[field] : "";
+    if (typeof raw !== "string" || /[\p{Cc}\p{Cf}\p{Cs}\u2028\u2029]/u.test(raw) || /(?:\p{N}[ .()\p{Pd}]*){9,}/u.test(raw)) return false;
+    const value = raw.trim();
+    if ([...value].length > max || (value && !sendableText[field].test(value))) return false;
+  }
+  return Boolean(location.street?.trim() && location.municipality?.trim());
+}
+
 export function validateRouteLocations(value) {
   if (!Number.isInteger(value?.margin) || value.margin < 0 || value.margin > 180) {
     throw new Error("El margen debe estar entre 0 y 180 minutos.");

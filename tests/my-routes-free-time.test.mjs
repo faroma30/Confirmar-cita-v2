@@ -99,5 +99,6 @@ test("con estimación: «Te sobran» y «Llegarías tarde», y respeta las edici
   assert.match(list, /Te sobran 10 min \(tiempo libre menos desplazamiento\)\./);
   assert.match(list, /Sin hora de fin: no se puede calcular si llegas a tiempo\./);
   assert.match(list, /Tiempo libre tras los desplazamientos entre actividades: 10 min \(1 tramos\)\./);
-  assert.match(list, /Conducción parcial/);
+  // CONFIRMAR_CITAS-017: el total parcial dice cuántos tramos suma («Conducción total (N de M tramos)»).
+  assert.match(list, /Conducción total \(\d+ de \d+ tramos\): /);
 });

@@ -4,6 +4,10 @@ export async function routeFingerprint(legs) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), b => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Códigos estables de motivo por tramo que devuelve my-routes-estimate desde CONFIRMAR_CITAS-017.
+export const legDetails = new Set(["privacy", "incomplete", "missing_number", "street_not_found", "portal_not_found",
+  "ambiguous", "other_end", "other_end_incomplete", "pilot_limit", "no_route"]);
+
 export function createCloudRoutes({ invoke, getActor }) {
   const pending = new Map();
   const cache = new Map();
@@ -72,6 +76,12 @@ export function createCloudRoutes({ invoke, getActor }) {
           if (Array.isArray(data.reasons) && data.reasons.length === legs.length) {
             const allowed = new Set(["privacy", "incomplete", "not_found", "no_route"]);
             Object.defineProperty(data.estimates, "reasons", { value: data.reasons.map(reason => allowed.has(reason) ? reason : null) });
+          }
+          // CONFIRMAR_CITAS-017: motivo concreto por tramo (campo opcional; la función v10 no lo envía).
+          if (Array.isArray(data.details) && data.details.length === legs.length) {
+            Object.defineProperty(data.estimates, "details", {
+              value: data.details.map((detail, index) => !data.estimates[index] && legDetails.has(detail) ? detail : null),
+            });
           }
           if (data.estimates.some(Boolean)) {
             if (cache.size >= 8) cache.delete(cache.keys().next().value);
