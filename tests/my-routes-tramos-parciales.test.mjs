@@ -255,26 +255,26 @@ test("pantalla: motivo por tramo, invitación a corregir, totales de los tramos 
   const log = [], bodies = [];
   const get = mountApp({ log, bodies });
   const list = await calculate(get);
-  assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\nCorrígela en «Editar desplazamiento» de esta actividad y vuelve a calcular\./);
-  assert.match(list, /Motivo: La otra dirección del tramo no se encontró\.\nCorrígela en «Editar desplazamiento» de Instalación · 11:00 y vuelve a calcular\./);
+  assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\nCorrígela en «Editar» de esta actividad y vuelve a calcular\./);
+  assert.match(list, /Motivo: La otra dirección del tramo no se encontró\.\nCorrígela en «Editar» de Instalación · 11:00 y vuelve a calcular\./);
   // CONFIRMAR_CITAS-022: el domicilio se usa siempre (antes «Tramo excluido por privacidad»); aquí no se encuentra.
-  assert.match(list, /Casa → Instalación · 09:00\nTiempo y distancia no disponibles\.\nMotivo: La otra dirección del tramo no se encontró\./);
+  assert.match(list, /Casa → Instalación · 09:00\nMotivo: La otra dirección del tramo no se encontró\./);
   assert.doesNotMatch(list, /privacidad/);
-  assert.match(list, /Conducción total \(1 de 5 tramos\): 30 min · 12 km/);
+  assert.match(list, /Conducción total: 30 min · 12 km\n1 de 5 desplazamientos calculados/);
   assert.doesNotMatch(list, /la consulta no devolvió este tramo/);
   assert.equal(get("CalculationNotice").textContent,
     "Desplazamientos calculados en 1 de 5 tramos. El motivo de los demás está junto a cada tramo.");
   // La instalación con la dirección fallida ofrece «Editar desplazamiento»; las demás instalaciones, no.
-  const fallida = card(get, "Instalación · 11:00");
-  assert.equal(fallida.children.find(node => node.tag === "details").children[0].textContent, "Editar desplazamiento");
-  assert.equal(card(get, "Instalación · 13:00").children.some(node => node.tag === "details"), false);
+  const fallida = card(get, "11:00 · Instalación");
+  assert.equal(fallida.children.find(node => node.tag === "details").children[0].textContent, "Editar");
+  assert.equal(card(get, "13:00 · Instalación").children.some(node => node.tag === "details" && node.className === "subpanel"), false);
 });
 
 test("corrección con edits: la dirección escrita en «Editar desplazamiento» se envía y el recálculo la usa (sin 409)", async () => {
   const log = [], bodies = [];
   const get = mountApp({ log, bodies });
   await calculate(get);
-  const form = card(get, "Instalación · 11:00").children.find(node => node.tag === "details").children.find(node => node.tag === "form");
+  const form = card(get, "11:00 · Instalación").children.find(node => node.tag === "details").children.find(node => node.tag === "form");
   const inputs = form.children[0].children.filter(node => node.tag === "label").map(label => label.children[0]);
   // CONFIRMAR_CITAS-022: el formulario tiene también «Provincia (opcional)» (inputs[3]); el CP es inputs[4].
   [inputs[0].value, inputs[1].value, inputs[2].value, inputs[4].value] = ["Carrer Nou", "5", "Vilafictícia", CP];
@@ -287,10 +287,10 @@ test("corrección con edits: la dirección escrita en «Editar desplazamiento» 
   assert.deepEqual(edit, { travel: "travel", location: { street: "Carrer Nou", number: "5", municipality: "Vilafictícia", postalCode: CP } });
   assert.ok(log.includes("estructurada:nou"), "Geoapify recibe la dirección corregida");
   assert.ok(!log.some(item => item.endsWith(":inexistent")), "y ya no la de la agenda");
-  assert.match(list, /Conducción total \(3 de 5 tramos\): 90 min · 36 km/);
+  assert.match(list, /Conducción total: 90 min · 36 km\n3 de 5 desplazamientos calculados/);
   // CONFIRMAR_CITAS-022: el domicilio (ficticio, sin resultado en este simulador) ahora también se busca; solo
   // ese tramo de ida da «La otra dirección…». Ninguna invitación a corregir la actividad ya corregida.
-  assert.doesNotMatch(list, /no encuentra esta calle|Corrígela en «Editar desplazamiento» de Instalación · 11:00/);
+  assert.doesNotMatch(list, /no encuentra esta calle|Corrígela en «Editar» de Instalación · 11:00/);
 });
 
 test("paridad de huella con una dirección corregida en una instalación de Oracle", async () => {
@@ -310,8 +310,8 @@ test("paridad de huella con una dirección corregida en una instalación de Orac
 test("compatibilidad: la web nueva con la función v10 (sin `details`) muestra los motivos de siempre", async () => {
   const get = mountApp({ log: [], bodies: [], legacy: true });
   const list = await calculate(get);
-  assert.match(list, /Tiempo y distancia no disponibles\.\nMotivo: No se encontró una coincidencia única para la dirección\./);
-  assert.match(list, /Conducción total \(1 de 5 tramos\)/);
+  assert.match(list, /Motivo: No se encontró una coincidencia única para la dirección\./);
+  assert.match(list, /1 de 5 desplazamientos calculados/);
   assert.doesNotMatch(list, /Corrígela/);
 });
 
@@ -366,7 +366,7 @@ test("una instalación sin dirección completada a mano se envía en edits: sus 
   const get = mountApp({ log, bodies, agenda });
   let list = await calculate(get);
   assert.match(list, /Tramo pendiente: revisa Instalación \(11:00\)\./);
-  const details = card(get, "Instalación · 11:00").children.find(node => node.tag === "details");
+  const details = card(get, "11:00 · Instalación").children.find(node => node.tag === "details");
   assert.equal(details.children[0].textContent, "Completar dirección");
   const form = details.children.find(node => node.tag === "form");
   const inputs = form.children[0].children.filter(node => node.tag === "label").map(label => label.children[0]);
@@ -377,5 +377,5 @@ test("una instalación sin dirección completada a mano se envía en edits: sus 
   list = await calculate(get, false);
   assert.equal(bodies.at(-1).edits.length, 1);
   assert.doesNotMatch(list, /la consulta no devolvió este tramo/);
-  assert.match(list, /Conducción total \(2 de 4 tramos\): 60 min · 24 km/);
+  assert.match(list, /Conducción total: 60 min · 24 km\n2 de 4 desplazamientos calculados/);
 });

@@ -271,7 +271,7 @@ test("sin casilla: el domicilio guardado se usa siempre, aunque la preferencia a
   assert.deepEqual(Object.keys(bodies[0]).sort(), ["date", "expectedActor", "fingerprint", "useHome"]);
   assert.equal(bodies[0].useHome, true, "la función v13 sigue recibiendo el domicilio");
   assert.equal(log.filter(item => item === "geocoding").length, 3, "domicilio + dos visitas");
-  assert.match(list, /Salida recomendada: 08:20/);
+  assert.match(list, /Sal de casa a las 08:20/);
   assert.match(list, /Llegada estimada a casa: 12:30/);
   assert.doesNotMatch(list, /privacidad|fuera del piloto/);
 });
@@ -306,7 +306,7 @@ test("opción activada: salen el primer y el último tramo y la hora de salida, 
   assert.deepEqual(log.filter(item => item === "geocoding").length, 3, "domicilio + dos visitas, una búsqueda cada una");
   assert.deepEqual(log.filter(item => item === "ruta").length, 3);
   // 09:00 − 30 min de trayecto − 10 min de margen.
-  assert.match(list, /Salida recomendada: 08:20/);
+  assert.match(list, /Sal de casa a las 08:20/);
   assert.match(list, /Llegada estimada: 08:50/);
   assert.match(list, /Llegada estimada a casa: 12:30/);
   assert.match(list, /Conducción total: 90 min · 36 km/);

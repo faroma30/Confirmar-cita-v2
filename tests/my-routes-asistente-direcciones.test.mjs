@@ -356,7 +356,7 @@ test("pantalla: «calle oficial: …» en letra pequeña y «¿Querías decir…
   assert.equal(oficial.className, "fine");
   assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\ndetalle: no_results/);
   assert.match(list, /¿Querías decir…\?/);
-  const fallida = card(get, "Instalación · 11:00");
+  const fallida = card(get, "11:00 · Instalación");
   const boton = all(fallida).find(node => node.tag === "button" && node.textContent === "Carrer Fontetas");
   assert.ok(boton, "la sugerencia es un botón");
   boton.events.click();
@@ -376,7 +376,7 @@ test("pantalla: asistente en Ajustes (domicilio, recogida de llaves, Tourline) y
   await settle();
   await get("Calculate").events.click();
   await settle(16);
-  const editar = card(get, "Instalación · 11:00").children.find(node => node.tag === "details");
+  const editar = card(get, "11:00 · Instalación").children.find(node => node.tag === "details");
   const group = editar.children.find(node => node.tag === "form").children[0];
   assert.deepEqual(group.children.filter(node => node.tag === "label").map(node => node.textContent),
     ["Calle o vía", "Portal (opcional)", "Municipio", "Provincia (opcional)", "Código postal (opcional)"]);

@@ -1,3 +1,5 @@
+import { describeRouteBlock, waitSeconds } from "./my-routes-pilot.mjs?v=3routes22";
+
 export async function routeFingerprint(legs) {
   const addresses = [legs[0].from.address, ...legs.map(leg => leg.to.address)];
   const bytes = new TextEncoder().encode(JSON.stringify(addresses));
@@ -36,7 +38,8 @@ export function createCloudRoutes({ invoke, getActor }) {
         return data;
       } catch { return null; }
     },
-    async estimateJourney(legs, { date, edits = [], cachedOnly = false, useHome = false }) {
+    // CONFIRMAR_CITAS-026: `onWait(segundos)` avisa, tras un cálculo, de la espera hasta el siguiente.
+    async estimateJourney(legs, { date, edits = [], cachedOnly = false, useHome = false, onWait = null }) {
       if (!legs.length || !legs.some(leg => leg.from.address && leg.to.address)) return [];
       const actor = getActor();
       if (!actor?.id || actor.role !== "technician") return [];
@@ -63,19 +66,27 @@ export function createCloudRoutes({ invoke, getActor }) {
               401: "La sesión ha caducado. Vuelve a iniciar sesión.",
               403: "Esta cuenta no tiene acceso al piloto.",
               409: "La agenda cambió. Actualiza Mis rutas e inténtalo de nuevo.",
-              429: "Se alcanzó el límite de consultas o la cuota del piloto.",
               500: "El servidor no pudo completar el cálculo de rutas.",
               502: "El proveedor de rutas devolvió un error.",
               503: "El servicio de rutas o el piloto está temporalmente desactivado.",
             };
-            let fault;
-            try { fault = (await error.context?.clone?.().json())?.code; } catch { /* Safe generic fallback. */ }
+            let body;
+            try { body = await error.context?.clone?.().json(); } catch { /* Safe generic fallback. */ }
+            const fault = body?.code;
+            // CONFIRMAR_CITAS-026: cada causa de 429 tiene su texto; la v16 no envía código (texto genérico).
+            if (status === 429) {
+              const block = describeRouteBlock(body);
+              throw Object.assign(new Error(block.message), { code: "route_request", block: block.code,
+                retryAfterSeconds: block.retryAfterSeconds });
+            }
             const providerMessage = {
               geocoding_timeout: "Geoapify tardó demasiado en buscar la dirección. No se calculó ningún desplazamiento.",
               geocoding_unavailable: "Geoapify no pudo buscar la dirección. No se calculó ningún desplazamiento.",
             }[fault];
             throw Object.assign(new Error(providerMessage ?? messages[status] ?? "No se pudo conectar con el servicio de rutas."), { code: "route_request" });
           }
+          const wait = waitSeconds(data?.retryAfterSeconds);
+          if (wait && getActor()?.id === actor.id) onWait?.(wait);
           if (!Array.isArray(data?.estimates) || data.estimates.length !== legs.length
             || getActor()?.id !== actor.id || getActor()?.role !== "technician" || generation !== revision) return [];
           if (Array.isArray(data.reasons) && data.reasons.length === legs.length) {

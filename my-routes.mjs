@@ -7,6 +7,22 @@ function addressOf(row) {
     ? [street, text(row.postal_code), text(row.population)].filter(Boolean).join(", ") : "";
 }
 
+// CONFIRMAR_CITAS-026: dirección en una línea para la tarjeta (calle, número y pueblo): sin código postal,
+// país ni partes repetidas. La dirección completa no cambia: se sigue enviando y se ve en «Más detalles».
+export function shortAddress(address) {
+  const plain = value => value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+  const parts = [];
+  for (const raw of text(address).split(",")) {
+    const part = raw.trim().replace(/^\d{5}(?:\s+|$)/, "").replace(/\s+\d{5}$/, "").trim();
+    if (!part || /^espa(?:ñ|n)a$/i.test(part)) continue;
+    // «Vilafictícia» y «VILAFICTICIA (Girona)» son el mismo pueblo: se queda la primera vez.
+    const town = plain(part.replace(/\s*\([^)]*\)$/, ""));
+    if (parts.some(other => other.town === town)) continue;
+    parts.push({ part, town });
+  }
+  return parts.map(item => item.part).join(", ");
+}
+
 export const routeLocationFields = { street: 200, number: 30, municipality: 100, postalCode: 5, province: 100 };
 export const routeLocationKinds = ["home", "keys", "tourline"];
 

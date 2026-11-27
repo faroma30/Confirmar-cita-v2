@@ -34,3 +34,18 @@
 .cancellation-recipient-status:empty{display:none}
 
 #myRoutesPilotControls{grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));align-items:stretch}#myRoutesPilotControls[hidden]{display:none}#myRoutesPilotControls button{min-width:0;min-height:44px;white-space:normal;overflow-wrap:anywhere}#myRoutesPilotNotice,#myRoutesCalculationNotice,#myRoutesCalculateReason{grid-column:1/-1;min-width:0;margin:0}#myRoutesCalculateReason{font-weight:600}#myRoutesCalculateReason[hidden],#myRoutesPilotStop[hidden]{display:none}
+/* CONFIRMAR_CITAS-026: tarjetas simples de Mis rutas y campo de fecha dentro de la tarjeta en iPhone. */
+#myRoutesView .agenda-controls>*{min-width:0}
+@media(max-width:680px){#myRoutesView .agenda-controls{grid-template-columns:minmax(0,1fr)}}
+#myRoutesDate{display:block;width:100%;min-width:0;max-width:100%;-webkit-appearance:none;appearance:none}
+#myRoutesDate::-webkit-date-and-time-value{min-width:0;text-align:left}
+#myRoutesView .appointment-card{min-width:0;overflow-wrap:anywhere}
+#myRoutesView .appointment-card h3{font-size:18px;font-weight:800}
+#myRoutesView .route-address{font-size:16px;color:#20252b}
+#myRoutesView .route-travel{font-size:18px;font-weight:800;color:#20252b}
+#myRoutesView .route-summary{border-width:2px;border-color:#20252b}
+#myRoutesView .route-summary h3{font-size:22px}
+#myRoutesView .route-maps{display:inline-block;margin-top:6px;text-decoration:none}
+#myRoutesView .route-card>details{margin-top:10px}
+#myRoutesView .route-card>details>summary,#myRoutesView .route-more>summary{min-height:44px;padding:11px 0;cursor:pointer}
+#myRoutesView .route-more>summary{font-size:13px;color:#4d5660}

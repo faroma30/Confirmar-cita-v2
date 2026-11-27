@@ -1,8 +1,9 @@
-import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes21";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes21";
-import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes21";
+import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes22";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, shortAddress, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes22";
+import { canOfferPilotStop, countdownClock, describePilot, madridClock, stopConfirmation, waitMessage } from "./my-routes-pilot.mjs?v=3routes22";
 
-export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null }) {
+export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null,
+  timers = { set: (task, ms) => setTimeout(task, ms), clear: id => clearTimeout(id) } }) {
   const settings = preferencesStore;
   const find = id => panel.querySelector("#" + id);
   // CONFIRMAR_CITAS-022: el domicilio guardado se usa siempre (sin casilla); `homeConsent` ya no se usa.
@@ -27,6 +28,55 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   let stopped = false;
   let pilot = null;
   let renderedStopped = false;
+  // CONFIRMAR_CITAS-026: espera entre cálculos (la marca el servidor). El botón cuenta atrás y, si se eligió
+  // una calle durante la espera, se recalcula solo al terminar.
+  const calculateLabel = "Calcular desplazamientos";
+  const queuedText = " La corrección queda aplicada y se recalculará sola al terminar la espera.";
+  let waitUntil = 0;
+  let waitTimer = null;
+  let waitNotice = "";
+  let queued = null;
+  const waitLeft = () => waitUntil ? Math.max(0, Math.ceil((waitUntil - now().getTime()) / 1000)) : 0;
+  function syncCalculate() {
+    if (!calculateButton) return;
+    const left = waitLeft();
+    calculateButton.disabled = stopped || pilotBusy || left > 0;
+    calculateButton.textContent = left > 0 ? "Espera " + countdownClock(left) : calculateLabel;
+  }
+  function showWaitNotice(text) {
+    waitNotice = text;
+    if (calcNotice) calcNotice.textContent = text;
+  }
+  function stopWaitTimer() {
+    if (waitTimer !== null) timers.clear(waitTimer);
+    waitTimer = null;
+  }
+  function tickWait() {
+    stopWaitTimer();
+    if (waitLeft() > 0) {
+      syncCalculate();
+      waitTimer = timers.set(tickWait, 1000);
+      return;
+    }
+    waitUntil = 0;
+    const pending = queued;
+    queued = null;
+    if (calcNotice && waitNotice && calcNotice.textContent === waitNotice) calcNotice.textContent = "";
+    waitNotice = "";
+    syncCalculate();
+    if (pending && pending.actor === technicianId() && !view.hidden && settingsPanel.hidden
+      && date.value === pending.date && !stopped && !pilotBusy) void calculate();
+  }
+  function startWait(seconds) {
+    waitUntil = Math.max(waitUntil, now().getTime() + seconds * 1000);
+    tickWait();
+  }
+  function clearWait() {
+    stopWaitTimer();
+    waitUntil = 0;
+    waitNotice = "";
+    queued = null;
+  }
   function setPilotLoading(loading) {
     if (statusButton) {
       statusButton.disabled = loading;
@@ -47,7 +97,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     pilot = null;
     renderedStopped = false;
     setPilotLoading(false);
-    if (calculateButton) calculateButton.disabled = false;
+    clearWait();
+    syncCalculate();
     if (stopButton) stopButton.hidden = true;
     if (pilotNotice) pilotNotice.textContent = "";
     if (calcNotice) calcNotice.textContent = "";
@@ -74,7 +125,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     pilot = described;
     if (pilotControls) pilotControls.hidden = false;
     stopped = !pilot.canCalculate;
-    calculateButton.disabled = stopped || pilotBusy;
+    syncCalculate();
     showCalculateReason();
     // «Desactivar piloto» solo para el Administrador y solo si tiene efecto (CONFIRMAR_CITAS-007).
     if (stopButton) stopButton.hidden = !canOfferPilotStop(getActor(), pilot);
@@ -82,13 +133,28 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       "El contador interno puede diferir del consumo de Geoapify."].join(" ") + stamp;
     if (operation === "stop" || (!view.hidden && stopped !== renderedStopped)) void refresh();
   }
-  async function calculate() {
+  // `correction`: fecha de la ruta cuando el cálculo lo pide una calle elegida en «¿Querías decir…?».
+  async function calculate(correction = null) {
     if (!provider?.manual || stopped || pilotBusy) return;
+    const left = waitLeft();
+    if (left > 0) { showWaitNotice(waitMessage(left)); return; }
     pilotBusy = true;
     if (calcNotice) calcNotice.textContent = "Calculando desplazamientos…";
-    calculateButton.disabled = true;
-    try { await refresh(true); }
-    finally { pilotBusy = false; calculateButton.disabled = stopped; }
+    syncCalculate();
+    const actor = technicianId();
+    let failure = null;
+    try { failure = await refresh(true); }
+    finally { pilotBusy = false; syncCalculate(); }
+    if (failure && actor === technicianId()) {
+      // Las tarjetas siguen a la vista: se repintan sin calcular ni gastar nada.
+      if (!view.hidden) await refresh();
+      if (actor !== technicianId()) return;
+      if (failure.retryAfterSeconds) {
+        if (correction && correction === date.value) queued = { actor, date: correction };
+        startWait(failure.retryAfterSeconds);
+        showWaitNotice(failure.message + (queued ? queuedText : ""));
+      }
+    }
     await updatePilot("status");
   }
   calculateButton?.addEventListener("click", () => calculate());
@@ -162,6 +228,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     notice.textContent = "";
     resetSettings();
     date.value = "";
+    queued = null;
   }
   function sync() {
     const id = technicianId();
@@ -190,7 +257,9 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     const details = add(card, "details", "");
     details.className = "subpanel";
     // CONFIRMAR_CITAS-017: si no se encontró la dirección, también se puede corregir la de una instalación.
-    add(details, "summary", activity.editableTravel || failed ? "Editar desplazamiento" : "Completar dirección");
+    const editing = activity.editableTravel || failed;
+    const summary = add(details, "summary", editing ? "Editar" : "Completar dirección");
+    summary.setAttribute("aria-label", (editing ? "Editar desplazamiento de " : "Completar dirección de ") + label(activity));
     const form = add(details, "form", "");
     form.className = "dialog-form";
     let kind;
@@ -302,8 +371,9 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       const estimatesProvider = provider;
       // CONFIRMAR_CITAS-022: the saved home always takes part (`useHome: true` keeps the v13 function working).
       const useHome = Boolean(preferences.home);
+      const onWait = seconds => { if (technicianId() === actorId) startWait(seconds); };
       const batch = estimatesProvider?.estimateJourney && canEstimate
-        ? await estimatesProvider.estimateJourney(canonical, { date: selectedDate, edits: safeEdits, ...(estimatesProvider.manual ? { cachedOnly: !explicit } : {}), ...(useHome ? { useHome: true } : {}) }) : null;
+        ? await estimatesProvider.estimateJourney(canonical, { date: selectedDate, edits: safeEdits, ...(estimatesProvider.manual ? { cachedOnly: !explicit, ...(explicit ? { onWait } : {}) } : {}), ...(useHome ? { useHome: true } : {}) }) : null;
       const estimates = await Promise.all(legs.map(leg => estimateLeg(leg,
         estimatesProvider?.estimateJourney ? { estimate: () => batch?.[positions.get(key(leg))] } : estimatesProvider,
         { date: selectedDate })));
@@ -329,8 +399,6 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       }
       notice.textContent = !activities.length ? "No hay actividades para esta fecha."
         : legs.length && !preferences.home ? "Guarda tu domicilio en Ajustes para calcular la salida." : "";
-      if (!provider) add(list, "p", "Los tiempos de conducción están desactivados. Puedes abrir en Google Maps los tramos con ubicación completa.");
-
       // CONFIRMAR_CITAS-017: motivo concreto por tramo (`details`); con la función v10 se usan los `reasons` de siempre.
       const detailText = {
         privacy: "Tramo excluido por privacidad.",
@@ -370,7 +438,13 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         edits.set(stop.key, { travel: "travel", location });
         activityEdits.set(selectedDate, edits);
         // Un toque aplica la calle oficial como `edits` y se recalcula (si el piloto lo permite).
-        void (provider?.manual && !stopped && !pilotBusy ? calculate() : refresh());
+        if (!provider?.manual || stopped || pilotBusy) { void refresh(); return; }
+        const left = waitLeft();
+        if (!left) { void calculate(selectedDate); return; }
+        // CONFIRMAR_CITAS-026: durante la espera la corrección queda aplicada y se recalcula al terminar.
+        queued = { actor: actorId, date: selectedDate };
+        showWaitNotice(waitMessage(left) + queuedText);
+        void refresh();
       };
       // CONFIRMAR_CITAS-023: el bloque de una dirección sale una sola vez; en el tramo siguiente basta el motivo.
       const offered = new Set();
@@ -409,58 +483,130 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           : done
             ? `Desplazamientos calculados en ${done} de ${legs.length} tramos. El motivo de los demás está junto a cada tramo.`
             : "La consulta no devolvió tramos válidos. Consulta el motivo junto a cada tramo.";
-      if (activities.some(item => item.editableTravel || (item.travel === "travel" && !item.address))) {
-        add(list, "p", "Los cambios de las actividades duran hasta cerrar sesión o recargar la aplicación.");
-      }
+      // CONFIRMAR_CITAS-026: tarjetas simples (actividad, dirección y desplazamiento). Lo técnico y el tiempo
+      // libre no se borran: quedan en «Más detalles», cerrado por defecto.
       const departure = activities[0] === legs[0]?.to && estimates[0]
         && recommendedDeparture(legs[0].to.time, estimates[0].durationSeconds, preferences.margin);
-      if (departure) add(list, "p", "Salida recomendada: " + departure.time + (departure.dayOffset < 0 ? " (día anterior)" : ""));
-      else if (estimatesProvider && legs.length) {
-        const first = legs[0];
-        const why = batch?.reasons?.[0] === "privacy" ? "el domicilio queda fuera del piloto"
-          : !preferences.home ? "guarda tu domicilio en Ajustes para calcular la salida"
-          : activities[0] !== first.to ? "la jornada no empieza con un desplazamiento desde casa"
-          : !first.to.time ? "la primera actividad no tiene hora"
-          : "falta el primer tramo: " + whyUnavailable(first);
-        add(list, "p", "Hora de salida no disponible: " + why + ".");
-      }
-      if (activities.some(activity => !activity.time)) add(list, "p", "Las actividades sin hora fiable aparecen al final.");
+      const heading = stop => [stop.time, stop.type].filter(Boolean).join(" · ");
+      const kilometres = meters => (meters / 1000).toLocaleString("es-ES", { maximumFractionDigits: 1 });
+      const fromName = stop => !stop.key ? "casa" : stop.time ? `${stop.type} (${stop.time})` : stop.type;
+      const moreDetails = (card, notes) => {
+        if (!notes.length) return;
+        const details = add(card, "details", "");
+        details.className = "route-more";
+        add(details, "summary", "Más detalles");
+        for (const note of notes) add(details, "p", note).className = "fine";
+      };
 
+      function renderSummary() {
+        const card = add(list, "article", "");
+        card.className = "appointment-card route-summary";
+        add(card, "h3", departure
+          ? "Sal de casa a las " + departure.time + (departure.dayOffset < 0 ? " (día anterior)" : "")
+          : "Resumen de la ruta");
+        const notes = [];
+        if (!provider) add(card, "p", "Los tiempos de conducción están desactivados. Puedes abrir en Google Maps los tramos con ubicación completa.");
+        if (!departure && estimatesProvider && legs.length) {
+          add(card, "p", "Hora de salida: sin calcular");
+          const first = legs[0];
+          const why = batch?.reasons?.[0] === "privacy" ? "el domicilio queda fuera del piloto"
+            : !preferences.home ? "guarda tu domicilio en Ajustes para calcular la salida"
+            : activities[0] !== first.to ? "la jornada no empieza con un desplazamiento desde casa"
+            : !first.to.time ? "la primera actividad no tiene hora"
+            : "falta el primer tramo: " + whyUnavailable(first);
+          notes.push("Hora de salida no disponible: " + why + ".");
+        }
+        if (estimatesProvider && legs.length) {
+          const available = estimates.filter(Boolean);
+          // CONFIRMAR_CITAS-017: los totales suman solo los tramos calculados.
+          const seconds = available.reduce((total, leg) => total + leg.durationSeconds, 0);
+          const meters = available.reduce((total, leg) => total + leg.distanceMeters, 0);
+          add(card, "p", available.length
+            ? "Conducción total: " + Math.ceil(seconds / 60) + " min · " + kilometres(meters) + " km"
+            : "Conducción total: sin calcular").className = "route-travel";
+          if (available.length !== legs.length) add(card, "p", `${available.length} de ${legs.length} desplazamientos calculados`);
+        }
+        if (activities.some(item => item.editableTravel || (item.travel === "travel" && !item.address))) {
+          notes.push("Los cambios de las actividades duran hasta cerrar sesión o recargar la aplicación.");
+        }
+        if (activities.some(activity => !activity.time)) notes.push("Las actividades sin hora fiable aparecen al final.");
+        const day = dayFreeTime(activities);
+        if (day.pairs) notes.push(day.counted
+          ? "Tiempo libre total: " + formatMinutes(day.minutes)
+            + (day.counted < day.pairs ? ` (${day.counted} de ${day.pairs} huecos; al resto le faltan horas)` : "") + "."
+          : "Tiempo libre total no disponible: faltan horas de fin en la agenda.");
+        const slacks = legs.map((leg, index) => legSlack(leg, estimates[index])).filter(slack => slack && slack.reason === null);
+        if (slacks.length) {
+          const net = slacks.reduce((total, slack) => total + slack.signed, 0);
+          notes.push(net >= 0
+            ? `Tiempo libre tras los desplazamientos entre actividades: ${formatMinutes(Math.floor(net))} (${slacks.length} tramos).`
+            : `Faltan ${formatMinutes(Math.ceil(-net))} en total para los desplazamientos entre actividades (${slacks.length} tramos).`);
+        }
+        moreDetails(card, notes);
+      }
+
+      // Motivo en una frase corta y sin códigos (el largo y el código quedan en «Más detalles»).
+      function shortReason(leg) {
+        const detail = detailOf(leg);
+        const reason = batch?.reasons?.[positions.get(key(leg))];
+        const other = leg.from.key ? "la otra dirección" : "tu domicilio";
+        const phrases = {
+          privacy: "Dirección excluida por privacidad",
+          incomplete: "La dirección está incompleta",
+          missing_number: withoutNumber(leg.to.address) ? "Dirección sin número" : "Falta el número del portal",
+          street_not_found: "No encuentro la calle",
+          portal_not_found: "No encuentro ese número",
+          ambiguous: "Hay varios sitios con esa dirección",
+          other_end: "No encuentro " + other,
+          other_end_incomplete: leg.from.key ? "La otra dirección está incompleta" : "Tu domicilio está incompleto",
+          pilot_limit: "Se ha llegado al límite de cálculos",
+          no_route: "No hay ruta en coche",
+          not_found: "No encuentro la dirección",
+        };
+        return phrases[detail] ?? phrases[reason] ?? (computed ? "No se ha podido calcular" : "Sin calcular");
+      }
+
+      // Pinta el desplazamiento de un tramo, sus sugerencias y el botón de Maps; devuelve sus notas técnicas.
       function renderLeg(item, index) {
         const leg = legs[index];
+        const notes = [];
+        const travel = text => { add(item, "p", text).className = "route-travel"; };
         const url = mapsLink(leg);
         if (!url) {
           const missing = [leg.from, leg.to].filter(stop => !stop.address)
             .map(stop => stop.time ? `${stop.type} (${stop.time})` : stop.type);
           if (leg.to.noDestination || leg.from.noDestination) {
-            add(item, "p", "Tramo pendiente. " + noDestinationText);
-            return;
+            travel(leg.to.noDestination ? "Sin destino: no se calcula" : "Falta el destino de la otra actividad");
+            notes.push("Tramo pendiente. " + noDestinationText);
+            return notes;
           }
-          add(item, "p", missing.length ? `Tramo pendiente: revisa ${missing.join(" y ")}.`
+          travel(!leg.to.address ? (leg.to.key ? "Falta la dirección" : "No hay domicilio guardado")
+            : leg.from.key ? "Falta la dirección de la otra actividad" : "No hay domicilio guardado");
+          notes.push(missing.length ? `Tramo pendiente: revisa ${missing.join(" y ")}.`
             : "Tramo pendiente: revisa la decisión de desplazamiento.");
-          return;
+          return notes;
         }
-        add(item, "p", label(leg.from) + " → " + label(leg.to));
+        notes.push(label(leg.from) + " → " + label(leg.to));
         const estimate = estimates[index];
         if (estimate) {
-          add(item, "p", Math.ceil(estimate.durationSeconds / 60) + " min · "
-            + (estimate.distanceMeters / 1000).toLocaleString("es-ES") + " km" + (approxOf(leg) ? " (aprox.)" : ""));
-          add(item, "p", "Estimación sin tráfico en tiempo real · " + new Date(estimate.calculatedAt).toLocaleString("es-ES"));
-          if (mayArriveLate(leg, estimate)) add(item, "p", "Posible retraso: el trayecto supera el tiempo entre actividades.");
+          travel("🚗 " + Math.ceil(estimate.durationSeconds / 60) + " min · " + kilometres(estimate.distanceMeters)
+            + " km" + (approxOf(leg) ? " (aprox.)" : "") + " desde " + fromName(leg.from));
+          notes.push("Estimación sin tráfico en tiempo real · " + new Date(estimate.calculatedAt).toLocaleString("es-ES"));
+          if (mayArriveLate(leg, estimate)) notes.push("Posible retraso: el trayecto supera el tiempo entre actividades.");
           // CONFIRMAR_CITAS-020: posición de la calle (la base oficial no tiene ese portal) y origen de las direcciones.
           if (approxOf(leg)) {
-            add(item, "p", "aprox.: la base oficial no tiene ese portal; se usa la calle.").className = "fine";
+            notes.push("aprox.: la base oficial no tiene ese portal; se usa la calle.");
             const diagnostic = diagnosticOf(leg);
-            if (diagnostic) add(item, "p", "detalle: " + diagnostic).className = "fine";
+            if (diagnostic) notes.push("detalle: " + diagnostic);
           }
           for (const name of new Set([officialOf(leg, "from"), officialOf(leg, "to")].filter(Boolean))) {
-            add(item, "p", "calle oficial: " + name).className = "fine";
+            notes.push("calle oficial: " + name);
           }
           const origin = sourcesOf(leg);
-          if (origin) add(item, "p", "origen: " + origin).className = "fine";
+          if (origin) notes.push("origen: " + origin);
           const slack = legSlack(leg, estimate);
-          if (slack?.reason === "no_end") add(item, "p", "Sin hora de fin: no se puede calcular si llegas a tiempo.");
-          else if (slack && slack.reason === null) add(item, "p", slack.late
+          if (slack?.reason === "no_end") notes.push("Sin hora de fin: no se puede calcular si llegas a tiempo.");
+          else if (slack && slack.reason === null) notes.push(slack.late
             ? `Llegarías ${slack.minutes} min tarde (tiempo libre menos desplazamiento).`
             : `Te sobran ${slack.minutes} min (tiempo libre menos desplazamiento).`);
           const arrival = index === 0
@@ -469,11 +615,12 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           if (arrival) {
             const offset = arrival.dayOffset + (index === 0 ? departure.dayOffset : 0);
             const day = offset ? (offset < 0 ? " (día anterior)" : " (día siguiente)") : "";
-            add(item, "p", (index === legs.length - 1 ? "Llegada estimada a casa: " : "Llegada estimada: ") + arrival.time + day);
+            notes.push((index === legs.length - 1 ? "Llegada estimada a casa: " : "Llegada estimada: ") + arrival.time + day);
           } else {
-            add(item, "p", "Llegada estimada no disponible.");
+            notes.push("Llegada estimada no disponible.");
           }
-        } else if (estimatesProvider) {
+        } else {
+          travel(estimatesProvider ? shortReason(leg) : "Sin calcular");
           const reason = batch?.reasons?.[positions.get(key(leg))];
           const detail = detailOf(leg);
           const explanation = detailText[detail] ?? {
@@ -483,52 +630,54 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             no_route: "Geoapify no devolvió una ruta utilizable para este tramo.",
           }[reason];
           if (explanation) {
-            add(item, "p", "Tiempo y distancia no disponibles.");
             const noNumber = detail === "missing_number" && withoutNumber(leg.to.address);
-            add(item, "p", "Motivo: " + (noNumber ? "Dirección sin número: corrígela en «Editar desplazamiento»." : explanation));
+            notes.push("Motivo: " + (noNumber ? "Dirección sin número: corrígela en «Editar»." : explanation));
             const diagnostic = diagnosticOf(leg);
-            if (diagnostic) add(item, "p", "detalle: " + diagnostic).className = "fine";
+            if (diagnostic) notes.push("detalle: " + diagnostic);
             if (noNumber) {
               // El motivo ya dice dónde corregirla.
             } else if (ownAddress.has(detail) && failedKeys.has(leg.to.key)) {
-              add(item, "p", "Corrígela en «Editar desplazamiento» de esta actividad y vuelve a calcular.");
+              notes.push("Corrígela en «Editar» de esta actividad y vuelve a calcular.");
             } else if (otherAddress.has(detail) && failedKeys.has(leg.from.key)) {
-              add(item, "p", "Corrígela en «Editar desplazamiento» de " + label(leg.from) + " y vuelve a calcular.");
+              notes.push("Corrígela en «Editar» de " + label(leg.from) + " y vuelve a calcular.");
             }
             if (ownAddress.has(detail)) offerSuggestions(item, leg.to, suggestionsOf(leg, "to"));
             else if (otherAddress.has(detail)) offerSuggestions(item, leg.from, suggestionsOf(leg, "from"));
-          } else add(item, "p", "Tiempo y distancia no disponibles: " + whyUnavailable(leg) + ".");
+          } else if (estimatesProvider && (computed || (estimatesProvider.manual && (stopped || !canEstimate)))) {
+            notes.push("Motivo: " + whyUnavailable(leg) + ".");
+          }
         }
-        const link = add(item, "a", "Abrir tramo en Google Maps");
-        link.className = "button secondary";
+        const link = add(item, "a", "Abrir en Google Maps");
+        link.className = "button secondary route-maps";
         link.href = url;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
+        return notes;
       }
 
+      if (activities.length) renderSummary();
       let legIndex = 0;
       for (const [index, activity] of activities.entries()) {
         const card = add(list, "article", "");
-        card.className = "appointment-card";
-        add(card, "h3", label(activity));
+        card.className = "appointment-card route-card";
+        add(card, "h3", heading(activity));
+        const notes = [];
         if (index > 0) {
           const previous = activities[index - 1];
           const gap = freeTimeBetween(previous, activity);
-          add(card, "p", gap.reason === "no_end"
+          notes.push(gap.reason === "no_end"
             ? `Sin hora de fin: no se puede calcular el tiempo libre (falta el fin de ${label(previous)}).`
             : gap.reason === "no_start" ? "Sin hora de inicio: no se puede calcular el tiempo libre."
             : gap.minutes >= 0 ? `Tiempo libre: ${formatMinutes(gap.minutes)} desde el fin de ${label(previous)}.`
             : `Tiempo libre: 0 min. Se solapa ${formatMinutes(-gap.minutes)} con ${label(previous)}.`);
         }
-        if (activity.travel === "pause") add(card, "p", "Pausa sin desplazamiento");
+        if (activity.travel === "pause") add(card, "p", "Sin desplazamiento").className = "route-travel";
         else {
+          const short = shortAddress(activity.address);
+          add(card, "p", short || "Sin dirección").className = "route-address";
+          if (short && short !== activity.address) notes.push("Dirección completa: " + activity.address);
           if (activity.travel === "undecided") add(card, "p", "Pendiente de decidir si requiere desplazamiento");
-          else if (activity.noDestination) add(card, "p", noDestinationText);
-          else if (activity.address) {
-            add(card, "p", "Con desplazamiento");
-            add(card, "p", activity.address);
-          } else add(card, "p", "Con desplazamiento · Falta dirección");
-          renderLeg(card, legIndex++);
+          notes.push(...renderLeg(card, legIndex++));
         }
         const failed = failedKeys.has(activity.key);
         if (activity.editableTravel || !activity.address || activity.override || failed) {
@@ -544,45 +693,22 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             void refresh();
           }, failed);
         }
+        moreDetails(card, notes);
       }
       if (legs.length) {
         const card = add(list, "article", "");
-        card.className = "appointment-card";
+        card.className = "appointment-card route-card";
         add(card, "h3", "Regreso a casa");
-        renderLeg(card, legs.length - 1);
+        moreDetails(card, renderLeg(card, legs.length - 1));
       }
       if (batch !== null && estimates.some(Boolean)) {
         const credit = add(list, "p", "Datos de rutas: ");
+        credit.className = "fine";
         const link = add(credit, "a", "Geoapify");
         link.href = "https://www.geoapify.com/";
         credit.append(" · ");
         const osm = add(credit, "a", "© OpenStreetMap contributors");
         osm.href = "https://www.openstreetmap.org/copyright";
-      }
-      if (estimatesProvider && legs.length) {
-        const available = estimates.filter(Boolean);
-        if (available.length) {
-          const seconds = available.reduce((total, leg) => total + leg.durationSeconds, 0);
-          const meters = available.reduce((total, leg) => total + leg.distanceMeters, 0);
-          const partial = available.length !== legs.length;
-          // CONFIRMAR_CITAS-017: los totales suman solo los tramos calculados.
-          add(list, "p", (partial ? "Conducción total (" + available.length + " de " + legs.length + " tramos): " : "Conducción total: ")
-            + Math.ceil(seconds / 60) + " min · " + (meters / 1000).toLocaleString("es-ES") + " km");
-        } else {
-          add(list, "p", "Conducción total no disponible.");
-        }
-      }
-      const day = dayFreeTime(activities);
-      if (day.pairs) add(list, "p", day.counted
-        ? "Tiempo libre total: " + formatMinutes(day.minutes)
-          + (day.counted < day.pairs ? ` (${day.counted} de ${day.pairs} huecos; al resto le faltan horas)` : "") + "."
-        : "Tiempo libre total no disponible: faltan horas de fin en la agenda.");
-      const slacks = legs.map((leg, index) => legSlack(leg, estimates[index])).filter(slack => slack && slack.reason === null);
-      if (slacks.length) {
-        const net = slacks.reduce((total, slack) => total + slack.signed, 0);
-        add(list, "p", net >= 0
-          ? `Tiempo libre tras los desplazamientos entre actividades: ${formatMinutes(Math.floor(net))} (${slacks.length} tramos).`
-          : `Faltan ${formatMinutes(Math.ceil(-net))} en total para los desplazamientos entre actividades (${slacks.length} tramos).`);
       }
     } catch (error) {
       if (current()) {
@@ -590,7 +716,10 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         if (explicit && calcNotice) calcNotice.textContent = error?.code === "route_request"
           ? error.message : "No se pudo calcular la ruta. Comprueba la conexión y vuelve a intentarlo.";
       }
+      // CONFIRMAR_CITAS-026: `calculate` repinta las tarjetas y, si hay espera, arranca la cuenta atrás.
+      return explicit && error?.code === "route_request" ? error : null;
     }
+    return null;
   }
   tab.addEventListener("click", () => {
     sync();
@@ -605,7 +734,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     void refresh();
   });
   agendaTab.addEventListener("click", close);
-  date.addEventListener("change", () => void refresh());
+  date.addEventListener("change", () => { queued = null; void refresh(); });
   function isCurrentSettings(actorId, run) {
     return actorId && technicianId() === actorId && run === settingsRequest && !view.hidden && !settingsPanel.hidden;
   }

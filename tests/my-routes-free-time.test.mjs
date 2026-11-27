@@ -79,14 +79,14 @@ test("con estimación: «Te sobran» y «Llegarías tarde», y respeta las edici
   let list = texts(get("List")).join("\n");
   // CONFIRMAR_CITAS-016 (opción A): «Pausa comida larga» sale por defecto como pausa sin desplazamiento,
   // así que el tramo va de Mantenimiento a Valoración.
-  assert.match(list, /Pausa sin desplazamiento/);
+  assert.match(list, /Sin desplazamiento/);
   assert.doesNotMatch(list, /Pendiente de decidir/);
   assert.match(list, /Posible retraso: el trayecto supera el tiempo entre actividades\./);
   assert.match(list, /Llegarías 10 min tarde \(tiempo libre menos desplazamiento\)\./);
   assert.match(list, /Te sobran 10 min/);
   assert.match(list, /Tiempo libre total: 40 min/);
   // El técnico la cambia a «Sí, con desplazamiento» (edición de la sesión) y se respeta.
-  const card = get("List").children.find(node => node.tag === "article" && node.children[0].textContent === "Pausa comida larga · 11:15");
+  const card = get("List").children.find(node => node.tag === "article" && node.children[0].textContent === "11:15 · Pausa comida larga");
   const form = card.children.find(node => node.tag === "details").children.find(node => node.tag === "form");
   const select = form.children[0].children[0];
   assert.equal(select.value, "pause");
@@ -94,11 +94,11 @@ test("con estimación: «Te sobran» y «Llegarías tarde», y respeta las edici
   form.events.submit({ preventDefault() {} });
   await settle();
   list = texts(get("List")).join("\n");
-  assert.doesNotMatch(list, /Pausa sin desplazamiento/);
-  assert.match(list, /Con desplazamiento · Falta dirección/);
+  assert.doesNotMatch(list, /^Sin desplazamiento$/m);
+  assert.match(list, /Sin dirección\nFalta la dirección/);
   assert.match(list, /Te sobran 10 min \(tiempo libre menos desplazamiento\)\./);
   assert.match(list, /Sin hora de fin: no se puede calcular si llegas a tiempo\./);
   assert.match(list, /Tiempo libre tras los desplazamientos entre actividades: 10 min \(1 tramos\)\./);
-  // CONFIRMAR_CITAS-017: el total parcial dice cuántos tramos suma («Conducción total (N de M tramos)»).
-  assert.match(list, /Conducción total \(\d+ de \d+ tramos\): /);
+  // CONFIRMAR_CITAS-017/026: el total parcial dice cuántos desplazamientos suma.
+  assert.match(list, /Conducción total: [^\n]+\n\d+ de \d+ desplazamientos calculados/);
 });

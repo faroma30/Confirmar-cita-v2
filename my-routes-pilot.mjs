@@ -121,3 +121,48 @@ export function canOfferPilotStop(actor, described) {
 }
 
 export const stopConfirmation = "Desactivar el piloto detiene el cálculo de desplazamientos para todos los técnicos y solo el administrador puede reactivarlo. ¿Quieres continuar?";
+
+// CONFIRMAR_CITAS-026: por qué la función no ha calculado (HTTP 429), en palabras del técnico.
+/** Segundos válidos de espera (1–900) o null. La función anterior (v16) no envía ninguno. */
+export function waitSeconds(value) {
+  return Number.isInteger(value) && value > 0 && value <= 900 ? value : null;
+}
+
+/** «1 min 20 s», «2 min» o «40 s». */
+export function formatWait(seconds) {
+  const total = Math.max(1, Math.ceil(seconds));
+  const minutes = Math.floor(total / 60), rest = total % 60;
+  return [minutes ? minutes + " min" : "", rest ? rest + " s" : ""].filter(Boolean).join(" ");
+}
+
+/** «1:20», para la cuenta atrás del botón. */
+export function countdownClock(seconds) {
+  const total = Math.max(0, Math.ceil(seconds));
+  return Math.floor(total / 60) + ":" + String(total % 60).padStart(2, "0");
+}
+
+export const waitMessage = seconds => `Espera ${formatWait(seconds)} y vuelve a pulsar.`;
+
+export const routeBlockMessages = {
+  wait: "Espera un momento y vuelve a pulsar.",
+  busy: "Hay otro cálculo en marcha. Vuelve a pulsar en un minuto.",
+  credits_limit: "Se han gastado los créditos de las últimas 24 horas. Prueba más tarde.",
+  routes_limit: "Se ha llegado al máximo de cálculos de las últimas 24 horas. Prueba más tarde.",
+  shared_limit: "El cupo compartido de las últimas 24 horas está agotado. Prueba más tarde.",
+  external_limit: "No queda margen en la cuota de Geoapify. Avisa al administrador.",
+  provider_limited: "Geoapify ha rechazado o limitado la consulta. Avisa al administrador.",
+  route_too_long: "Un tramo era demasiado largo y el cálculo se ha parado. Avisa al administrador.",
+  pilot_stopped: "El cálculo está desactivado. Avisa al administrador.",
+  pilot_unverified: "El cálculo no está disponible ahora. Avisa al administrador.",
+  budget_refused: "No queda margen suficiente para este cálculo. Pulsa «Consultar consumo».",
+};
+export const unknownBlockMessage = "Ahora no se puede calcular. Espera un par de minutos y vuelve a pulsar; si sigue igual, pulsa «Consultar consumo».";
+
+/** Respuesta 429 de my-routes-estimate: texto y, si hay espera conocida, sus segundos. */
+export function describeRouteBlock(body) {
+  const code = typeof body?.code === "string" && Object.hasOwn(routeBlockMessages, body.code) ? body.code : null;
+  const retryAfterSeconds = code ? waitSeconds(body.retryAfterSeconds) : null;
+  const message = code === "wait" && retryAfterSeconds ? waitMessage(retryAfterSeconds)
+    : code ? routeBlockMessages[code] : unknownBlockMessage;
+  return { code, retryAfterSeconds, message };
+}

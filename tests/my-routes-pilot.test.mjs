@@ -111,7 +111,8 @@ test("pantalla con el piloto parado: motivo junto a «Calcular», sin «Desactiv
   assert.match(notice, /Actualizado a las 09:30\.$/);
   assert.doesNotMatch(notice, /Quedan/);
   const list = texts(get("List")).join("\n");
-  assert.match(list, /Tiempo y distancia no disponibles: el cálculo está detenido \(piloto parado por un rechazo de Geoapify\)\./);
+  assert.match(list, /Sin calcular\n/);
+  assert.match(list, /Motivo: el cálculo está detenido \(piloto parado por un rechazo de Geoapify\)\./);
   assert.match(list, /Hora de salida no disponible: falta el primer tramo: el cálculo está detenido/);
   assert.match(list, /Tiempo libre: 60 min \(1 h\) desde el fin de Instalación · 09:00\./);
   // Pulsar «Calcular» deshabilitado no consulta al servidor.
@@ -137,7 +138,7 @@ test("«Consultar consumo» muestra carga y hora de actualización", async () =>
   assert.match(get("PilotNotice").textContent, /Actualizado a las 09:30\.$/);
   assert.equal(get("Calculate").disabled, false);
   assert.equal(get("CalculateReason").hidden, true);
-  assert.match(texts(get("List")).join("\n"), /Tiempo y distancia no disponibles: aún no se han calculado; pulsa «Calcular desplazamientos»\./);
+  assert.match(texts(get("List")).join("\n"), /Calle Uno 10, Villaficticia\nSin calcular\n/);
 });
 
 test("técnico (CONFIRMAR_CITAS-007): no ve «Desactivar piloto» aunque el piloto esté activo y pulsarlo no hace nada", async () => {

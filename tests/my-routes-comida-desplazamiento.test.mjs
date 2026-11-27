@@ -137,7 +137,7 @@ test("la tarjeta y el tramo muestran «Actividad de desplazamiento sin destino: 
   assert.match(list, /Actividad de desplazamiento sin destino: no se calcula\./);
   assert.match(list, /Tramo pendiente\. Actividad de desplazamiento sin destino: no se calcula\./);
   assert.doesNotMatch(list, /Pendiente de decidir/);
-  assert.match(list, /Pausa sin desplazamiento/);
-  const card = get("List").children.find(node => node.tag === "article" && node.children[0].textContent === "Desplazamiento · 10:15");
-  assert.ok(card.children.some(node => node.tag === "details"), "el técnico puede completar el destino o marcarlo como pausa");
+  assert.match(list, /Sin desplazamiento/);
+  const card = get("List").children.find(node => node.tag === "article" && node.children[0].textContent === "10:15 · Desplazamiento");
+  assert.ok(card.children.some(node => node.tag === "details" && node.className === "subpanel"), "el técnico puede completar el destino o marcarlo como pausa");
 });

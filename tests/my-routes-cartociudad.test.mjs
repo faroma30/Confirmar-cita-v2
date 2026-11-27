@@ -276,8 +276,10 @@ async function mountApp(options) {
 
 test("pantalla: tramo «(aprox.)» con su detalle y el origen de las direcciones en letra pequeña", async () => {
   const list = await mountApp();
-  assert.match(list, /30 min · 12 km\nEstimación sin tráfico[^\n]*\norigen: cartociudad → geoapify/);
-  assert.match(list, /30 min · 12 km \(aprox\.\)\nEstimación sin tráfico[^\n]*\naprox\.: la base oficial no tiene ese portal; se usa la calle\.\ndetalle: number_mismatch\norigen: geoapify → cartociudad/);
+  assert.match(list, /🚗 30 min · 12 km desde /);
+  assert.match(list, /Estimación sin tráfico[^\n]*\n(?:Llegada[^\n]*\n)?(?:calle oficial:[^\n]*\n)*origen: cartociudad → geoapify/);
+  assert.match(list, /🚗 30 min · 12 km \(aprox\.\) desde /);
+  assert.match(list, /Estimación sin tráfico[^\n]*\naprox\.: la base oficial no tiene ese portal; se usa la calle\.\ndetalle: number_mismatch\norigen: geoapify → cartociudad/);
   assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\ndetalle: no_results/);
 });
 

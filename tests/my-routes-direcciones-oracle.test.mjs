@@ -317,11 +317,11 @@ const nodes = (node, out = []) => { for (const child of node.children ?? []) { o
 
 test("pantalla: «detalle: <código>» discreto bajo el motivo y motivo claro para «S/N»", async () => {
   const { get, list, sent } = await mountApp();
-  assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\ndetalle: no_results\nCorrígela en «Editar desplazamiento» de esta actividad/);
+  assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\.\ndetalle: no_results\nCorrígela en «Editar» de esta actividad/);
   assert.match(list, /Motivo: La otra dirección del tramo no se encontró\.\ndetalle: no_results\n/);
-  assert.match(list, /Motivo: Dirección sin número: corrígela en «Editar desplazamiento»\.\ndetalle: missing_number/);
+  assert.match(list, /Motivo: Dirección sin número: corrígela en «Editar»\.\ndetalle: missing_number/);
   // CONFIRMAR_CITAS-022: el domicilio se usa siempre: la ida desde casa también se calcula (antes 1 de 6).
-  assert.match(list, /Conducción total \(2 de 6 tramos\): 60 min · 24 km/);
+  assert.match(list, /Conducción total: 60 min · 24 km\n2 de 6 desplazamientos calculados/);
   const detalles = nodes(get("List")).filter(node => /^detalle: /.test(node.textContent));
   assert.ok(detalles.length >= 3);
   for (const node of detalles) assert.equal(node.className, "fine");
@@ -333,7 +333,7 @@ test("compatibilidad: la web nueva con la función v11 (sin `diagnostics`) no mu
   assert.equal(Object.hasOwn(responses[0].data, "diagnostics"), false);
   assert.doesNotMatch(list, /detalle:/);
   assert.match(list, /Motivo: No se encuentra esta calle en ese municipio\./);
-  assert.match(list, /Conducción total \(2 de 6 tramos\)/);
+  assert.match(list, /2 de 6 desplazamientos calculados/);
 });
 
 test("compatibilidad: la función nueva solo añade el campo opcional `diagnostics`; códigos desconocidos se descartan", async () => {
