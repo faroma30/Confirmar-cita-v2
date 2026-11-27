@@ -118,3 +118,13 @@ Las pruebas SQL `supabase/tests/isolated/route-pilot-release-isolated.sql` y `ro
 - **Respuesta de `status`/`stop`:** añade `autoRenew: true` y `nextRenewalAt` (ISO, o `null` si está parado). La web 3routes20 muestra «Se renueva solo cada 24 h mientras esté activado, con el mismo límite (próxima renovación: DD/MM a las HH:MM)» y ya no dice que caduca; si no se pudo renovar, «El piloto no se ha podido renovar solo… Avisa al administrador».
 - **Registro:** `{ event: "route_pilot_renewed" }` (sin datos personales).
 - **Compatibilidad:** la web 3routes19 ignora los campos nuevos; la web 3routes20 con la v15 muestra los mensajes de antes. La huella de la jornada no cambia.
+
+## Causa de un 429 (CONFIRMAR_CITAS-026, pendiente de publicar)
+
+La respuesta 429 sigue llevando `error` y añade, cuando se sabe, `code`: `wait`, `busy`, `credits_limit`,
+`routes_limit`, `shared_limit`, `external_limit`, `provider_limited`, `route_too_long`, `pilot_stopped`,
+`pilot_unverified` o `budget_refused`. Solo la espera del propio técnico lleva `retryAfterSeconds` (1–120); la
+respuesta correcta de un cálculo también lo lleva para la cuenta atrás. Sin cifras internas ni datos de otros.
+`wait`, `busy`, `shared_limit` y los segundos necesitan la migración `20261127120000_route_budget_wait.sql`
+(solo añade `cc_route_budget_wait`, lectura, `service_role`; **escrita y no aplicada**). Sin ella la función
+responde como antes en esos casos. No cambian topes, esperas ni el tratamiento de 401/403/429 de Geoapify.

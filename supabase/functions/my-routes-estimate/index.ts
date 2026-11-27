@@ -3,6 +3,7 @@ import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddres
 import { canAutocomplete, homeOptIn, parseActivityEdits, routeAccess } from "./policy.mjs";
 import { pilotStopRejection } from "./pilot-control.mjs";
 import { confirmPilotStopped, ensurePilotRenewed, renewalFields } from "./pilot-renewal.mjs";
+import { blockCause, chargeRefusal, remainingWait } from "./block-cause.mjs";
 
 Deno.serve(async (request: Request) => {
   const preflight = preflightOrReject(request);
@@ -10,7 +11,10 @@ Deno.serve(async (request: Request) => {
   const reply = (body: unknown, status = 200) => jsonResponse(request, body, status);
   const disabled = () => reply({ error: "Servicio de rutas no disponible." }, 503);
   const invalid = () => reply({ error: "Solicitud no válida." }, 400);
-  const quota = () => reply({ error: "Cuota temporal alcanzada." }, 429);
+  // CONFIRMAR_CITAS-026: `code` y, si es la espera, `retryAfterSeconds` (opcionales; 3routes21 los ignora).
+  const quota = (cause: { code?: string; retryAfterSeconds?: number } = {}) =>
+    reply({ error: "Cuota temporal alcanzada.", ...cause }, 429);
+  let actor = "";
   // Both query text and booked locations may be personal, regardless of the input format.
   const apiKey = Deno.env.get("MY_ROUTES_GEOAPIFY_KEY")?.trim();
   const enabled = Deno.env.get("MY_ROUTES_GEOAPIFY_APPROVED") === "yes" && Boolean(apiKey);
@@ -49,6 +53,7 @@ Deno.serve(async (request: Request) => {
   catch { return reply({ error: "Sesión no válida." }, 401); }
   const denied = () => reply({ error: "Acceso denegado." }, 403);
   if (auth.user.id !== input.expectedActor) return denied();
+  actor = auth.user.id;
   if (input.operation === "stop") {
     // CONFIRMAR_CITAS-007: only an active Administrator may stop the pilot for everyone (403 otherwise).
     const rejection = await pilotStopRejection(() => auth.client.rpc("cc_my_profile"), auth.claims);
@@ -126,7 +131,9 @@ Deno.serve(async (request: Request) => {
       p_actor: auth.user.id, p_lease: lease, p_operation: autocomplete ? "autocomplete" : "route",
     });
     if (booking.error) return disabled();
-    if (booking.data !== true) return quota();
+    if (booking.data !== true) {
+      return quota(await blockCause(backend, { actor, operation: autocomplete ? "autocomplete" : "route" }));
+    }
     let providerLimited = false;
     try {
       const context = {
@@ -167,7 +174,10 @@ Deno.serve(async (request: Request) => {
         // The pilot budget ran out after some legs: the partial result is returned and recorded as before.
         onPilotLimit: () => { failure = "quota"; },
       });
+      // CONFIRMAR_CITAS-026: espera hasta el siguiente cálculo (la app la muestra como cuenta atrás).
+      const retryAfterSeconds = await remainingWait(backend, actor);
       return reply({
+        ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
         estimates, reasons, details: estimates.map((_, index) => details[index] ?? null),
         diagnostics: estimates.map((_, index) => diagnostics[index] ?? null),
         approx: estimates.map((_, index) => approx[index] === true),
@@ -201,7 +211,16 @@ Deno.serve(async (request: Request) => {
     }
   } catch (error) {
     const status = typeof error === "object" && error !== null && "status" in error ? error.status : null;
-    if (status === 429) return quota();
+    if (status === 429) {
+      const providerLimited = typeof error === "object" && error !== null
+        && "providerLimited" in error && error.providerLimited === true;
+      let cause = {};
+      try {
+        cause = await chargeRefusal(serviceClient(), { actor,
+          operation: autocomplete ? "autocomplete" : "route", providerLimited });
+      } catch { /* Sin causa: la respuesta 429 de siempre. */ }
+      return quota(cause);
+    }
     if (error instanceof Error && "diagnostic" in error) {
       const fault = error.diagnostic as { stage: string; kind: string } | null;
       if (fault?.stage === "geocoding") return reply({
