@@ -49,3 +49,8 @@
 #myRoutesView .route-card>details{margin-top:10px}
 #myRoutesView .route-card>details>summary,#myRoutesView .route-more>summary{min-height:44px;padding:11px 0;cursor:pointer}
 #myRoutesView .route-more>summary{font-size:13px;color:#4d5660}
+#myRoutesView .route-fix,#myRoutesView .route-address-keep .button,#myRoutesView .route-address-options .button,#myRoutesView .route-street-form .button{display:block;width:100%;min-height:48px;margin-top:6px;white-space:normal;overflow-wrap:anywhere;touch-action:manipulation}
+#myRoutesView .route-street-form{grid-template-columns:minmax(0,1fr);min-width:0;margin-top:4px}
+#myRoutesView .route-street-form[hidden]{display:none}
+#myRoutesView .route-street-form label{min-width:0}
+#myRoutesView .route-street-form input{min-width:0;min-height:48px;margin-top:4px;font-size:16px}

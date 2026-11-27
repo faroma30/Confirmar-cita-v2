@@ -240,7 +240,7 @@ test("pantalla: «¿Querías decir…?» con Avenida, Plaça y Paseo; el tramo s
   await settle(16);
   const all = (node, out = []) => { for (const child of node.children ?? []) { out.push(child); all(child, out); } return out; };
   const botones = all(get("List")).filter(node => node.tag === "button" && /Brollador/.test(node.textContent)).map(node => node.textContent);
-  assert.deepEqual(botones, ["Avenida del Brollador", "Plaça del Brollador", "Paseo del Brollador"], "una sola vez, con su tipo");
+  assert.deepEqual(botones, ["Avenida del Brollador", "Plaça del Brollador", "Paseo del Brollador", "Dejarla como está: Passatge Brollador"], "una sola vez, con su tipo");
   const list = texts(get("List")).join("\n");
   assert.equal(list.match(/¿Querías decir…\?/g)?.length, 1);
   assert.match(list, /Motivo: La otra dirección del tramo no se encontró\./);

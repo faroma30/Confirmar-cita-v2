@@ -49,7 +49,7 @@ test("«PTGE» frente a «Passatge de la …»: la abreviatura y el artículo no
   assert.equal(chooseOfficialStreet(rows, fields).street, "Passatge de la Fontanella");
 });
 
-test("con dudas no decide: hasta 3 sugerencias del mismo municipio; otra clase de vía nunca se elige sola", () => {
+test("con dudas no decide: hasta 5 sugerencias del mismo municipio; otra clase de vía nunca se elige sola", () => {
   const fields = streetFields("CARRER FONTETA 3, 17599, VILAFICTICIA");
   const dudosas = [fila({ address: "CARRER FONTETES, Vilafictícia", tip_via: "CARRER" }),
     fila({ address: "CARRER FONTETA ALTA, Vilafictícia", tip_via: "CARRER" }),
@@ -58,7 +58,7 @@ test("con dudas no decide: hasta 3 sugerencias del mismo municipio; otra clase d
     fila({ address: "CARRER FONTETA, Altrapoble", muni: "Altrapoble", postalCode: "17598", tip_via: "CARRER" })];
   const choice = chooseOfficialStreet(dudosas, fields);
   assert.equal(choice.street, null);
-  assert.ok(choice.suggestions.length > 0 && choice.suggestions.length <= 3);
+  assert.ok(choice.suggestions.length > 0 && choice.suggestions.length <= 5);
   assert.ok(!choice.suggestions.some(name => /Altrapoble/.test(name)));
   const plaza = chooseOfficialStreet([fila({ address: "PLAÇA FONTETE, Vilafictícia", tip_via: "PLAÇA" })], fields);
   assert.equal(plaza.street, null, "una plaza no sustituye a una calle sin preguntar");
@@ -138,7 +138,7 @@ test("con dudas: sugerencias aplicables como `edits`; máximo 3 llamadas a Carto
   assert.equal(r.details[0], "street_not_found");
   assert.equal(r.log.filter(item => item.startsWith("carto-") && item.endsWith(":fonteta")).length, 3);
   assert.equal(r.log.filter(item => item === "geo").length, 2);
-  assert.ok(r.suggestions[1].length >= 1 && r.suggestions[1].length <= 3);
+  assert.ok(r.suggestions[1].length >= 1 && r.suggestions[1].length <= 5);
   for (const location of r.suggestions[1]) {
     assert.deepEqual(Object.keys(location).sort(), ["municipality", "number", "postalCode", "street"]);
     assert.equal(location.number, "3", "nunca el piso ni la puerta");

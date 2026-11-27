@@ -55,6 +55,7 @@ jobs:
             kpi-access.mjs
             master-navigation.mjs
             message-template.mjs
+            my-routes-address.mjs
             my-routes-autocomplete.mjs
             my-routes-cloud.mjs
             my-routes-pilot.mjs

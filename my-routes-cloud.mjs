@@ -1,4 +1,4 @@
-import { describeRouteBlock, waitSeconds } from "./my-routes-pilot.mjs?v=3routes22";
+import { describeRouteBlock, waitSeconds } from "./my-routes-pilot.mjs?v=3routes23";
 
 export async function routeFingerprint(legs) {
   const addresses = [legs[0].from.address, ...legs.map(leg => leg.to.address)];
@@ -203,7 +203,7 @@ export function officialAddressData(data, length) {
     && typeof location.postalCode === "string" && /^(?:\d{5})?$/.test(location.postalCode)
     && (location.province === undefined || (typeof location.province === "string" && location.province.length <= 100 && suggestionTown.test(location.province)));
   const suggestions = Array.isArray(data?.suggestions) && data.suggestions.length === length
-    ? data.suggestions.map(list => Array.isArray(list) ? list.filter(valid).slice(0, 3).map(location => ({
+    ? data.suggestions.map(list => Array.isArray(list) ? list.filter(valid).slice(0, 5).map(location => ({
       street: location.street, number: location.number, municipality: location.municipality, postalCode: location.postalCode,
       ...(location.province ? { province: location.province } : {}),
     })) : []).map(list => list.length ? list : null) : null;

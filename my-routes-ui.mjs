@@ -1,6 +1,20 @@
-import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes22";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, shortAddress, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes22";
-import { canOfferPilotStop, countdownClock, describePilot, madridClock, stopConfirmation, waitMessage } from "./my-routes-pilot.mjs?v=3routes22";
+import { editableAddress } from "./my-routes-address.mjs?v=3routes23";
+import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes23";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, shortAddress, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes23";
+import { canOfferPilotStop, countdownClock, describePilot, madridClock, stopConfirmation, waitMessage } from "./my-routes-pilot.mjs?v=3routes23";
+
+// CONFIRMAR_CITAS-027: ubicación de una corrección (calle tal como se escribe, con su tipo de vía), o null si
+// tiene caracteres que no se pueden enviar. Mismas reglas que «Editar» y que el servidor.
+export function correctedLocation(base, street, number, municipality) {
+  const plain = value => String(value ?? "").replace(/[´`‘ʼ′]/g, "'").replace(/\s+/g, " ").trim();
+  const postalCode = /^\d{5}$/.test(base?.postalCode ?? "") ? base.postalCode : "";
+  const location = { street: plain(street), number: plain(number), municipality: plain(municipality), postalCode,
+    province: plain(base?.province) };
+  try {
+    const valid = validateRouteLocation(location);
+    return sendableRouteLocation(valid) ? valid : null;
+  } catch { return null; }
+}
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null,
   timers = { set: (task, ms) => setTimeout(task, ms), clear: id => clearTimeout(id) } }) {
@@ -447,26 +461,107 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         void refresh();
       };
       // CONFIRMAR_CITAS-023: el bloque de una dirección sale una sola vez; en el tramo siguiente basta el motivo.
-      const offered = new Set();
-      function offerSuggestions(item, stop, list) {
-        if (!list?.length) return;
+      // CONFIRMAR_CITAS-027: todo tramo sin calcular por una dirección ofrece «Corregir a mano»; la primera vez,
+      // con «¿Querías decir…?», «Dejarla como está» y el campo «Escribir la calle» ya relleno.
+      const offered = new Map();
+      // Detalles en los que el campo sale ya abierto: la dirección se buscó y no se encontró.
+      const openFix = new Set(["street_not_found", "portal_not_found", "ambiguous", "other_end"]);
+      const streetNotFoundText = "No encuentro esa calle en este pueblo. Prueba a escribirla de otra forma o deja la dirección vacía en Editar para usar la de la agenda.";
+      function fixButton(item, stop, action) {
+        const button = add(item, "button", "Corregir a mano");
+        button.type = "button";
+        button.className = "button secondary route-fix";
+        button.setAttribute("aria-label", "Corregir a mano la dirección de " + (stop.key ? label(stop) : "casa"));
+        button.addEventListener("click", action);
+      }
+      function offerFix(item, stop, list, detail) {
         const same = (stop.key || "") + "|" + (stop.address || "");
-        if (offered.has(same)) return;
-        offered.add(same);
-        add(item, "p", "¿Querías decir…?");
-        const box = add(item, "div", "");
-        box.className = "route-address-options";
-        box.setAttribute("role", "group");
-        box.setAttribute("aria-label", "Calles oficiales del mismo municipio");
-        for (const location of list) {
-          if (stop.key) {
-            const button = add(box, "button", location.street);
-            button.type = "button";
-            button.className = "button secondary";
-            button.addEventListener("click", () => applySuggestion(stop, location));
-          } else add(box, "p", location.street);
+        if (offered.has(same)) { fixButton(item, stop, offered.get(same)); return; }
+        const oracle = editableAddress(stop.agendaAddress || stop.address);
+        if (list?.length) {
+          add(item, "p", "¿Querías decir…?");
+          const box = add(item, "div", "");
+          box.className = "route-address-options";
+          box.setAttribute("role", "group");
+          box.setAttribute("aria-label", "Calles oficiales del mismo municipio");
+          for (const location of list) {
+            if (stop.key) {
+              const button = add(box, "button", location.street);
+              button.type = "button";
+              button.className = "button secondary";
+              button.addEventListener("click", () => applySuggestion(stop, location));
+            } else add(box, "p", location.street);
+          }
         }
-        if (!stop.key) add(item, "p", "Corrige tu domicilio en Ajustes y vuelve a calcular.");
+        // El domicilio no es una actividad: se corrige en «Ajustes».
+        if (!stop.key) {
+          if (list?.length) add(item, "p", "Corrige tu domicilio en Ajustes y vuelve a calcular.");
+          offered.set(same, () => void showSettings());
+          fixButton(item, stop, offered.get(same));
+          return;
+        }
+        const keep = correctedLocation(oracle, oracle.street, oracle.number, oracle.municipality);
+        if (keep && oracle.number) {
+          const box = add(item, "div", "");
+          box.className = "route-address-keep";
+          const button = add(box, "button", "Dejarla como está: " + keep.street);
+          button.type = "button";
+          button.className = "button secondary";
+          button.addEventListener("click", () => applySuggestion(stop, keep));
+        }
+        if (stop.override?.location && detail === "street_not_found") add(item, "p", streetNotFoundText).className = "route-fix-message";
+        let editor = null;
+        const open = () => {
+          editor.form.hidden = false;
+          editor.input.focus();
+          editor.input.scrollIntoView?.({ block: "center" });
+        };
+        fixButton(item, stop, () => open());
+        editor = streetEditor(item, stop, oracle);
+        editor.form.hidden = !openFix.has(detail);
+        offered.set(same, open);
+      }
+      // Campo «Escribir la calle» (con el portal) relleno con la dirección legible; «Probar» la aplica.
+      function streetEditor(item, stop, oracle) {
+        const written = stop.override?.location;
+        const form = add(item, "form", "");
+        form.className = "dialog-form route-street-form";
+        form.noValidate = true;
+        const field = (title, value, max) => {
+          const wrapper = add(form, "label", title);
+          const input = add(wrapper, "input", "");
+          input.type = "text";
+          input.inputMode = "text";
+          input.autocomplete = "off";
+          input.spellcheck = false;
+          input.maxLength = max;
+          input.value = value;
+          return input;
+        };
+        const input = field("Escribir la calle", written?.street ?? oracle.street, routeLocationFields.street);
+        input.enterKeyHint = "go";
+        const number = field("Número", written?.number ?? oracle.number, routeLocationFields.number);
+        const town = written?.municipality || oracle.municipality;
+        const municipality = town ? null : field("Municipio", "", routeLocationFields.municipality);
+        const status = add(form, "p", "");
+        status.setAttribute("role", "status");
+        const button = add(form, "button", "Probar");
+        button.type = "submit";
+        button.className = "button primary";
+        form.addEventListener("submit", event => {
+          event.preventDefault();
+          const street = input.value.trim();
+          const portal = number.value.trim();
+          const place = (municipality ? municipality.value : town).trim();
+          if (!street) { status.textContent = "Escribe la calle."; return; }
+          if (!portal && !/\d/.test(street)) { status.textContent = "Escribe también el número del portal."; return; }
+          if (!place) { status.textContent = "Escribe el municipio."; return; }
+          const location = correctedLocation({ ...oracle, ...(written ?? {}) }, street, portal, place);
+          if (!location) { status.textContent = "Usa solo letras, números, espacios y . ' º ª / - en la calle y el número."; return; }
+          status.textContent = "";
+          applySuggestion(stop, location);
+        });
+        return { form, input };
       }
       const withoutNumber = address => /(?:^|[\s,])s\s*[/.]\s*n\.?(?=$|[\s,])/iu.test(address || "");
       const failedKeys = new Set();
@@ -641,8 +736,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             } else if (otherAddress.has(detail) && failedKeys.has(leg.from.key)) {
               notes.push("Corrígela en «Editar» de " + label(leg.from) + " y vuelve a calcular.");
             }
-            if (ownAddress.has(detail)) offerSuggestions(item, leg.to, suggestionsOf(leg, "to"));
-            else if (otherAddress.has(detail)) offerSuggestions(item, leg.from, suggestionsOf(leg, "from"));
+            if (ownAddress.has(detail)) offerFix(item, leg.to, suggestionsOf(leg, "to"), detail);
+            else if (otherAddress.has(detail)) offerFix(item, leg.from, suggestionsOf(leg, "from"), detail);
           } else if (estimatesProvider && (computed || (estimatesProvider.manual && (stopped || !canEstimate)))) {
             notes.push("Motivo: " + whyUnavailable(leg) + ".");
           }
@@ -677,6 +772,11 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           add(card, "p", short || "Sin dirección").className = "route-address";
           if (short && short !== activity.address) notes.push("Dirección completa: " + activity.address);
           if (activity.travel === "undecided") add(card, "p", "Pendiente de decidir si requiere desplazamiento");
+          // CONFIRMAR_CITAS-027: con una dirección corregida, la de la agenda (con su piso y puerta) se sigue viendo.
+          if (activity.override?.location && activity.agendaAddress) {
+            if (editableAddress(activity.agendaAddress).complement) add(card, "p", "En la agenda: " + shortAddress(activity.agendaAddress)).className = "fine";
+            else notes.push("Dirección de la agenda: " + activity.agendaAddress);
+          }
           notes.push(...renderLeg(card, legIndex++));
         }
         const failed = failedKeys.has(activity.key);
@@ -738,7 +838,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   function isCurrentSettings(actorId, run) {
     return actorId && technicianId() === actorId && run === settingsRequest && !view.hidden && !settingsPanel.hidden;
   }
-  openSettings.addEventListener("click", async () => {
+  async function showSettings() {
     const actorId = technicianId();
     if (!actorId || view.hidden || !settingsPanel.hidden) return;
     const run = ++settingsRequest;
@@ -757,7 +857,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     } catch {
       if (isCurrentSettings(actorId, run)) settingsNotice.textContent = "No se pudieron cargar los ajustes. Vuelve a intentarlo.";
     }
-  });
+  }
+  openSettings.addEventListener("click", showSettings);
   function returnToRoute({ refreshRoute = false } = {}) {
     resetSettings();
     openSettings.focus();

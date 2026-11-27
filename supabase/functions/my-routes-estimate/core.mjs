@@ -1,68 +1,10 @@
 import { buildLegs, combineActivities, formatRouteLocation } from "./route-agenda.mjs";
+import { addressParts, cleanOracleText, exteriorStreet, field, LOCALITY, municipalityName, normalized,
+  STREET, streetTypes, streetVariant } from "./oracle-address.mjs";
+export { cleanOracleText, editableAddress, exteriorStreet, municipalityName, streetVariant } from "./oracle-address.mjs";
 const ENDPOINT = "https://api-eu.geoapify.com/v1/";
 const MAX_ACTIVITIES = 100;
 const MAX_LEG_METERS = 500000;
-
-const field = value => typeof value === "string" ? value.trim() : "";
-// The acute accent used as an apostrophe («D´EN») separates words, like «'» (CONFIRMAR_CITAS-017).
-const normalized = value => field(value).replace(/[´`‘’ʼ′]/gu, " ").normalize("NFD").replace(/\p{Diacritic}/gu, "")
-  .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-
-// CONFIRMAR_CITAS-015: Oracle writes addresses in capitals, with duplicated street types
-// ("CALLE CARRER DE ...") and acute accents used as apostrophes ("L´ESTACIÓ").
-const APOSTROPHES = /[´`‘’ʼ′]/gu;
-// CONFIRMAR_CITAS-018: Catalan and Spanish street-type abbreviations, with or without a dot or a slash
-// ("PTGE X", "Ptge. X", "C/X", "AVGDA X"), expanded before searching and comparing. `null` marks an
-// ambiguous abbreviation (PSG: passeig or passatge; CR: carrer or carretera): it is dropped and the street
-// is searched by its name only, like a street that Oracle writes without a type.
-const TYPE_ABBREVIATIONS = {
-  c: "Calle", cl: "Calle", cll: "Calle",
-  av: "Avenida", avd: "Avenida", avda: "Avenida", avgda: "Avinguda", avg: "Avinguda",
-  pza: "Plaza", pz: "Plaza", plz: "Plaza", pl: "Plaza", "pça": "Plaça", pca: "Plaça", "plça": "Plaça",
-  ps: "Paseo", pso: "Paseo", "pº": "Paseo", pg: "Passeig",
-  ptge: "Passatge", ptg: "Passatge", pje: "Pasaje", psje: "Pasaje", pj: "Pasaje",
-  ctra: "Carretera", crta: "Carretera",
-  rda: "Ronda", rbla: "Rambla",
-  trav: "Travessera", trv: "Travesía", tv: "Travesía",
-  cm: "Camino", cno: "Camino", cmno: "Camino",
-  urb: "Urbanización", urbz: "Urbanización",
-  pol: "Polígono", polig: "Polígono",
-  bda: "Barriada",
-  psg: null, cr: null,
-};
-const LEADING_TYPE = /^(\p{L}{1,5}º?)(?:\s*[./]+\s*|\s+)(?=\S)/u;
-function expandType(text) {
-  const match = LEADING_TYPE.exec(text);
-  const key = match?.[1].toLowerCase();
-  if (!match || !Object.hasOwn(TYPE_ABBREVIATIONS, key)) return text;
-  const rest = text.slice(match[0].length);
-  return TYPE_ABBREVIATIONS[key] ? TYPE_ABBREVIATIONS[key] + " " + rest : rest;
-}
-const GENERIC_TYPES = new Set(["calle", "cl", "c", "avenida", "av", "avda", "plaza", "pza", "pl", "paseo", "ps", "pg",
-  "camino", "carretera", "ctra"]);
-const PARTICLES = new Set(["de", "del", "la", "las", "los", "el", "y", "i", "en", "les", "dels", "els", "al", "a", "da", "do", "das", "dos"]);
-const capitalize = word => word.replace(/(^|-)(\p{L})/gu, (_, start, letter) => start + letter.toUpperCase());
-
-function titleCase(value) {
-  return value.split(" ").map((word, index) => word.toLowerCase().split("'").map((part, position, all) => {
-    if (!part) return part;
-    const first = index === 0 && position === 0;
-    // Elided articles keep their lower case: l'Estació, d'Espanya.
-    if (position < all.length - 1 && [...part].length <= 2) return first ? capitalize(part) : part;
-    return !first && PARTICLES.has(part) ? part : capitalize(part);
-  }).join("'")).join(" ");
-}
-
-export function cleanOracleText(value) {
-  let text = field(value).replace(APOSTROPHES, "'").replace(/\s*'\s*/gu, "'").replace(/\s+/gu, " ").trim();
-  const capitals = /\p{Lu}/u.test(text) && !/\p{Ll}/u.test(text);
-  text = expandType(text);
-  const words = text.split(" ");
-  // "CALLE CARRER DE ..." keeps the specific type ("Carrer de ...").
-  while (words.length > 2 && GENERIC_TYPES.has(normalized(words[0])) && streetTypes.has(normalized(words[1]))) words.shift();
-  text = words.join(" ");
-  return capitals ? titleCase(text) : text;
-}
 
 // Province of a Spanish postcode: its first two digits (01-52).
 const PROVINCES = ["Álava", "Albacete", "Alicante", "Almería", "Ávila", "Badajoz", "Illes Balears", "Barcelona", "Burgos",
@@ -138,98 +80,8 @@ export async function journeyFingerprint(addresses) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), b => b.toString(16).padStart(2, "0")).join("");
 }
 
-const STREET = /^[\p{L}][\p{L}\p{N} .’'ºª/-]{1,119}$/u;
-const LOCALITY = /^[\p{L}][\p{L} .’'-]{1,99}$/u;
-
-const streetTypes = new Map([
-  ["calle", "street"], ["carrer", "street"], ["rua", "street"], ["c", "street"],
-  ["avenida", "avenue"], ["avinguda", "avenue"], ["av", "avenue"], ["avda", "avenue"],
-  ["plaza", "square"], ["placa", "square"], ["passeig", "promenade"], ["paseo", "promenade"],
-  ["via", "way"], ["cl", "street"], ["pza", "square"], ["pl", "square"], ["ps", "promenade"],
-  ["ronda", "ronda"], ["rambla", "rambla"], ["camino", "path"], ["cami", "path"],
-  ["travesia", "crossing"], ["travessera", "crossing"], ["carretera", "road"], ["ctra", "road"],
-  ["pg", "promenade"], ["pca", "square"],
-  // CONFIRMAR_CITAS-018: the rest of the Catalan and Spanish types and their abbreviations (same classes).
-  ["cll", "street"], ["avd", "avenue"], ["avg", "avenue"], ["avgda", "avenue"], ["pz", "square"], ["plz", "square"],
-  ["plca", "square"], ["placeta", "square"], ["pso", "promenade"], ["pº", "promenade"],
-  ["passatge", "passage"], ["pasaje", "passage"], ["ptge", "passage"], ["ptg", "passage"], ["pje", "passage"],
-  ["psje", "passage"], ["pj", "passage"], ["crta", "road"], ["rda", "ronda"], ["rbla", "rambla"],
-  ["travessia", "crossing"], ["trav", "crossing"], ["trv", "crossing"], ["tv", "crossing"],
-  ["cm", "path"], ["cno", "path"], ["cmno", "path"],
-  ["urbanitzacio", "urbanization"], ["urbanizacion", "urbanization"], ["urb", "urbanization"], ["urbz", "urbanization"],
-  ["poligon", "industrial"], ["poligono", "industrial"], ["pol", "industrial"], ["polig", "industrial"],
-  ["barriada", "district"], ["bda", "district"],
-]);
-
-// CONFIRMAR_CITAS-018: what follows the portal number in Oracle ("9 A 2º 2º", "9 BJ", "9 ESC A", "9 PTA 3",
-// "1º 2ª") is the floor, door, staircase or ground floor. It is dropped and never sent to Geoapify.
-const INTERIOR_WORDS = new Set(["bj", "bjo", "bjos", "baj", "bajo", "bajos", "bx", "bxs", "baix", "baixos", "entlo", "entl",
-  "entresuelo", "entresol", "atico", "atic", "sobreatico", "sobreatic", "sotano", "soterrani", "pral", "principal",
-  "dcha", "dch", "dra", "derecha", "dreta", "izq", "izqda", "izda", "izquierda", "esq", "esquerra", "ext", "int",
-  "exterior", "interior", "duplex", "tienda", "botiga", "local"]);
-const INTERIOR_KEYS = new Set(["esc", "escalera", "escala", "pta", "puerta", "porta", "pis", "piso", "planta", "pl", "plt",
-  "local", "loc", "bloque", "bloc", "blq", "bl", "edificio", "edif", "nave", "apto", "apt", "apartamento", "portal", "casa"]);
-const ORDINAL = /^\d{1,3}(?:[ºª°]|r|n|t|er|on)?(?:[-/]\d{1,3}[ºª°]?)?$/u;
-const NUMBER_MARK = /^(?:nº|n°|n\.º|num|núm|numero|número|nro)\.?$/u;
-const PORTAL = /^(\d{1,5})([a-z])?(?:[-/](\d{1,5})[a-z]?)?$/u;
-const bare = word => word.toLowerCase().replace(/\.+$/u, "");
-const ordinalInterior = word => ORDINAL.test(word) && /[ºª°]|\d(?:r|n|t|er|on)$/u.test(word);
-// "2n 1a", "2º 1a": a Catalan feminine ordinal (the door) only right after a floor.
-const doorAfterFloor = (word, previous) => /^\d{1,2}a$/u.test(word) && (ordinalInterior(previous) || INTERIOR_WORDS.has(previous));
-
-// Street name and portal of the first comma part. `noNumber` marks an explicit "S/N" (sin número).
-export function exteriorStreet(value) {
-  const text = field(value).replace(/(?:^|\s)s\s*[/.]\s*n\.?(?=\s|$)/giu, " s/n").replace(/(\d)\s*-\s*(\d)/gu, "$1-$2")
-    .replace(/\b(nº|n°|n\.º|núm\.?|num\.?)(?=\d)/giu, "$1 ").replace(/\s+/gu, " ").trim();
-  const words = text.split(" ").filter(Boolean);
-  const hasNumberBefore = end => words.slice(1, end).some(word => /^\d/u.test(word) && !ordinalInterior(bare(word)));
-  // Drop interior details from the end, but only while a portal number remains before them.
-  for (let changed = true; changed && words.length > 2;) {
-    changed = false;
-    const last = bare(words.at(-1));
-    const previous = bare(words.at(-2));
-    if (INTERIOR_KEYS.has(previous) && /^[\p{L}\p{N}]{1,3}[ºª°]?$/u.test(last) && hasNumberBefore(words.length - 2)) {
-      words.splice(-2, 2);
-      changed = true;
-    } else if ((INTERIOR_WORDS.has(last) || ordinalInterior(last) || doorAfterFloor(last, previous))
-      && hasNumberBefore(words.length - 1)) {
-      words.pop();
-      changed = true;
-    }
-  }
-  const noNumber = words.some(word => bare(word) === "s/n");
-  if (noNumber) return { name: words.filter(word => bare(word) !== "s/n").join(" "), portal: "", noNumber };
-  let end = words.length;
-  let suffix = "";
-  const last = bare(words.at(-1) ?? "");
-  if (end > 2 && (/^[a-z]$/u.test(last) || /^(?:bis|ter)$/u.test(last)) && PORTAL.test(bare(words.at(-2)))) {
-    suffix = last;
-    end--;
-  }
-  const number = PORTAL.exec(bare(words[end - 1] ?? ""));
-  if (end < 2 || !number || (suffix.length === 1 && number[2])) return { name: words.join(" "), portal: "", noNumber: false };
-  let nameEnd = end - 1;
-  if (nameEnd > 1 && NUMBER_MARK.test(bare(words[nameEnd - 1]))) nameEnd--;
-  // A range ("9-11") is searched by its first number.
-  const portal = number[3] ? number[1]
-    : number[1] + (number[2] ?? (suffix.length === 1 ? suffix : "")).toUpperCase() + (suffix.length > 1 ? " " + suffix : "");
-  return { name: words.slice(0, nameEnd).join(" "), portal, noNumber: false };
-}
-
 // Portal without its letter or "bis" (also the first number of a range): the second search form.
 const basePortal = portal => /^\d{1,5}/u.exec(field(portal))?.[0] ?? field(portal);
-
-// CONFIRMAR_CITAS-018: a municipality with capital articles («Ribes De Freser») → «Ribes de Freser».
-export function municipalityName(value) {
-  return field(value).split(" ").map((word, index) => {
-    if (!index) return word;
-    const lower = word.toLowerCase();
-    if (PARTICLES.has(lower)) return lower;
-    const elided = /^([dl])'(.+)$/iu.exec(word);
-    if (!elided) return word;
-    return elided[1].toLowerCase() + "'" + (PARTICLES.has(elided[2].toLowerCase()) ? elided[2].toLowerCase() : elided[2]);
-  }).join(" ");
-}
 
 // CONFIRMAR_CITAS-017: Catalan and Spanish articles and prepositions that Oracle, autocomplete and
 // Geoapify write differently ("Carrer d'en Prova" / "CARRER PROVA", "de les", "dels", "de la", "del").
@@ -281,24 +133,12 @@ function portalFit(found, wanted) {
   return range && Number(range[1]) <= number && number <= Number(range[2]) ? 1 : 0;
 }
 
-// Comma parts with the portal joined to its street ("CALLE X, 8, ..." or "CALLE X, 9 A 2º, ...").
-function addressParts(address) {
-  const parts = field(address).split(",").map(cleanOracleText).filter(Boolean);
-  if (parts.length > 2 && !exteriorStreet(parts[0]).portal && !exteriorStreet(parts[0]).noNumber
-    && /^(?:\d|s\s*[/.]\s*n\b)/iu.test(parts[1]) && !/^\d{5}$/u.test(parts[1])) {
-    parts.splice(0, 2, parts[0] + " " + parts[1]);
-  }
-  return parts;
-}
-
 // Use only the street/house number and the last locality fields, never interior details.
 export function streetFields(address) {
   const parts = addressParts(address);
   if (parts.length < 2) return null;
-  // Oracle can append positional building details without comma separators.
-  // Strip only the observed structured suffix; never geocode the interior.
-  const exterior = parts[0].replace(/(\s+\d{1,5})\s+\d{1,2}\s+[\p{L}]{1,12}\s+\d{1,3}[\p{L}]{1,3}\s+[\p{L}]{1,12}\s+\d{1,3}[\p{L}]{1,3}$/iu, "$1");
-  // CONFIRMAR_CITAS-018: the portal may carry a letter, a range, «Nº» or the floor and door, which are dropped.
+  // CONFIRMAR_CITAS-027: portal = first number after the street; the complement is never geocoded.
+  const exterior = parts[0];
   const street = exteriorStreet(exterior);
   const locality = /^(?:(?<postcode>\d{5})\s+)?(?<city>[\p{L}][\p{L} .’'-]{1,99}?)(?: \((?<province>[\p{L}][\p{L} .’'-]{1,99})\))?$/u.exec(parts.at(-1));
   if (!street.portal || !STREET.test(street.name) || !locality || /(?:\p{N}[ .()\p{Pd}]*){9,}/u.test(exterior)) return null;
@@ -629,7 +469,10 @@ export function chooseCarto(data, fields) {
 // municipality and postcode are compared by their bare name (without type, articles, accents or capitals).
 export const OFFICIAL_THRESHOLD = 0.85;
 export const OFFICIAL_MARGIN = 0.1;
-const SUGGESTION_MIN = 0.5;
+// CONFIRMAR_CITAS-027: more tolerant suggestions (up to 5, any street type), also when one word looks alike.
+const SUGGESTION_MIN = 0.4;
+const WORD_LIKE = 0.75;
+export const SUGGESTIONS_MAX = 5;
 
 // Bare name of a street: without its type, articles, accents or capitals («Carrer dels Clavataires» → «clavataires»).
 export function streetKey(value) {
@@ -703,10 +546,13 @@ const sameTypeClass = (left, right) => {
 };
 
 // Decides on one official street only when it is clearly the most similar one (≥ 0.85 and 0.1 above the
-// second, same class of street). With doubts it returns up to 3 official names of the same municipality.
+// second, same class of street). With doubts it returns up to 5 official names of the same municipality.
 // CONFIRMAR_CITAS-023: streets with the same bare name and a different type («Avinguda X», «Plaça X»,
-// «Passeig X») are different streets: all of them are offered (up to 3), with their type visible. If the
+// «Passeig X») are different streets: all of them are offered (up to 5), with their type visible. If the
 // Oracle type (e.g. «PTGE») is not among the official ones, nothing is chosen automatically.
+const offered = (item, wanted) => item.score >= SUGGESTION_MIN || item.contains
+  || wanted.split(" ").some(word => word.length >= 4 && item.words.some(other => similarity(word, other) >= WORD_LIKE));
+
 export function chooseOfficialStreet(data, fields) {
   const wanted = streetKey(fields?.street);
   const wantedType = streetParts(fields?.street).type;
@@ -720,7 +566,7 @@ export function chooseOfficialStreet(data, fields) {
     if (sameStreet(name, fields.street)) return { same: true, street: null, suggestions: [] };
     const words = new Set(key.split(" "));
     const contains = wanted.split(" ").every(word => words.has(word)) || [...words].every(word => wanted.split(" ").includes(word));
-    streets.set(id, { name, score: similarity(wanted, key), contains });
+    streets.set(id, { name, score: similarity(wanted, key), contains, words: [...words] });
   }
   // Stable: equal scores keep the order of CartoCiudad.
   const ranked = [...streets.values()].sort((a, b) => b.score - a.score);
@@ -730,7 +576,7 @@ export function chooseOfficialStreet(data, fields) {
     && sameTypeClass(best.name, fields.street)) {
     return { same: false, street: best.name, suggestions: [] };
   }
-  const suggestions = ranked.filter(item => item.score >= SUGGESTION_MIN || item.contains).slice(0, 3).map(item => item.name);
+  const suggestions = ranked.filter(item => offered(item, wanted)).slice(0, SUGGESTIONS_MAX).map(item => item.name);
   return { same: false, street: null, suggestions };
 }
 
@@ -754,11 +600,22 @@ export function cartoTownStreetQuery(fields) {
 // At most 3 CartoCiudad calls per address: `findJsonp`; if the street is not known there, the streets of the
 // municipality (without number) to find the official name; then the portal in the official street (`findJsonp`)
 // or, as before, `candidates` with the number and the postcode. Nothing is charged to the pilot.
+// CONFIRMAR_CITAS-027: the other similar official streets of an answer, when the chosen one has no such portal.
+function similarStreets(data, fields) {
+  const wanted = streetKey(fields.street);
+  return (Array.isArray(data) ? data : cartoRows(data)).slice(0, 10)
+    .filter(row => row && typeof row === "object" && inArea(row, fields)).map(officialStreetName).filter(Boolean)
+    .map(name => ({ name, words: streetKey(name).split(" "), score: similarity(wanted, streetKey(name)), contains: false }))
+    .filter(item => offered(item, wanted)).sort((a, b) => b.score - a.score).map(item => item.name);
+}
+
 async function geocodeCarto(fields, context) {
   const queries = cartoQueries(fields);
   if (!queries || !context.carto) return null;
   let approx = null;
   let suggestions = [];
+  // CONFIRMAR_CITAS-027: true when the official street map answered and does not have this street.
+  let unknown = false;
   const attempt = async (path, params, target = fields) => {
     const data = await readCarto(path, params, context);
     if (data === null) return null;
@@ -773,6 +630,7 @@ async function geocodeCarto(fields, context) {
   if (streetKnown(first.data, fields)) {
     last = await attempt("candidates", queries.candidates);
   } else {
+    unknown = true;
     const streetQuery = cartoStreetQuery(fields);
     const list = await attempt("candidates", streetQuery);
     if (list?.point) return { point: list.point, approx: false };
@@ -787,11 +645,12 @@ async function geocodeCarto(fields, context) {
       }
     } else if (list && cartoRows(list.data).length) {
       const official = chooseOfficialStreet(list.data, fields);
+      if (official.same || official.street) unknown = false;
       if (official.street) {
         const target = { ...fields, street: official.street };
         last = await attempt("findJsonp", cartoQueries(target)?.find ?? queries.find, target);
         if (last?.point) return { point: last.point, approx: false, official: official.street };
-        suggestions = [official.street];
+        suggestions = [...new Set([official.street, ...similarStreets(list.data, fields)])].slice(0, SUGGESTIONS_MAX);
       } else {
         // The same street (or no clear winner): the portal with the number and the postcode, as before.
         suggestions = official.suggestions;
@@ -801,7 +660,7 @@ async function geocodeCarto(fields, context) {
   }
   if (last?.point) return { point: last.point, approx: false };
   if (approx) return { point: approx.point, approx: true, ...(approx.official ? { official: approx.official } : {}) };
-  return { point: null, suggestions };
+  return { point: null, suggestions, unknown };
 }
 
 async function geocode(fields, context) {
@@ -811,7 +670,7 @@ async function geocode(fields, context) {
     point: carto.point, code: null, diagnostic: carto.approx ? "number_mismatch" : null, approx: carto.approx,
     source: "cartociudad", official: carto.official ?? null,
   };
-  const found = await geocodeGeoapify(fields, context);
+  const found = await geocodeGeoapify(fields, context, carto?.unknown === true);
   return { ...found, approx: false, source: found.point ? "geoapify" : null, suggestions: found.point ? [] : carto?.suggestions ?? [] };
 }
 
@@ -901,7 +760,9 @@ export async function suggestAddresses(input, { fetcher = fetch, timeoutMs, sign
 // nothing usable, one free-text search. A real ambiguity is reported as before.
 // CONFIRMAR_CITAS-018: the free-text search uses the bare portal number ("9" for "9A", "9 bis"),
 // so both forms are tried within the same two calls. Floor and door never reach Geoapify.
-async function geocodeGeoapify(fields, context) {
+// CONFIRMAR_CITAS-027: if the official street map does not have the street and the first search does not find it
+// either, the free-text search tries it with or without its article. Same two calls, same type of street.
+async function geocodeGeoapify(fields, context, unknownStreet = false) {
   const { province, ...params } = fields;
   const limit = Number(params.limit);
   const structured = await readProvider("geocode/search", { ...params, format: "json" }, 1, context);
@@ -910,8 +771,10 @@ async function geocodeGeoapify(fields, context) {
   if (first.outcome === "ambiguous") return { point: null, code: "ambiguous", diagnostic: "ambiguous" };
   const firstMiss = missReason(structured?.results, fields, limit);
   const firstStage = addressDiagnostic(structured?.results, fields, limit);
+  const other = unknownStreet && firstStage.stage < 2 ? streetVariant(fields.street) : "";
   const text = await readProvider("geocode/search", {
-    text: freeTextQuery({ ...fields, housenumber: basePortal(fields.housenumber) }), filter: params.filter, limit: params.limit,
+    text: freeTextQuery({ ...fields, street: other || fields.street, housenumber: basePortal(fields.housenumber) }),
+    filter: params.filter, limit: params.limit,
     format: "json",
   }, 1, context);
   const second = chooseCandidate(text?.results, fields, limit);
@@ -1100,7 +963,7 @@ export async function calculateJourney(addresses, options) {
   for (let index = 0; index < addresses.length; index++) sources[index] = points.get(addresses[index])?.source ?? null;
   sources.length = addresses.length;
   // CONFIRMAR_CITAS-022 (optional): per address, the official street used and, for an address not found,
-  // up to 3 official streets of the same municipality to apply with one tap (never coordinates).
+  // up to 5 official streets of the same municipality to apply with one tap (never coordinates).
   const officials = options.officials ?? [];
   const suggestions = options.suggestions ?? [];
   for (let index = 0; index < addresses.length; index++) {
@@ -1108,7 +971,7 @@ export async function calculateJourney(addresses, options) {
     const fields = outcome && streetFields(addresses[index]);
     officials[index] = outcome?.point && outcome.official ? outcome.official : null;
     suggestions[index] = !outcome?.point && fields && outcome?.suggestions?.length
-      ? outcome.suggestions.slice(0, 3).map(street => suggestionLocation(street, fields)) : null;
+      ? outcome.suggestions.slice(0, SUGGESTIONS_MAX).map(street => suggestionLocation(street, fields)) : null;
   }
   officials.length = addresses.length;
   suggestions.length = addresses.length;

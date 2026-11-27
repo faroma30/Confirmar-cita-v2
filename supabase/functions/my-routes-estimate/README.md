@@ -128,3 +128,9 @@ respuesta correcta de un cálculo también lo lleva para la cuenta atrás. Sin c
 `wait`, `busy`, `shared_limit` y los segundos necesitan la migración `20261127120000_route_budget_wait.sql`
 (solo añade `cc_route_budget_wait`, lectura, `service_role`; **escrita y no aplicada**). Sin ella la función
 responde como antes en esos casos. No cambian topes, esperas ni el tratamiento de 401/403/429 de Geoapify.
+
+## Portal y complemento, «Escribir la calle» y más sugerencias (CONFIRMAR_CITAS-027, web 3routes23; sin desplegar)
+- **Portal** (`oracle-address.mjs`, copia idéntica en la app: `my-routes-address.mjs`): es el **primer número tras la calle** (`41`, `41B`, `41-43`, `9 bis`; `S/N` = sin número). Lo posterior (`1º E`, `6 3`, `PRAL`, `BAJOS`, `ESC A`, `ATICO`, `2N 1A`…) es **complemento**: no se envía a CartoCiudad ni a Geoapify y sigue en la ficha. Un número forma parte del nombre si delante solo hay tipo de vía y artículos, o si después hay otro portal y le sigue «de» o es un número de carretera.
+- **Sugerencias:** hasta **5** calles oficiales del mismo municipio, de cualquier tipo de vía, por parecido (≥ 0,4, nombre contenido o una palabra parecida).
+- **Reserva de Geoapify:** si CartoCiudad no tiene la calle y la búsqueda estructurada tampoco la encuentra, la búsqueda de texto libre la pide **con o sin artículo** («Passatge Prova» ↔ «Passatge de Prova» / «de l'»), con el mismo tipo de vía. Topes sin cambios: 3 CartoCiudad y 2 Geoapify por dirección.
+- **App:** campo «Escribir la calle» (con número), «Corregir a mano», «Dejarla como está». La corrección viaja en `edits` como hasta ahora: no hay claves nuevas ni migración, y es compatible con la v17.

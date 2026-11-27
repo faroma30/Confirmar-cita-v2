@@ -159,7 +159,7 @@ Deno.serve(async (request: Request) => {
       // gives the origin per address. Its failures only log the stage and kind: never the address.
       const approx: boolean[] = [];
       const sources: (string | null)[] = [];
-      // CONFIRMAR_CITAS-022: optional `officials` (official street used, per address) and `suggestions` (up to 3
+      // CONFIRMAR_CITAS-022: optional `officials` (official street used, per address) and `suggestions` (up to 5, CONFIRMAR_CITAS-027:
       // official streets of the same municipality for an address not found, applied by the app as `edits`).
       const officials: (string | null)[] = [];
       const suggestions: (unknown[] | null)[] = [];
