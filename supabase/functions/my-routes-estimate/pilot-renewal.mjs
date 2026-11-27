@@ -1,7 +1,7 @@
 // CONFIRMAR_CITAS-024: renovación automática diaria del piloto de Mis rutas (decisión del Director, 26/11/2026 21:17).
 // Sin migración y sin tarea programada: la caducidad de 24 h sigue en la base (cc_route_pilot_begin/charge/status)
 // y la función la renueva al consultar, solo si el piloto sigue ACTIVADO (`stopped = false`).
-// - Mismo límite que hoy: no toca los topes (50 créditos y 10 consultas de ruta por 24 h, ventana móvil de la base)
+// - Mismo límite: no toca los topes (los fija la base por 24 h, ventana móvil; 1.000 créditos y 200 consultas desde 20261127090000)
 //   ni el consumo externo declarado (`external_usage` se mantiene tal cual; la base exige ≤ 2950 para reactivar).
 // - Nunca renueva un piloto desactivado por el Administrador ni parado por un error de Geoapify (401/403,
 //   distancia excedida): en los dos casos la base deja `stopped = true` y aquí no se escribe nada.

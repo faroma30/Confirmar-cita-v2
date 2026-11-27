@@ -32,7 +32,8 @@ No existe operación para **reactivar** el piloto desde la app (ver «Reactivaci
 
 ## Piloto
 - Fila única `confirmar_citas.route_pilot_budget` (`stopped`, `external_usage`, `quota_verified_at`, `last_error`, `last_error_at`, `actor`, `lease`, `operation`) y reservas en `route_pilot_reservation`.
-- Topes: **50 créditos** y **10 consultas de ruta** en 24 h; consumo externo declarado + reservado < 3000.
+- Topes: **1.000 créditos** y **200 consultas de ruta** en 24 h (CONFIRMAR_CITAS-025, migración `20261127090000_route_pilot_limits_1000.sql`, **pendiente de aplicar**: hasta entonces siguen 50 y 10); consumo externo declarado + reservado < 3000.
+- Los topes viven en la fila única `confirmar_citas.route_pilot_limits`. **Tope de seguridad:** la base rechaza más de **2.500 créditos** al día y más consultas que créditos.
 - Se **para solo** cuando Geoapify responde 401/403/429 (`provider_limited`) o un tramo supera la distancia reservada (`route_estimate_exceeded`).
 - `active` = no parado **y** verificación de consumo (`quota_verified_at`) de menos de 24 h.
 - Definiciones: `supabase/migrations/20261120050000_route_pilot_applied_reference.sql` (**YA APLICADA el 20/11/2026; solo referencia, no ejecutar**; si se usa la CLI: `supabase migration repair --status applied 20261120050000`).
@@ -63,7 +64,7 @@ El Administrador **no tiene la pestaña Mis rutas** (es solo para técnicos), as
 
 ## Pruebas (sin red)
 Desde la raíz del repositorio: `node --test tests/*.test.mjs wifi-connect/tests/*.test.mjs`.
-La prueba SQL `supabase/tests/isolated/route-pilot-release-isolated.sql` necesita una base local o desechable con el esquema de la V2 y **no** se ejecuta contra el proyecto real.
+Las pruebas SQL `supabase/tests/isolated/route-pilot-release-isolated.sql` y `route-pilot-limits-isolated.sql` necesitan una base local o desechable con el esquema de la V2 y **no** se ejecutan contra el proyecto real.
 
 ## Tramos parciales y motivo por tramo (CONFIRMAR_CITAS-017, build 3routes15)
 - **Cálculo parcial:** si una dirección no se resuelve, se calculan igualmente los tramos cuyos dos extremos sí se resolvieron. Los tramos que tocan la dirección fallida no consultan ruta (0 llamadas de `routing`).
@@ -112,7 +113,7 @@ La prueba SQL `supabase/tests/isolated/route-pilot-release-isolated.sql` necesit
 - **Sin migración ni tarea programada** (`pilot-renewal.mjs`). La base sigue caducando la verificación a las 24 h (`cc_route_pilot_begin/charge/status` sin cambios); la función la renueva **al consultar** («status» y antes de cada `cc_route_pilot_begin`) con `cc_route_pilot_configure(<mismo externalUsageAtVerification>, false)`.
 - **Solo si:** `stopped = false`, `active = false`, `quotaVerifiedAt` no vacío y de hace 24 h o más, consumo externo guardado entero 0–2950 y cálculo aprobado (`enabled`). Si no, no se escribe nada.
 - **Nunca** renueva un piloto desactivado por el Administrador ni parado por 401/403/429 o distancia excedida (los dos dejan `stopped = true`). Reactivarlo sigue siendo SQL del Administrador (arriba).
-- **Mismos topes:** 50 créditos y 10 consultas de ruta en una **ventana móvil** de 24 h; renovar no borra los cobros de las últimas 24 h (no se regalan otros 50). El consumo externo declarado no cambia.
+- **Mismos topes:** los de la base (1.000 créditos y 200 consultas de ruta desde CONFIRMAR_CITAS-025; antes 50 y 10) en una **ventana móvil** de 24 h; renovar no borra los cobros de las últimas 24 h (no se regala otro cupo). El consumo externo declarado no cambia.
 - **«Desactivar piloto» gana:** la renovación no escribe si su lectura tiene más de 1 s (`RENEW_MAX_STALE_MS`) y `stop` vuelve a comprobar a los 2,5 s (`STOP_RECHECK_MS`) y vuelve a parar si una renovación concurrente lo dejó activado. Sigue siendo solo del Administrador (403 para técnico y Master); no hay operaciones ni claves de entrada nuevas.
 - **Respuesta de `status`/`stop`:** añade `autoRenew: true` y `nextRenewalAt` (ISO, o `null` si está parado). La web 3routes20 muestra «Se renueva solo cada 24 h mientras esté activado, con el mismo límite (próxima renovación: DD/MM a las HH:MM)» y ya no dice que caduca; si no se pudo renovar, «El piloto no se ha podido renovar solo… Avisa al administrador».
 - **Registro:** `{ event: "route_pilot_renewed" }` (sin datos personales).
