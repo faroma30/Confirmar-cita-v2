@@ -46,8 +46,8 @@ export function describePilot(state, now = new Date()) {
   if (!state || typeof state !== "object") return null;
   const credits = count(state.creditsReserved24h);
   const routes = count(state.routingRequests24h);
-  const creditLimit = limit(state.creditsLimit24h, 50);
-  const routeLimit = limit(state.routingRequestsLimit24h, 10);
+  const creditLimit = limit(state.creditsLimit24h, 1000);
+  const routeLimit = limit(state.routingRequestsLimit24h, 200);
   const errorAt = madridDayTime(state.lastErrorAt);
   const at = errorAt ? " el " + errorAt : "";
   const verifiedAt = madridDayTime(state.quotaVerifiedAt);
