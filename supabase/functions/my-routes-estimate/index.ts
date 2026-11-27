@@ -2,6 +2,7 @@ import { currentUser, jsonResponse, preflightOrReject, serviceClient } from "../
 import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddresses, journeyFingerprint, providerPlan, suggestAddresses, suggestQuery } from "./core.mjs";
 import { canAutocomplete, homeOptIn, parseActivityEdits, routeAccess } from "./policy.mjs";
 import { pilotStopRejection } from "./pilot-control.mjs";
+import { confirmPilotStopped, ensurePilotRenewed, renewalFields } from "./pilot-renewal.mjs";
 
 Deno.serve(async (request: Request) => {
   const preflight = preflightOrReject(request);
@@ -56,9 +57,11 @@ Deno.serve(async (request: Request) => {
       const backend = serviceClient();
       const stopped = await backend.rpc("cc_route_pilot_configure", { p_external_usage: null, p_stop: true });
       if (stopped.error || stopped.data !== true) return disabled();
+      // CONFIRMAR_CITAS-024: a daily renewal that read the status just before this stop cannot leave it active.
+      if (!await confirmPilotStopped(backend)) return disabled();
       const status = await backend.rpc("cc_route_pilot_status");
       if (status.error || !status.data) return disabled();
-      return reply({ ...status.data, enabled });
+      return reply({ ...status.data, enabled, ...renewalFields(status.data) });
     } catch { return disabled(); }
   }
   const access = routeAccess(Deno.env.get("MY_ROUTES_GEOAPIFY_ACCESS"), auth.user.id);
@@ -81,10 +84,11 @@ Deno.serve(async (request: Request) => {
 
     if (control) {
       // Only "status" reaches this point: "stop" is handled above for Administrators.
+      // CONFIRMAR_CITAS-024: an activated pilot renews itself every 24 h (same limits); stopped ones never do.
       const backend = serviceClient();
-      const status = await backend.rpc("cc_route_pilot_status");
-      if (status.error || !status.data) return disabled();
-      return reply({ ...status.data, enabled });
+      const { status } = await ensurePilotRenewed(backend, { enabled });
+      if (!status) return disabled();
+      return reply({ ...status, enabled, ...renewalFields(status) });
     }
 
     let addresses: string[] = [];
@@ -116,6 +120,8 @@ Deno.serve(async (request: Request) => {
     if (request.signal.aborted) return disabled();
     const backend = serviceClient();
     const lease = crypto.randomUUID();
+    // CONFIRMAR_CITAS-024: daily renewal before booking (only if activated and not stopped by an error).
+    try { await ensurePilotRenewed(backend, { enabled }); } catch { /* the booking below decides, as before */ }
     const booking = await backend.rpc("cc_route_pilot_begin", {
       p_actor: auth.user.id, p_lease: lease, p_operation: autocomplete ? "autocomplete" : "route",
     });

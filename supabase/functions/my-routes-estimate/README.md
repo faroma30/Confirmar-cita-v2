@@ -42,7 +42,7 @@ No existe operación para **reactivar** el piloto desde la app (ver «Reactivaci
 2. Ejecutar como `service_role` (editor SQL del proyecto de la V2):
    `select public.cc_route_pilot_configure(<consumo real de hoy, ≤ 2950>, false);`
    Pone `stopped = false` y renueva `quota_verified_at`.
-3. **Caduca a las 24 h**: mientras dure el piloto hay que repetirlo cada día; si no, la PWA mostrará «Verificación de consumo caducada».
+3. ~~Caduca a las 24 h~~: desde CONFIRMAR_CITAS-024 se **renueva solo** cada 24 h mientras esté activado (ver abajo). Este paso solo hace falta para **reactivar** un piloto parado o para declarar otro consumo.
 
 ## Parar el piloto (Administrador)
 El Administrador **no tiene la pestaña Mis rutas** (es solo para técnicos), así que en la app no ve «Desactivar piloto». Mientras no exista una opción en la zona de administración:
@@ -107,3 +107,13 @@ La prueba SQL `supabase/tests/isolated/route-pilot-release-isolated.sql` necesit
 - **«¿Querías decir…?»:** las calles oficiales con el mismo nombre y distinto tipo («Avenida …», «Plaça …», «Paseo …») son calles distintas: se ofrecen todas (hasta 3) con su tipo. Si el tipo de Oracle (p. ej. `PTGE`) no está entre las oficiales, no se elige ninguna automáticamente.
 - **App:** el bloque de sugerencias de una dirección sale una sola vez (el tramo siguiente solo da el motivo); al elegir una sugerencia sin número se vacía el número anterior y el foco va a «Número o S/N».
 - **Compatibilidad:** sin campos nuevos en la respuesta. La web 3routes18 con la función nueva recibe más sugerencias; la web 3routes19 con la v14 funciona igual que la 3routes18 (solo sin las mejoras del servidor). La huella de la jornada no cambia.
+
+## Renovación automática diaria del piloto (CONFIRMAR_CITAS-024, build 3routes20)
+- **Sin migración ni tarea programada** (`pilot-renewal.mjs`). La base sigue caducando la verificación a las 24 h (`cc_route_pilot_begin/charge/status` sin cambios); la función la renueva **al consultar** («status» y antes de cada `cc_route_pilot_begin`) con `cc_route_pilot_configure(<mismo externalUsageAtVerification>, false)`.
+- **Solo si:** `stopped = false`, `active = false`, `quotaVerifiedAt` no vacío y de hace 24 h o más, consumo externo guardado entero 0–2950 y cálculo aprobado (`enabled`). Si no, no se escribe nada.
+- **Nunca** renueva un piloto desactivado por el Administrador ni parado por 401/403/429 o distancia excedida (los dos dejan `stopped = true`). Reactivarlo sigue siendo SQL del Administrador (arriba).
+- **Mismos topes:** 50 créditos y 10 consultas de ruta en una **ventana móvil** de 24 h; renovar no borra los cobros de las últimas 24 h (no se regalan otros 50). El consumo externo declarado no cambia.
+- **«Desactivar piloto» gana:** la renovación no escribe si su lectura tiene más de 1 s (`RENEW_MAX_STALE_MS`) y `stop` vuelve a comprobar a los 2,5 s (`STOP_RECHECK_MS`) y vuelve a parar si una renovación concurrente lo dejó activado. Sigue siendo solo del Administrador (403 para técnico y Master); no hay operaciones ni claves de entrada nuevas.
+- **Respuesta de `status`/`stop`:** añade `autoRenew: true` y `nextRenewalAt` (ISO, o `null` si está parado). La web 3routes20 muestra «Se renueva solo cada 24 h mientras esté activado, con el mismo límite (próxima renovación: DD/MM a las HH:MM)» y ya no dice que caduca; si no se pudo renovar, «El piloto no se ha podido renovar solo… Avisa al administrador».
+- **Registro:** `{ event: "route_pilot_renewed" }` (sin datos personales).
+- **Compatibilidad:** la web 3routes19 ignora los campos nuevos; la web 3routes20 con la v15 muestra los mensajes de antes. La huella de la jornada no cambia.
