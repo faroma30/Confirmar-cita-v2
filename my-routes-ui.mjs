@@ -1,6 +1,6 @@
-import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes19";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes19";
-import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes19";
+import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes20";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes20";
+import { canOfferPilotStop, describePilot, madridClock, stopConfirmation } from "./my-routes-pilot.mjs?v=3routes20";
 
 export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null }) {
   const settings = preferencesStore;

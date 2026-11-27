@@ -1,5 +1,7 @@
 // Estado del piloto de Mis rutas explicado al técnico (CONFIRMAR_CITAS-006).
 // Solo interpreta la respuesta de `operation: "status"`; no cambia permisos ni el servidor.
+// CONFIRMAR_CITAS-024: con un servidor que renueva solo (`autoRenew: true`), ya no se dice que caduca:
+// se muestra la próxima renovación. Con un servidor anterior (sin `autoRenew`), los mensajes de siempre.
 
 const madridParts = new Intl.DateTimeFormat("es-ES", {
   timeZone: "Europe/Madrid", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
@@ -51,6 +53,8 @@ export function describePilot(state, now = new Date()) {
   const verifiedAt = madridDayTime(state.quotaVerifiedAt);
   const verifiedMs = Date.parse(state.quotaVerifiedAt ?? "");
   const verificationExpired = !Number.isFinite(verifiedMs) || verifiedMs <= now.getTime() - 24 * 3600_000;
+  const autoRenew = state.autoRenew === true;
+  const nextRenewal = autoRenew ? madridDayTime(state.nextRenewalAt) : "";
   let cause = null, short = "", message = "";
   if (!state.enabled) {
     cause = "not_approved";
@@ -73,9 +77,12 @@ export function describePilot(state, now = new Date()) {
   } else if (!state.active) {
     cause = "verification_expired";
     short = verifiedAt ? "verificación de consumo caducada" : "consumo de Geoapify sin verificar";
-    message = verifiedAt
-      ? `Verificación de consumo caducada (última: ${verifiedAt}). El administrador debe renovarla cada 24 h.`
-      : "Consumo de Geoapify sin verificar. El administrador debe verificarlo antes de calcular.";
+    message = !verifiedAt
+      ? "Consumo de Geoapify sin verificar. El administrador debe verificarlo antes de calcular."
+      : autoRenew
+      ? `El piloto no se ha podido renovar solo (última renovación: ${verifiedAt}). Avisa al administrador.`
+      : `Verificación de consumo caducada (última: ${verifiedAt}). El administrador debe renovarla cada 24 h.`;
+    if (autoRenew && verifiedAt) short = "el piloto no se ha podido renovar solo";
   } else if (credits >= creditLimit) {
     cause = "credits_limit";
     short = "tope diario de créditos alcanzado";
@@ -88,7 +95,7 @@ export function describePilot(state, now = new Date()) {
   const canCalculate = cause === null;
   const lines = [];
   if (canCalculate) message = "Piloto disponible.";
-  if (state.stopped && state.enabled && verificationExpired) {
+  if (state.stopped && state.enabled && verificationExpired && !autoRenew) {
     lines.push(verifiedAt ? `Además, la verificación de consumo caducó (última: ${verifiedAt}).`
       : "Además, el consumo de Geoapify está sin verificar.");
   }
@@ -99,6 +106,9 @@ export function describePilot(state, now = new Date()) {
   lines.push(canCalculate
     ? `Quedan ${creditLimit - credits} créditos internos y ${Math.max(0, routeLimit - routes)} consultas de ruta (últimas 24 h: ${credits}/${creditLimit} créditos, ${routes}/${routeLimit} consultas).`
     : `Consumo de las últimas 24 h: ${credits}/${creditLimit} créditos, ${routes}/${routeLimit} consultas de ruta.`);
+  if (autoRenew && state.enabled && !state.stopped && state.active && nextRenewal) {
+    lines.push(`Se renueva solo cada 24 h mientras esté activado, con el mismo límite (próxima renovación: ${nextRenewal}).`);
+  }
   return { canCalculate, canStop: Boolean(state.enabled) && !state.stopped, cause, short, message, lines };
 }
 
