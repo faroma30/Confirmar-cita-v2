@@ -1,5 +1,5 @@
 // CONFIRMAR_CITAS-016 (opción A): Comida, Almuerzo, Pausa y Descanso salen «sin desplazamiento» por defecto
-// y el cambio manual se respeta (edits). «Desplazamiento» sin destino: tramo pendiente con aviso, sin gastar créditos.
+// y el cambio manual se respeta (edits). Desde CONFIRMAR_CITAS-031, «Desplazamiento…» sin dirección también.
 // Jornadas 100 % ficticias, sin red ni Geoapify.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +19,7 @@ const citas = [cita("a", "09:00", "10:00", "Calle Uno 10"), cita("b", "13:00", "
 
 const pausas = ["Comida", "Comida larga", "COMIDA CON EL EQUIPO", "Almuerzo", "Almuerzo rápido", "Pausa", "Pausa-café",
   "Pausa para comida", "Descanso", "Descanso 15 min", "Comidas", "Descansos del convenio"];
-const noPausas = ["Comidilla", "Pausado", "Recomida", "Mantenimiento", "Valoración", "Desplazamiento"];
+const noPausas = ["Comidilla", "Pausado", "Recomida", "Mantenimiento", "Valoración"];
 
 test("Comida, Almuerzo, Pausa y Descanso (con o sin texto extra) son pausa sin desplazamiento por defecto", () => {
   for (const tipo of pausas) {
@@ -92,9 +92,13 @@ test("paridad de huella (opción A) con edits: comida cambiada a «con desplazam
   }
 });
 
-test("«Desplazamiento» sin destino queda como tramo pendiente y no gasta créditos", async () => {
+test("«Desplazamiento» sin destino: solo si el técnico pide desplazamiento queda pendiente, sin gastar créditos", async () => {
   const otras = [otra("Desplazamiento", "10:15", "10:45")];
-  const activities = combineActivities(citas, otras, prefs);
+  const excluded = combineActivities(citas, otras, prefs).find(a => a.editableTravel);
+  assert.equal(excluded.travel, "pause");
+  assert.equal(excluded.noDestination, false);
+  const asked = new Map([[excluded.key, { travel: "travel", location: null }]]);
+  const activities = combineActivities(citas, otras, prefs, asked);
   const desplazamiento = activities.find(a => a.editableTravel);
   assert.equal(desplazamiento.travel, "travel");
   assert.equal(desplazamiento.address, "");
@@ -106,7 +110,7 @@ test("«Desplazamiento» sin destino queda como tramo pendiente y no gasta créd
   assert.equal(combineActivities([], otras, prefs, new Map([[desplazamiento.key, { travel: "pause", location: null }]]))[0].noDestination, false);
 
   // Servidor: las direcciones de la jornada llevan el hueco vacío y Geoapify no se llama para esos tramos.
-  const addresses = journeyAddresses(prefs, citas, otras);
+  const addresses = journeyAddresses(prefs, citas, otras, parseActivityEdits([...asked]));
   assert.equal(addresses.length, 5);
   assert.equal(addresses[2], "");
   const plan = providerPlan(addresses, false);
@@ -124,7 +128,7 @@ test("«Desplazamiento» sin destino queda como tramo pendiente y no gasta créd
   assert.deepEqual(reasons.slice(1, 3), ["incomplete", "incomplete"]);
 });
 
-test("la tarjeta y el tramo muestran «Actividad de desplazamiento sin destino: no se calcula»", async () => {
+test("la tarjeta de «Desplazamiento» sin destino sale como pausa: «Sin desplazamiento» y sin aviso", async () => {
   const otras = [otra("Desplazamiento", "10:15", "10:45"), otra("Comida", "11:00", "12:00")];
   const { panel, get } = fakePanel();
   const ui = mountMyRoutes({ panel, agenda: { hidden: false }, getActor: () => ({ id: "tecnico-ficticio", role: "technician" }),
@@ -134,10 +138,10 @@ test("la tarjeta y el tramo muestran «Actividad de desplazamiento sin destino: 
   get("Tab").events.click();
   await settle();
   const list = texts(get("List")).join("\n");
-  assert.match(list, /Actividad de desplazamiento sin destino: no se calcula\./);
-  assert.match(list, /Tramo pendiente\. Actividad de desplazamiento sin destino: no se calcula\./);
+  assert.doesNotMatch(list, /sin destino|Falta el destino|Tramo pendiente/);
   assert.doesNotMatch(list, /Pendiente de decidir/);
   assert.match(list, /Sin desplazamiento/);
   const card = get("List").children.find(node => node.tag === "article" && node.children[0].textContent === "10:15 · Desplazamiento");
-  assert.ok(card.children.some(node => node.tag === "details" && node.className === "subpanel"), "el técnico puede completar el destino o marcarlo como pausa");
+  assert.ok(card.children.some(node => node.textContent === "Sin desplazamiento"));
+  assert.ok(card.children.some(node => node.tag === "details" && node.className === "subpanel"), "el técnico puede cambiarlo");
 });

@@ -1,4 +1,4 @@
-import { describeRouteBlock, waitSeconds } from "./my-routes-pilot.mjs?v=3routes23";
+import { describeRouteBlock, waitSeconds } from "./my-routes-pilot.mjs?v=3routes24";
 
 export async function routeFingerprint(legs) {
   const addresses = [legs[0].from.address, ...legs.map(leg => leg.to.address)];
@@ -39,7 +39,8 @@ export function createCloudRoutes({ invoke, getActor }) {
       } catch { return null; }
     },
     // CONFIRMAR_CITAS-026: `onWait(segundos)` avisa, tras un cálculo, de la espera hasta el siguiente.
-    async estimateJourney(legs, { date, edits = [], cachedOnly = false, useHome = false, onWait = null }) {
+    // CONFIRMAR_CITAS-031: `only` = índices de los tramos pedidos tras una corrección (opcional).
+    async estimateJourney(legs, { date, edits = [], cachedOnly = false, useHome = false, onWait = null, only = null }) {
       if (!legs.length || !legs.some(leg => leg.from.address && leg.to.address)) return [];
       const actor = getActor();
       if (!actor?.id || actor.role !== "technician") return [];
@@ -48,7 +49,7 @@ export function createCloudRoutes({ invoke, getActor }) {
       if (owner !== actor.id) { clear(); owner = actor.id; }
       const generation = revision;
       const withHome = useHome === true;
-      const key = JSON.stringify([actor.id, date, fingerprint, edits, withHome]);
+      const key = JSON.stringify([actor.id, date, fingerprint, edits, withHome, ...(only ? [only] : [])]);
       const cached = cache.get(key);
       if (cached?.until > Date.now()) return cached.estimates;
       cache.delete(key);
@@ -56,10 +57,13 @@ export function createCloudRoutes({ invoke, getActor }) {
       if (pending.has(key)) return pending.get(key);
       const task = (async () => {
         try {
-          const { data, error } = await invoke("my-routes-estimate", {
-            // CONFIRMAR_CITAS-022: con domicilio guardado `useHome: true` viaja siempre (la v13 lo necesita; la función nueva ya no).
-            body: { date, fingerprint, expectedActor: actor.id, ...(edits.length ? { edits } : {}), ...(withHome ? { useHome: true } : {}) },
-          });
+          // CONFIRMAR_CITAS-022: con domicilio guardado `useHome: true` viaja siempre (la v13 lo necesita; la función nueva ya no).
+          const body = { date, fingerprint, expectedActor: actor.id, ...(edits.length ? { edits } : {}), ...(withHome ? { useHome: true } : {}) };
+          let { data, error } = await invoke("my-routes-estimate", { body: only ? { ...body, only } : body });
+          // La función v18 y anteriores rechazan `only` (400, antes de reservar ni cobrar): se pide la ruta entera.
+          if (only && error && (error.context?.status ?? error.status) === 400 && getActor()?.id === actor.id) {
+            ({ data, error } = await invoke("my-routes-estimate", { body }));
+          }
           if (error) {
             const status = error.context?.status ?? error.status;
             const messages = {
@@ -83,7 +87,7 @@ export function createCloudRoutes({ invoke, getActor }) {
               geocoding_timeout: "Geoapify tardó demasiado en buscar la dirección. No se calculó ningún desplazamiento.",
               geocoding_unavailable: "Geoapify no pudo buscar la dirección. No se calculó ningún desplazamiento.",
             }[fault];
-            throw Object.assign(new Error(providerMessage ?? messages[status] ?? "No se pudo conectar con el servicio de rutas."), { code: "route_request" });
+            throw Object.assign(new Error(providerMessage ?? messages[status] ?? "No se pudo conectar con el servicio de rutas."), { code: "route_request", status });
           }
           const wait = waitSeconds(data?.retryAfterSeconds);
           if (wait && getActor()?.id === actor.id) onWait?.(wait);

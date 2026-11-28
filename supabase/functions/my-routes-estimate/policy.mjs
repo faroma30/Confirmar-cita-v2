@@ -61,6 +61,16 @@ function parseLocation(location) {
   return parsed;
 }
 
+// CONFIRMAR_CITAS-031: `only` (opcional) = índices de los tramos que se piden (los demás no se buscan ni
+// cuestan créditos). null = solicitud no válida; undefined = toda la ruta.
+export function parseOnly(value, legCount = 101) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.length || value.length > legCount
+    || value.some(index => !Number.isInteger(index) || index < 0 || index >= legCount)
+    || new Set(value).size !== value.length) return null;
+  return new Set(value);
+}
+
 export function parseActivityEdits(value) {
   const edits = new Map();
   if (value === undefined) return edits;

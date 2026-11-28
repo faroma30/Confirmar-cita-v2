@@ -156,7 +156,7 @@ test("el servidor usa siempre el domicilio; `useHome` se acepta por compatibilid
   const source = await readFile(new URL("../supabase/functions/my-routes-estimate/index.ts", import.meta.url), "utf8");
   assert.match(source, /const plan = providerPlan\(addresses, true\);/);
   assert.match(source, /if \(homeOptIn\(input\) === null\) return invalid\(\);/);
-  assert.match(source, /\["date", "fingerprint", "expectedActor", "edits", "useHome"\]/);
+  assert.match(source, /\["date", "fingerprint", "expectedActor", "edits", "useHome", "only"\]/);
   assert.equal(homeOptIn({ useHome: true }), true);
   assert.equal(homeOptIn({}), false);
   assert.equal(homeOptIn({ useHome: "sí" }), null);

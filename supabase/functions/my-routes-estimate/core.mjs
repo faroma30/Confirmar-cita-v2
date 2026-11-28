@@ -34,9 +34,9 @@ function sameProvince(province, location) {
   return [location?.county, location?.state].some(value => names.has(normalized(value)));
 }
 
-export function journeyAddresses(preferences, appointments, ignored, edits = new Map()) {
+export function journeyAddresses(preferences, appointments, ignored, edits = new Map(), options = {}) {
   const home = formatRouteLocation(preferences.home);
-  const agenda = combineActivities(appointments, ignored, preferences);
+  const agenda = combineActivities(appointments, ignored, preferences, new Map(), options);
   if (edits.size) {
     const byKey = new Map(agenda.map(activity => [activity.key, activity]));
     for (const [key, edit] of edits) {
@@ -46,7 +46,7 @@ export function journeyAddresses(preferences, appointments, ignored, edits = new
       }
     }
   }
-  const stops = edits.size ? combineActivities(appointments, ignored, preferences, edits) : agenda;
+  const stops = edits.size ? combineActivities(appointments, ignored, preferences, edits, options) : agenda;
   const legs = buildLegs(home, stops);
   return [home, ...(legs.length ? legs.map(leg => leg.to.address) : [home])];
 }
@@ -934,7 +934,10 @@ export async function calculateJourney(addresses, options) {
       }
     }
   }
+  // CONFIRMAR_CITAS-031: with `only`, the other legs are never searched nor charged.
+  const only = options.only ?? null;
   for (let index = 0; index < estimates.length; index++) {
+    if (only && !only.has(index)) continue;
     try {
       await leg(index);
     } catch (error) {
@@ -942,7 +945,7 @@ export async function calculateJourney(addresses, options) {
       // calculated and mark the rest. With nothing calculated yet, the 429 is returned as before.
       if (!(error instanceof RouteFailure) || error.status !== 429 || error.providerLimited || !estimates.some(Boolean)) throw error;
       for (let rest = index; rest < estimates.length; rest++) {
-        if (details[rest] === "privacy") continue;
+        if (details[rest] === "privacy" || (only && !only.has(rest))) continue;
         details[rest] = "pilot_limit";
         diagnostics[rest] = null;
         if (reasons && reasons[rest] !== "privacy") reasons[rest] = null;

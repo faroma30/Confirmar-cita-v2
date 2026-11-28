@@ -34,10 +34,16 @@ function configuredAddress(type, preferences) {
 // CONFIRMAR_CITAS-016 (opción A): toda actividad cuyo nombre empiece por Comida, Almuerzo, Pausa o Descanso
 // es por defecto una pausa sin desplazamiento; el técnico puede cambiarlo en la tarjeta (edits).
 const defaultPause = /^(?:pausa|descanso|almuerzo|comida)s?(?: |$)/;
-// Actividad «Desplazamiento» de la agenda sin destino: tramo pendiente que no se calcula (no se pregunta).
-const transitActivity = /^desplazamiento(?: |$)/;
+// CONFIRMAR_CITAS-031: actividades que, cuando NO tienen dirección (ni en la agenda ni en Ajustes), son
+// por defecto «Sin desplazamiento»: no se calculan, no cuentan y la ruta va de la anterior a la siguiente.
+// Regla exacta: nombre (sin tildes ni mayúsculas) que empieza por la palabra «desplazamiento», p. ej.
+// «Desplazamiento Alianzas». Con dirección se calculan como siempre; «Tourline Alianzas» no entra.
+// Para ampliarla, añadir un patrón aquí (la lista es igual en my-routes.mjs y route-agenda.mjs).
+const noTravelWithoutAddress = [/^desplazamiento(?: |$)/];
 
-export function combineActivities(appointments, ignored, preferences = {}, overrides = new Map()) {
+// `legacyTransit`: cadena anterior a CONFIRMAR_CITAS-031 (esas actividades seguían en la ruta, sin destino).
+// Solo se usa para hablar con la otra versión (web o función) mientras convivan.
+export function combineActivities(appointments, ignored, preferences = {}, overrides = new Map(), { legacyTransit = false } = {}) {
   const occurrences = new Map();
   return [
     ...appointments.filter(row => !row.source_missing && row.status !== "cancelled")
@@ -56,15 +62,20 @@ export function combineActivities(appointments, ignored, preferences = {}, overr
     occurrences.set(identity, occurrence + 1);
     const key = JSON.stringify([identity, occurrence]);
     const name = activityName(type);
-    const defaultTravel = editableTravel && defaultPause.test(name) ? "pause" : "travel";
+    const agendaAddress = originalAddress || (editableTravel ? configuredAddress(type, preferences) : "");
+    const transit = editableTravel && noTravelWithoutAddress.some(pattern => pattern.test(name));
+    const excluded = transit && !agendaAddress && !legacyTransit;
+    const defaultTravel = editableTravel && (excluded || defaultPause.test(name)) ? "pause" : "travel";
     const override = overrides.get(key);
     const travel = override?.travel ?? defaultTravel;
-    const agendaAddress = originalAddress || (editableTravel ? configuredAddress(type, preferences) : "");
     const address = travel === "travel"
       ? formatRouteLocation(override?.location) || agendaAddress
       : "";
-    const noDestination = editableTravel && travel === "travel" && !address && transitActivity.test(name);
+    const noDestination = transit && travel === "travel" && !address;
+    // «skipped»: excluida por la regla; a diferencia de una pausa, no alarga la hora de salida de la anterior.
+    const skipped = excluded && travel === "pause";
     return {
+      ...(skipped ? { skipped } : {}),
       key, type, time: start === null ? "" : time.slice(0, 5),
       endTime: start !== null && end !== null && end >= start ? endTime : "",
       address, agendaAddress, travel, defaultTravel, editableTravel, override, noDestination,
@@ -77,6 +88,7 @@ export function buildLegs(home, activities) {
   const legs = [];
   let from = house;
   for (const activity of activities) {
+    if (activity.skipped) continue;
     if (activity.travel === "pause") {
       // A pause stays at the last stop. Any later ETA needs a known finish for both activities.
       if (legs.length) {

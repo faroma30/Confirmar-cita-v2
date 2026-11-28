@@ -52,13 +52,13 @@ jobs:
             form-events.mjs
             ignored-work.mjs
             issues-ui.mjs
-            kpi-access.mjs
             master-navigation.mjs
             message-template.mjs
             my-routes-address.mjs
             my-routes-autocomplete.mjs
             my-routes-cloud.mjs
             my-routes-pilot.mjs
+            my-routes-saved.mjs
             my-routes-ui.mjs
             my-routes.mjs
             release-update.mjs

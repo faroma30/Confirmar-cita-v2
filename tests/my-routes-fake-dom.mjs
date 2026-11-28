@@ -1,3 +1,4 @@
+import { setTimeout as pause } from "node:timers/promises";
 // DOM mínimo para probar Mis rutas sin navegador ni dependencias (no hay jsdom en el repositorio).
 export function element(tag = "") {
   return {
@@ -33,4 +34,6 @@ export function texts(node) {
   return out;
 }
 
-export const settle = async (rounds = 6) => { for (let i = 0; i < rounds; i++) await new Promise(setImmediate); };
+// Con una pausa real por ronda (la de `node:timers/promises`, que los relojes imitados de las pruebas no tocan):
+// las huellas (crypto.subtle) terminan fuera de la cola de `setImmediate` y con carga se quedaban cortas.
+export const settle = async (rounds = 6) => { for (let i = 0; i < rounds; i++) await pause(2); };

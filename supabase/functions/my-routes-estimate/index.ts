@@ -1,6 +1,6 @@
 import { currentUser, jsonResponse, preflightOrReject, serviceClient } from "../_shared/runtime.ts";
 import { autocompleteQuery, autocompleteStreets, calculateJourney, journeyAddresses, journeyFingerprint, providerPlan, suggestAddresses, suggestQuery } from "./core.mjs";
-import { canAutocomplete, homeOptIn, parseActivityEdits, routeAccess } from "./policy.mjs";
+import { canAutocomplete, homeOptIn, parseActivityEdits, parseOnly, routeAccess } from "./policy.mjs";
 import { pilotStopRejection } from "./pilot-control.mjs";
 import { confirmPilotStopped, ensurePilotRenewed, renewalFields } from "./pilot-renewal.mjs";
 import { blockCause, chargeRefusal, remainingWait } from "./block-cause.mjs";
@@ -37,11 +37,13 @@ Deno.serve(async (request: Request) => {
   const allowedKeys = control ? ["operation", "expectedActor"] : suggest
     ? ["operation", "query", "municipality", "postalCode", "expectedActor"] : autocomplete
     ? ["operation", "query", "kind", "expectedActor"]
-    : ["date", "fingerprint", "expectedActor", "edits", "useHome"];
+    : ["date", "fingerprint", "expectedActor", "edits", "useHome", "only"];
   if (Object.keys(input).some(key => !allowedKeys.includes(key))) return invalid();
   // CONFIRMAR_CITAS-022: the saved home is always used (Director's decision; replaces the opt-in of the 015).
   // `useHome` is still accepted for compatibility with 3routes17 (a boolean); any other type is invalid.
   if (homeOptIn(input) === null) return invalid();
+  // CONFIRMAR_CITAS-031: legs requested by the app after a correction (optional; 3routes23 never sends it).
+  if (parseOnly(input.only) === null) return invalid();
   if (suggest && !suggestQuery(input)) return invalid();
   const query = autocomplete ? autocompleteQuery(input.query) : "";
   if (!control && !suggest && (autocomplete ? !query
@@ -99,6 +101,7 @@ Deno.serve(async (request: Request) => {
     let addresses: string[] = [];
     let reasons: (string | null)[] = [];
     let failure = "";
+    let only: Set<number> | undefined;
     if (!autocomplete) {
       const date = { p_work_date: input.date };
       const [jobs, ignored] = await Promise.all([
@@ -106,17 +109,25 @@ Deno.serve(async (request: Request) => {
       ]);
       if (jobs.error || ignored.error || !Array.isArray(jobs.data) || !Array.isArray(ignored.data)) return disabled();
       // All route stops come from the caller's actual agenda and preferences.
+      let legacy: string[] = [];
       try {
         const edits = parseActivityEdits(input.edits);
         addresses = journeyAddresses(prefs.data, jobs.data, ignored.data, edits);
+        legacy = journeyAddresses(prefs.data, jobs.data, ignored.data, edits, { legacyTransit: true });
       } catch { return invalid(); }
-      if (await journeyFingerprint(addresses) !== input.fingerprint) return reply({ error: "Los datos de la ruta han cambiado." }, 409);
+      if (await journeyFingerprint(addresses) !== input.fingerprint) {
+        // CONFIRMAR_CITAS-031: an app still on 3routes23 keeps the excluded activities in the route.
+        if (await journeyFingerprint(legacy) !== input.fingerprint) return reply({ error: "Los datos de la ruta han cambiado." }, 409);
+        addresses = legacy;
+      }
       if (addresses.length === 2) return reply({ estimates: [] });
+      only = parseOnly(input.only, addresses.length - 1) ?? undefined;
+      if (input.only !== undefined && !only) return invalid();
       // Only the caller's own saved home (cc_my_route_locations_v2 above) can be used, always (CONFIRMAR_CITAS-022).
       const plan = providerPlan(addresses, true);
       reasons = plan.reasons;
       addresses = plan.addresses;
-      if (!addresses.slice(1).some((address, index) => address && addresses[index])) {
+      if (!addresses.slice(1).some((address, index) => address && addresses[index] && (!only || only.has(index)))) {
         const none = reasons.map(reason => reason ?? "incomplete");
         return reply({ estimates: Array(addresses.length - 1).fill(null), reasons: none, details: none });
       }
@@ -170,7 +181,7 @@ Deno.serve(async (request: Request) => {
         })),
       };
       const estimates = await calculateJourney(addresses, {
-        ...context, reasons, details, diagnostics, approx, sources, officials, suggestions, cartociudad,
+        ...context, only, reasons, details, diagnostics, approx, sources, officials, suggestions, cartociudad,
         // The pilot budget ran out after some legs: the partial result is returned and recorded as before.
         onPilotLimit: () => { failure = "quota"; },
       });

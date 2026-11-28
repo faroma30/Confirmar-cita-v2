@@ -226,7 +226,7 @@ test("index.ts: CartoCiudad primero, interruptor MY_ROUTES_CARTOCIUDAD=no, campo
   // CONFIRMAR_CITAS-022: el interruptor se lee una vez (`cartoOn`) y la llamada añade `officials` y `suggestions`.
   assert.match(source, /const cartoOn = Deno\.env\.get\("MY_ROUTES_CARTOCIUDAD"\) !== "no";/);
   assert.match(source, /const cartociudad = !cartoOn \? null/);
-  assert.match(source, /\.\.\.context, reasons, details, diagnostics, approx, sources, officials, suggestions, cartociudad,/);
+  assert.match(source, /\.\.\.context, only, reasons, details, diagnostics, approx, sources, officials, suggestions, cartociudad,/);
   assert.match(source, /approx: estimates\.map\(\(_, index\) => approx\[index\] === true\)/);
   assert.match(source, /sources: addresses\.map\(\(_, index\) => sources\[index\] \?\? null\)/);
   const warn = source.slice(source.indexOf("cartociudad_attempt_failed") - 80, source.indexOf("cartociudad_attempt_failed") + 120);

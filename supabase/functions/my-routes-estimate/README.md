@@ -134,3 +134,10 @@ responde como antes en esos casos. No cambian topes, esperas ni el tratamiento d
 - **Sugerencias:** hasta **5** calles oficiales del mismo municipio, de cualquier tipo de vía, por parecido (≥ 0,4, nombre contenido o una palabra parecida).
 - **Reserva de Geoapify:** si CartoCiudad no tiene la calle y la búsqueda estructurada tampoco la encuentra, la búsqueda de texto libre la pide **con o sin artículo** («Passatge Prova» ↔ «Passatge de Prova» / «de l'»), con el mismo tipo de vía. Topes sin cambios: 3 CartoCiudad y 2 Geoapify por dirección.
 - **App:** campo «Escribir la calle» (con número), «Corregir a mano», «Dejarla como está». La corrección viaja en `edits` como hasta ahora: no hay claves nuevas ni migración, y es compatible con la v17.
+
+## Excluidas del cálculo, resultado guardado y corrección parcial (CONFIRMAR_CITAS-031, web 3routes24; sin desplegar)
+- **Regla de exclusión** (`noTravelWithoutAddress`, igual en `route-agenda.mjs` y `my-routes.mjs`): actividad que no es instalación, cuyo nombre sin tildes ni mayúsculas empieza por la palabra `desplazamiento` y que no tiene dirección (ni en la agenda ni en Ajustes) → «Sin desplazamiento», fuera de la ruta. Con dirección se calcula. Para ampliarla se añade un patrón a esa lista en los dos archivos.
+- **Convivencia:** si la huella no coincide, la función prueba la cadena anterior (3routes23, con esas actividades dentro) antes de responder 409. La web 3routes24, ante un 409 de la v18, repite con la cadena anterior.
+- **`only`** (opcional): índices de los tramos pedidos; los demás no se buscan ni se cobran. La v18 lo rechaza con 400 (sin reservar) y la web repite sin él.
+- **Resultado guardado:** migración `20261128090000_route_saved_days.sql` (tabla con RLS y `cc_my_route_day` / `cc_save_my_route_day` para `authenticated`). Solo hoy y mañana (Europe/Madrid); lo anterior a hoy se borra al leer (lo propio) y al guardar (lo de todos). Solo huellas, números, horas y códigos. La función Edge no la usa; sin la migración, la web funciona sin guardar.
+- Sin cambios en topes, espera, 401/403/429 ni renovación.

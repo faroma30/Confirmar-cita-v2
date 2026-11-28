@@ -1,7 +1,8 @@
-import { editableAddress } from "./my-routes-address.mjs?v=3routes23";
-import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes23";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, shortAddress, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes23";
-import { canOfferPilotStop, countdownClock, describePilot, madridClock, stopConfirmation, waitMessage } from "./my-routes-pilot.mjs?v=3routes23";
+import { editableAddress } from "./my-routes-address.mjs?v=3routes24";
+import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes24";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, shortAddress, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes24";
+import { canOfferPilotStop, countdownClock, describePilot, madridClock, stopConfirmation, waitMessage } from "./my-routes-pilot.mjs?v=3routes24";
+import { absorbRecord, keepRecord, legSignatures, lookupRecord, madridDay, memorySignatures, pendingRecord, recordFrom, savableDate } from "./my-routes-saved.mjs?v=3routes24";
 
 // CONFIRMAR_CITAS-027: ubicación de una corrección (calle tal como se escribe, con su tipo de vía), o null si
 // tiene caracteres que no se pueden enviar. Mismas reglas que «Editar» y que el servidor.
@@ -16,7 +17,7 @@ export function correctedLocation(base, street, number, municipality) {
   } catch { return null; }
 }
 
-export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null,
+export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities, provider = null, autocomplete = null, preferencesStore = null, homeConsent = null, now = () => new Date(), confirmAction = null, savedDays = null,
   timers = { set: (task, ms) => setTimeout(task, ms), clear: id => clearTimeout(id) } }) {
   const settings = preferencesStore;
   const find = id => panel.querySelector("#" + id);
@@ -79,7 +80,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     waitNotice = "";
     syncCalculate();
     if (pending && pending.actor === technicianId() && !view.hidden && settingsPanel.hidden
-      && date.value === pending.date && !stopped && !pilotBusy) void calculate();
+      && date.value === pending.date && !stopped && !pilotBusy) void calculate(pending);
   }
   function startWait(seconds) {
     waitUntil = Math.max(waitUntil, now().getTime() + seconds * 1000);
@@ -147,7 +148,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       "El contador interno puede diferir del consumo de Geoapify."].join(" ") + stamp;
     if (operation === "stop" || (!view.hidden && stopped !== renderedStopped)) void refresh();
   }
-  // `correction`: fecha de la ruta cuando el cálculo lo pide una calle elegida en «¿Querías decir…?».
+  // `correction` ({ date, keys }): cálculo pedido al corregir una dirección (CONFIRMAR_CITAS-031): solo los
+  // tramos de esas actividades y los que sigan sin calcular. Sin ella, toda la ruta.
   async function calculate(correction = null) {
     if (!provider?.manual || stopped || pilotBusy) return;
     const left = waitLeft();
@@ -157,14 +159,14 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     syncCalculate();
     const actor = technicianId();
     let failure = null;
-    try { failure = await refresh(true); }
+    try { failure = await refresh(true, correction?.date === date.value ? correction.keys : null); }
     finally { pilotBusy = false; syncCalculate(); }
     if (failure && actor === technicianId()) {
       // Las tarjetas siguen a la vista: se repintan sin calcular ni gastar nada.
       if (!view.hidden) await refresh();
       if (actor !== technicianId()) return;
       if (failure.retryAfterSeconds) {
-        if (correction && correction === date.value) queued = { actor, date: correction };
+        if (correction && correction.date === date.value) queued = { actor, date: correction.date, keys: correction.keys };
         startWait(failure.retryAfterSeconds);
         showWaitNotice(failure.message + (queued ? queuedText : ""));
       }
@@ -193,6 +195,13 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
   let saving = false;
   let editForms = 0;
   const activityEdits = new Map();
+  // CONFIRMAR_CITAS-031: tramos ya calculados por fecha (los de hoy y mañana, además, en la base).
+  const days = new Map();
+  function dayEntry(day) {
+    if (!days.has(day)) days.set(day, { records: new Map(), stored: false });
+    return days.get(day);
+  }
+  const storedRecords = (entry, signatures) => [...new Set(signatures.map(signature => entry.records.get(signature.a)).filter(Boolean))];
   const queries = new Map();
   // CONFIRMAR_CITAS-022: asistente de direcciones (CartoCiudad) en el domicilio, la recogida de llaves y
   // Tourline / Recogida de material. `autocomplete` es la búsqueda del modo `suggest` (nunca Geoapify).
@@ -249,6 +258,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     if (id !== owner || !id) {
       settings.clear();
       activityEdits.clear();
+      days.clear();
       provider?.clear?.();
       resetPilot();
       close();
@@ -355,7 +365,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
     });
   }
 
-  async function refresh(explicit = false) {
+  async function refresh(explicit = false, correctedKeys = null) {
     const run = ++request;
     const actorId = technicianId();
     const current = () => actorId && technicianId() === actorId && request === run && !view.hidden;
@@ -376,24 +386,95 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       // «Editar desplazamiento» is sent too (same rules as the server), so the leg is recalculated with it.
       // Results are matched to displayed stops; no result is applied to a different leg.
       const safeEdits = [...edits].filter(([, edit]) => edit.location === null || sendableRouteLocation(edit.location));
-      const canonical = buildLegs(formatRouteLocation(preferences.home),
+      let canonical = buildLegs(formatRouteLocation(preferences.home),
         combineActivities(appointments, ignored, preferences, new Map(safeEdits)));
       const key = leg => JSON.stringify([leg.from.key, leg.to.key, leg.from.address, leg.to.address]);
-      const positions = new Map(canonical.map((leg, index) => [key(leg), index]));
+      let positions = new Map(canonical.map((leg, index) => [key(leg), index]));
       const eligible = leg => leg.from.key && leg.to.key && leg.from.address && leg.to.address;
       const canEstimate = !provider?.manual || legs.some(leg => eligible(leg) && positions.has(key(leg)));
       const estimatesProvider = provider;
       // CONFIRMAR_CITAS-022: the saved home always takes part (`useHome: true` keeps the v13 function working).
       const useHome = Boolean(preferences.home);
       const onWait = seconds => { if (technicianId() === actorId) startWait(seconds); };
-      const batch = estimatesProvider?.estimateJourney && canEstimate
-        ? await estimatesProvider.estimateJourney(canonical, { date: selectedDate, edits: safeEdits, ...(estimatesProvider.manual ? { cachedOnly: !explicit, ...(explicit ? { onWait } : {}) } : {}), ...(useHome ? { useHome: true } : {}) }) : null;
+      // CONFIRMAR_CITAS-031: lo ya calculado se muestra sin consultar nada ni gastar créditos.
+      const journey = Boolean(estimatesProvider?.estimateJourney);
+      const today = madridDay(now());
+      for (const [day, kept] of days) if (kept.stored && day < today) days.delete(day);
+      const entry = journey ? dayEntry(selectedDate) : null;
+      const signatures = !journey ? [] : savedDays ? await Promise.all(legs.map(leg => legSignatures(actorId, leg)))
+        : legs.map(leg => memorySignatures(actorId, leg));
+      const savable = Boolean(journey && savedDays && savableDate(selectedDate, now()));
+      if (savable) {
+        const saved = await savedDays.read(selectedDate);
+        if (!current()) return;
+        for (const record of saved) absorbRecord(entry.records, record);
+        if (saved.length) entry.stored = true;
+      }
+      if (!current()) return;
+      const edited = leg => edits.has(leg.from.key) || edits.has(leg.to.key);
+      const shownRecord = index => journey ? lookupRecord(entry.records, signatures[index], edited(legs[index])) : null;
+      // Tramos que se piden tras una corrección: los de esas actividades y los que sigan sin calcular.
+      const requested = () => !explicit || !correctedKeys || !journey ? null : legs.flatMap((leg, index) => {
+        // También los tramos desde y hacia casa: basta con que tengan las dos direcciones.
+        if (!leg.from.address || !leg.to.address || !positions.has(key(leg))) return [];
+        const record = shownRecord(index);
+        const done = record?.d !== undefined && record.s === signatures[index].s;
+        const touched = correctedKeys.has(leg.from.key) || correctedKeys.has(leg.to.key);
+        return pendingRecord(record) || (touched && !done) ? [positions.get(key(leg))] : [];
+      });
+      let only = null;
+      const ask = () => {
+        const wanted = requested();
+        if (wanted && !wanted.length) { only = []; return []; }
+        only = wanted && wanted.length < canonical.length ? wanted : null;
+        return estimatesProvider.estimateJourney(canonical, { date: selectedDate, edits: safeEdits, ...(estimatesProvider.manual ? { cachedOnly: !explicit, ...(explicit ? { onWait } : {}) } : {}), ...(only ? { only } : {}), ...(useHome ? { useHome: true } : {}) });
+      };
+      let batch = null;
+      if (journey && canEstimate) {
+        try { batch = await ask(); }
+        catch (error) {
+          // La función anterior mantiene en la ruta las actividades excluidas y responde 409 (sin gastar
+          // nada): se repite con la cadena anterior.
+          const legacy = buildLegs(formatRouteLocation(preferences.home),
+            combineActivities(appointments, ignored, preferences, new Map(safeEdits), { legacyTransit: true }));
+          const addresses = chain => JSON.stringify(chain.map(leg => [leg.from.address, leg.to.address]));
+          if (!explicit || error?.status !== 409 || addresses(legacy) === addresses(canonical) || technicianId() !== actorId) throw error;
+          canonical = legacy;
+          positions = new Map(canonical.map((leg, index) => [key(leg), index]));
+          batch = await ask();
+        }
+      }
       const estimates = await Promise.all(legs.map(leg => estimateLeg(leg,
-        estimatesProvider?.estimateJourney ? { estimate: () => batch?.[positions.get(key(leg))] } : estimatesProvider,
+        journey ? { estimate: () => batch?.[positions.get(key(leg))] } : estimatesProvider,
         { date: selectedDate })));
+      // Lo recién calculado se conserva aunque ya se haya cambiado de pantalla: los créditos están gastados.
+      if (journey && batch?.length && (explicit || !estimatesProvider.manual) && technicianId() === actorId) {
+        for (const [index, leg] of legs.entries()) {
+          const position = positions.get(key(leg));
+          if (position === undefined) continue;
+          // De un tramo no pedido la respuesta no dice nada (la función v18, en cambio, los devuelve todos).
+          const record = recordFrom(batch, position, estimates[index], signatures[index], now());
+          if (record) keepRecord(entry.records, record, edited(leg));
+        }
+        const keep = savable ? storedRecords(entry, signatures) : [];
+        if (keep.length) {
+          entry.stored = true;
+          await savedDays.save(selectedDate, keep);
+        }
+      }
       if (!current()) return;
       renderedStopped = stopped;
-      const computed = Array.isArray(batch) && batch.length > 0;
+      const rows = legs.map((_, index) => shownRecord(index));
+      for (const [index, row] of rows.entries()) {
+        if (row) estimates[index] = row.d === undefined ? null
+          : { durationSeconds: row.d, distanceMeters: row.m, calculatedAt: row.t };
+      }
+      const rowOf = leg => rows[legs.indexOf(leg)] ?? null;
+      const fromBatch = (leg, field) => batch?.[field]?.[positions.get(key(leg))] ?? null;
+      const reasonOf = leg => rowOf(leg) ? rowOf(leg).r ?? null : fromBatch(leg, "reasons");
+      // Un tramo está «intentado» si tiene registro o si acaba de pedirse.
+      const computedLeg = leg => Boolean(rowOf(leg)
+        || (batch?.length && (!only || only.includes(positions.get(key(leg))))));
       const reasonText = {
         privacy: "tramo excluido por privacidad",
         incomplete: "la dirección no contiene una vía, portal y municipio utilizables",
@@ -404,11 +485,11 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       function whyUnavailable(leg) {
         const detail = detailText[detailOf(leg)];
         if (detail) return (/^Geoapify/.test(detail) ? detail : detail.charAt(0).toLowerCase() + detail.slice(1)).replace(/\.$/, "");
-        const reason = reasonText[batch?.reasons?.[positions.get(key(leg))]];
+        const reason = reasonText[reasonOf(leg)];
         if (reason) return reason;
         if (estimatesProvider?.manual && stopped && pilot) return "el cálculo está detenido (" + pilot.short + ")";
         if (estimatesProvider?.manual && !canEstimate) return "se necesitan dos actividades consecutivas con dirección completa";
-        if (estimatesProvider?.manual && !computed) return "aún no se han calculado; pulsa «Calcular desplazamientos»";
+        if (estimatesProvider?.manual && !computedLeg(leg)) return "aún no se han calculado; pulsa «Calcular desplazamientos»";
         return "la consulta no devolvió este tramo";
       }
       notice.textContent = !activities.length ? "No hay actividades para esta fecha."
@@ -430,14 +511,15 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       // Which stop has to be corrected: the destination of the leg, or its origin ("other_end").
       const ownAddress = new Set(["incomplete", "missing_number", "street_not_found", "portal_not_found", "ambiguous"]);
       const otherAddress = new Set(["other_end", "other_end_incomplete"]);
-      const detailOf = leg => batch?.details?.[positions.get(key(leg))] ?? null;
+      const detailOf = leg => rowOf(leg) ? rowOf(leg).dt ?? null : fromBatch(leg, "details");
       // CONFIRMAR_CITAS-018: código de detalle de la dirección (campo opcional `diagnostics`) y dirección «S/N».
-      const diagnosticOf = leg => batch?.diagnostics?.[positions.get(key(leg))] ?? null;
+      const diagnosticOf = leg => rowOf(leg) ? rowOf(leg).dg ?? null : fromBatch(leg, "diagnostics");
       // CONFIRMAR_CITAS-020: campos opcionales `approx` (tramo) y `sources` (dirección) de la función nueva.
-      const approxOf = leg => batch?.approx?.[positions.get(key(leg))] === true;
+      const approxOf = leg => rowOf(leg) ? rowOf(leg).ap === true : fromBatch(leg, "approx") === true;
       const sourcesOf = leg => {
         const index = positions.get(key(leg));
-        const pair = Array.isArray(batch?.sources) && index !== undefined ? [batch.sources[index], batch.sources[index + 1]] : [];
+        const pair = rowOf(leg) ? rowOf(leg).src ?? []
+          : Array.isArray(batch?.sources) && index !== undefined ? [batch.sources[index], batch.sources[index + 1]] : [];
         return pair.some(Boolean) ? pair.map(source => source ?? "—").join(" → ") : "";
       };
       // CONFIRMAR_CITAS-022: calle oficial usada y sugerencias por dirección (campos opcionales de la función nueva).
@@ -445,18 +527,22 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         const index = positions.get(key(leg));
         return index === undefined ? undefined : index + (end === "to" ? 1 : 0);
       };
-      const officialOf = (leg, end) => batch?.officials?.[addressIndex(leg, end)] ?? null;
-      const suggestionsOf = (leg, end) => batch?.suggestions?.[addressIndex(leg, end)] ?? null;
+      const ofAddress = (leg, end, field) => rowOf(leg) ? rowOf(leg)[field]?.[end === "to" ? 1 : 0] ?? null
+        : batch?.[field]?.[addressIndex(leg, end)] ?? null;
+      const officialOf = (leg, end) => ofAddress(leg, end, "officials");
+      const suggestionsOf = (leg, end) => ofAddress(leg, end, "suggestions");
       const applySuggestion = (stop, location) => {
         if (!current() || date.value !== selectedDate || !stop.key) return;
         edits.set(stop.key, { travel: "travel", location });
         activityEdits.set(selectedDate, edits);
-        // Un toque aplica la calle oficial como `edits` y se recalcula (si el piloto lo permite).
+        // Un toque aplica la calle oficial como `edits` y se recalculan sus tramos (si el piloto lo permite).
         if (!provider?.manual || stopped || pilotBusy) { void refresh(); return; }
         const left = waitLeft();
-        if (!left) { void calculate(selectedDate); return; }
+        const earlier = queued?.actor === actorId && queued.date === selectedDate ? queued.keys : [];
+        const correction = { actor: actorId, date: selectedDate, keys: new Set([...earlier, stop.key]) };
+        if (!left) { queued = null; void calculate(correction); return; }
         // CONFIRMAR_CITAS-026: durante la espera la corrección queda aplicada y se recalcula al terminar.
-        queued = { actor: actorId, date: selectedDate };
+        queued = correction;
         showWaitNotice(waitMessage(left) + queuedText);
         void refresh();
       };
@@ -580,7 +666,9 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             : "La consulta no devolvió tramos válidos. Consulta el motivo junto a cada tramo.";
       // CONFIRMAR_CITAS-026: tarjetas simples (actividad, dirección y desplazamiento). Lo técnico y el tiempo
       // libre no se borran: quedan en «Más detalles», cerrado por defecto.
-      const departure = activities[0] === legs[0]?.to && estimates[0]
+      // CONFIRMAR_CITAS-031: las actividades excluidas del cálculo no cuentan como inicio de la jornada.
+      const firstStop = activities.find(item => !item.skipped);
+      const departure = firstStop === legs[0]?.to && estimates[0]
         && recommendedDeparture(legs[0].to.time, estimates[0].durationSeconds, preferences.margin);
       const heading = stop => [stop.time, stop.type].filter(Boolean).join(" · ");
       const kilometres = meters => (meters / 1000).toLocaleString("es-ES", { maximumFractionDigits: 1 });
@@ -604,9 +692,9 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         if (!departure && estimatesProvider && legs.length) {
           add(card, "p", "Hora de salida: sin calcular");
           const first = legs[0];
-          const why = batch?.reasons?.[0] === "privacy" ? "el domicilio queda fuera del piloto"
+          const why = reasonOf(first) === "privacy" ? "el domicilio queda fuera del piloto"
             : !preferences.home ? "guarda tu domicilio en Ajustes para calcular la salida"
-            : activities[0] !== first.to ? "la jornada no empieza con un desplazamiento desde casa"
+            : firstStop !== first.to ? "la jornada no empieza con un desplazamiento desde casa"
             : !first.to.time ? "la primera actividad no tiene hora"
             : "falta el primer tramo: " + whyUnavailable(first);
           notes.push("Hora de salida no disponible: " + why + ".");
@@ -621,6 +709,9 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             : "Conducción total: sin calcular").className = "route-travel";
           if (available.length !== legs.length) add(card, "p", `${available.length} de ${legs.length} desplazamientos calculados`);
         }
+        // CONFIRMAR_CITAS-031: hora del último cálculo de lo que se ve (solo hoy y mañana, que se guardan).
+        const latest = savable ? Math.max(0, ...rows.filter(Boolean).map(row => Date.parse(row.t))) : 0;
+        if (latest) add(card, "p", "Actualizado a las " + madridClock(new Date(latest)));
         if (activities.some(item => item.editableTravel || (item.travel === "travel" && !item.address))) {
           notes.push("Los cambios de las actividades duran hasta cerrar sesión o recargar la aplicación.");
         }
@@ -643,7 +734,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       // Motivo en una frase corta y sin códigos (el largo y el código quedan en «Más detalles»).
       function shortReason(leg) {
         const detail = detailOf(leg);
-        const reason = batch?.reasons?.[positions.get(key(leg))];
+        const reason = reasonOf(leg);
         const other = leg.from.key ? "la otra dirección" : "tu domicilio";
         const phrases = {
           privacy: "Dirección excluida por privacidad",
@@ -658,7 +749,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           no_route: "No hay ruta en coche",
           not_found: "No encuentro la dirección",
         };
-        return phrases[detail] ?? phrases[reason] ?? (computed ? "No se ha podido calcular" : "Sin calcular");
+        return phrases[detail] ?? phrases[reason] ?? (computedLeg(leg) ? "No se ha podido calcular" : "Sin calcular");
       }
 
       // Pinta el desplazamiento de un tramo, sus sugerencias y el botón de Maps; devuelve sus notas técnicas.
@@ -667,7 +758,8 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         const notes = [];
         const travel = text => { add(item, "p", text).className = "route-travel"; };
         const url = mapsLink(leg);
-        if (!url) {
+        // Un tiempo guardado se muestra aunque la dirección (corregida antes de cerrar) ya no esté.
+        if (!url && !estimates[index]) {
           const missing = [leg.from, leg.to].filter(stop => !stop.address)
             .map(stop => stop.time ? `${stop.type} (${stop.time})` : stop.type);
           if (leg.to.noDestination || leg.from.noDestination) {
@@ -687,6 +779,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           travel("🚗 " + Math.ceil(estimate.durationSeconds / 60) + " min · " + kilometres(estimate.distanceMeters)
             + " km" + (approxOf(leg) ? " (aprox.)" : "") + " desde " + fromName(leg.from));
           notes.push("Estimación sin tráfico en tiempo real · " + new Date(estimate.calculatedAt).toLocaleString("es-ES"));
+          if (rowOf(leg)?.corrected) add(item, "p", "Calculado con la dirección que corregiste.").className = "fine";
           if (mayArriveLate(leg, estimate)) notes.push("Posible retraso: el trayecto supera el tiempo entre actividades.");
           // CONFIRMAR_CITAS-020: posición de la calle (la base oficial no tiene ese portal) y origen de las direcciones.
           if (approxOf(leg)) {
@@ -716,7 +809,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
           }
         } else {
           travel(estimatesProvider ? shortReason(leg) : "Sin calcular");
-          const reason = batch?.reasons?.[positions.get(key(leg))];
+          const reason = reasonOf(leg);
           const detail = detailOf(leg);
           const explanation = detailText[detail] ?? {
             privacy: "Tramo excluido por privacidad.",
@@ -738,10 +831,11 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
             }
             if (ownAddress.has(detail)) offerFix(item, leg.to, suggestionsOf(leg, "to"), detail);
             else if (otherAddress.has(detail)) offerFix(item, leg.from, suggestionsOf(leg, "from"), detail);
-          } else if (estimatesProvider && (computed || (estimatesProvider.manual && (stopped || !canEstimate)))) {
+          } else if (estimatesProvider && (computedLeg(leg) || (estimatesProvider.manual && (stopped || !canEstimate)))) {
             notes.push("Motivo: " + whyUnavailable(leg) + ".");
           }
         }
+        if (!url) return notes;
         const link = add(item, "a", "Abrir en Google Maps");
         link.className = "button secondary route-maps";
         link.href = url;
@@ -781,14 +875,22 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         }
         const failed = failedKeys.has(activity.key);
         if (activity.editableTravel || !activity.address || activity.override || failed) {
-          editActivity(card, activity, change => {
+          editActivity(card, activity, async change => {
             if (!current() || date.value !== selectedDate) return;
+            // CONFIRMAR_CITAS-031: al restaurar la agenda se descarta lo calculado con la corrección.
+            const restored = !change && journey && activity.override?.location;
             if (change) {
               edits.set(activity.key, change);
               activityEdits.set(selectedDate, edits);
             } else {
               edits.delete(activity.key);
               if (!edits.size) activityEdits.delete(selectedDate);
+            }
+            if (restored) {
+              for (const [index, leg] of legs.entries()) {
+                if (leg.from.key === activity.key || leg.to.key === activity.key) entry.records.delete(signatures[index].a);
+              }
+              if (savable) await savedDays.save(selectedDate, storedRecords(entry, signatures));
             }
             void refresh();
           }, failed);
@@ -801,7 +903,7 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
         add(card, "h3", "Regreso a casa");
         moreDetails(card, renderLeg(card, legs.length - 1));
       }
-      if (batch !== null && estimates.some(Boolean)) {
+      if ((batch !== null || rows.some(Boolean)) && estimates.some(Boolean)) {
         const credit = add(list, "p", "Datos de rutas: ");
         credit.className = "fine";
         const link = add(credit, "a", "Geoapify");
@@ -904,5 +1006,5 @@ export function mountMyRoutes({ panel, agenda, getActor, getDate, loadActivities
       }
     }
   });
-  return { sync, reset() { provider?.clear?.(); settings.clear(); activityEdits.clear(); owner = null; close(); tab.parentElement.hidden = true; } };
+  return { sync, reset() { provider?.clear?.(); settings.clear(); activityEdits.clear(); days.clear(); owner = null; close(); tab.parentElement.hidden = true; } };
 }

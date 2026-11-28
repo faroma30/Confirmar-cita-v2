@@ -1,23 +1,23 @@
-import { setupReleaseUpdate } from "./release-update.mjs?v=3routes23";
-import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes23";
+import { setupReleaseUpdate } from "./release-update.mjs?v=3routes24";
+import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes24";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
-import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes23";
-import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes23";
-import { createCloudAddressSuggest, createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes23";
-import { captureSubmittedForm } from "./form-events.mjs?v=3routes23";
-import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes23";
-import { createIssuesUI } from "./issues-ui.mjs?v=3routes23";
-import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes23";
-import { checkKpiAvailability, resolveKpiDashboardUrl } from "./kpi-access.mjs?v=3routes23";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes23";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes23";
-import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes23";
-import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes23";
-import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes23";
-import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes23";
-import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes23";
-import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes23";
-import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes23";
+import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes24";
+import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes24";
+import { createCloudAddressSuggest, createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes24";
+import { createRpcRouteDays } from "./my-routes-saved.mjs?v=3routes24";
+import { captureSubmittedForm } from "./form-events.mjs?v=3routes24";
+import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes24";
+import { createIssuesUI } from "./issues-ui.mjs?v=3routes24";
+import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes24";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes24";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes24";
+import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes24";
+import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes24";
+import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes24";
+import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes24";
+import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes24";
+import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes24";
+import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes24";
 
 const $ = (id) => document.getElementById(id);
 // Keep the existing V2 workspace DOM intact while switching the two top-level tools.
@@ -64,10 +64,8 @@ let masterSelectedTechnicianId = "";
 let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
-let kpiAvailableUserId = null;
-let kpiAvailabilityRequest = 0;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3routes23";
+const APP_BUILD = "3routes24";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -80,65 +78,12 @@ function toolOverlayOpen() { return settingsNavigation.isOpen() || issuesNavigat
 function updateToolVisibility() {
   const allowed = Boolean(activeUser?.id && activeProfile?.status === "active" && activeProfile?.activation_verified_at && !activeProfile?.must_change_password);
   const overlay = toolOverlayOpen();
-  const kpiAvailable = allowed && kpiAvailableUserId === activeUser.id;
   setVisible("toolCategories", allowed && !overlay);
-  setVisible("kpiToolTab", kpiAvailable && !overlay);
-  $("toolCategories").classList.toggle("has-kpi", kpiAvailable);
-  if (!kpiAvailable || overlay) setVisible("kpiPopupFallback", false);
   $("workspace").classList.toggle("wifi-active", allowed && !overlay && selectedTool === "wifi");
   setVisible("wifiConnectPanel", allowed && !overlay && selectedTool === "wifi");
   $("confirmarToolTab").setAttribute("aria-pressed", String(selectedTool === "confirmar"));
   $("wifiToolTab").setAttribute("aria-pressed", String(selectedTool === "wifi"));
   if (!allowed || overlay || selectedTool !== "wifi") wifiInstance?.suspend();
-}
-
-async function openKpiDashboard() {
-  const allowed = Boolean(activeUser?.id && activeProfile?.status === "active"
-    && activeProfile?.activation_verified_at && !activeProfile?.must_change_password);
-  const requestedUserId = activeUser?.id;
-  if (!allowed || kpiAvailableUserId !== requestedUserId) {
-    setVisible("kpiPopupFallback", false);
-    return;
-  }
-  const popup = window.open("about:blank", "_blank");
-  if (!popup) {
-    setVisible("kpiPopupFallback", true);
-    return;
-  }
-  popup.opener = null;
-  try {
-    const url = await resolveKpiDashboardUrl(supabase);
-    if (!url || activeUser?.id !== requestedUserId || activeProfile?.status !== "active") {
-      popup.close();
-      setVisible("kpiPopupFallback", false);
-      notify("No se pudo autorizar el acceso al KPI.", "error");
-      return;
-    }
-    popup.location.replace(url);
-    setVisible("kpiPopupFallback", false);
-  } catch {
-    popup.close();
-    setVisible("kpiPopupFallback", false);
-    notify("No se pudo autorizar el acceso al KPI.", "error");
-  }
-}
-
-async function refreshKpiAvailability(userId) {
-  const requestId = ++kpiAvailabilityRequest;
-  kpiAvailableUserId = null;
-  updateToolVisibility();
-  if (!userId || activeUser?.id !== userId || activeProfile?.role !== "technician"
-      || activeProfile?.status !== "active" || !activeProfile?.activation_verified_at
-      || activeProfile?.must_change_password) return;
-  try {
-    const available = await checkKpiAvailability(supabase);
-    if (requestId !== kpiAvailabilityRequest || activeUser?.id !== userId) return;
-    kpiAvailableUserId = available ? userId : null;
-  } catch {
-    if (requestId !== kpiAvailabilityRequest || activeUser?.id !== userId) return;
-    kpiAvailableUserId = null;
-  }
-  updateToolVisibility();
 }
 
 async function selectTool(tool, { push = true } = {}) {
@@ -455,8 +400,6 @@ async function routeSession({ preserveWorkspace = false } = {}) {
   }
   $("cancelAppointmentDialog").close();
   document.body.style.visibility = "";
-  kpiAvailabilityRequest += 1;
-  kpiAvailableUserId = null;
   const routeStartedAt = performance.now();
   if (activeLoginAttempt?.sessionInstallStartedAt && activeLoginAttempt.sessionInstallMs == null) {
     activeLoginAttempt.sessionInstallMs = routeStartedAt - activeLoginAttempt.sessionInstallStartedAt;
@@ -577,7 +520,7 @@ async function routeSession({ preserveWorkspace = false } = {}) {
     setVisible("signOut", true);
     return;
   }
-  void refreshKpiAvailability(activeUser.id);
+  updateToolVisibility();
   diagnostic.permissionValidationMs = performance.now() - permissionValidationStartedAt;
   diagnostic.profileAuthorizationMs = performance.now() - profileCheckStartedAt;
   const resumeLoadedWorkspace = preserveWorkspace
@@ -2111,6 +2054,8 @@ const myRoutes = mountMyRoutes({
   getDate: () => appointmentDate,
   confirmAction: message => window.confirm(message),
   preferencesStore: createRpcRouteLocations({ rpc: (...args) => supabase.rpc(...args), getActor: myRoutesActor }),
+  // CONFIRMAR_CITAS-031: cálculo de hoy y mañana guardado por técnico (sin la migración, no hace nada).
+  savedDays: createRpcRouteDays({ rpc: (...args) => supabase.rpc(...args), getActor: myRoutesActor }),
   // CONFIRMAR_CITAS-022: el domicilio guardado se usa siempre (ya no hay casilla «Usar mi domicilio»).
   async loadActivities(date) {
     const args = { p_work_date: date };
@@ -2215,8 +2160,6 @@ function bindEvents() {
   $("issuesClose").addEventListener("click", () => queueMicrotask(updateToolVisibility));
   $("confirmarToolTab").addEventListener("click", () => { void selectTool("confirmar"); });
   $("wifiToolTab").addEventListener("click", () => { void selectTool("wifi"); });
-  $("kpiToolTab").addEventListener("click", openKpiDashboard);
-  $("kpiFallbackOpen").addEventListener("click", openKpiDashboard);
   window.addEventListener("popstate", (event) => {
     queueMicrotask(() => {
       if (toolOverlayOpen()) { updateToolVisibility(); return; }
@@ -2455,8 +2398,6 @@ async function start() {
         if (activeUser?.id) masterNavigation.clear(activeUser.id);
         activeUser = null;
         activeProfile = null;
-        kpiAvailableUserId = null;
-        kpiAvailabilityRequest += 1;
         initializedWorkspaceUserId = null;
         initializedWorkspaceRole = null;
         masterSelectedTechnicianId = "";

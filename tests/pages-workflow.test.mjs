@@ -49,7 +49,9 @@ test("excluye supabase/, tests/, wifi-connect/tests/, .github/ y archivos de git
 
 test("incluye todo lo que hoy publica main, salvo supabase/, tests/ y wifi-connect/tests/", () => {
   const main = git("ls-tree", "-r", "--name-only", "main");
-  const missing = main.filter(file => !isForbidden(file) && !notWeb.has(file) && !published.has(file));
+  // CONFIRMAR_CITAS-031: retirado a propósito por decisión del Director.
+  const retired = new Set(["kpi-access.mjs"]);
+  const missing = main.filter(file => !isForbidden(file) && !notWeb.has(file) && !retired.has(file) && !published.has(file));
   assert.deepEqual(missing, []);
 });
 
