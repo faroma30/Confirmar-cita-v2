@@ -1,6 +1,6 @@
-import {isSsidFieldLabel} from './router-parser.js?v=3wl1';
-import {isRouterAccessLabel,isLabelText} from './label-rules.js?v=3wl1';
-import {needsCharacterConfirmation} from './password-check.js?v=3wl1';
+import {isSsidFieldLabel} from './router-parser.js?v=3wl2';
+import {isRouterAccessLabel,isLabelText} from './label-rules.js?v=3wl2';
+import {needsCharacterConfirmation} from './password-check.js?v=3wl2';
 
 /** Select the smallest safe next step for the production scan UX. */
 const passwordOrigin=/\b(?:password|passvvord|contrase[nñ]a|contrasenya|clau|clave|wlan\s*k(?:ey|ev|cy)?|wi[\s-]?fi\s*(?:key|password)|wireless\s*(?:key|password)|network\s*(?:key|password)|admin|administrator|router|login|access|wps|serial|s\/?n|mac|bssid|imei|model|gateway|barcode|bar\s+code|pin)\b/iu;

@@ -1,5 +1,5 @@
-import { decodeWifiQrPayloadsFromImageCore } from './wifi-qr-core.js?v=3wl1';
-export { parseWifiQrPayload } from './wifi-qr-core.js?v=3wl1';
+import { decodeWifiQrPayloadsFromImageCore } from './wifi-qr-core.js?v=3wl2';
+export { parseWifiQrPayload } from './wifi-qr-core.js?v=3wl2';
 
 export const QR_STAGE_TIMEOUT_MS = 15000;
 const QR_WORKER_STAGES = new Set(['image-decode', 'barcode-detect', 'barcode-complete', 'jsqr-full-frame', 'jsqr-region']);
@@ -17,7 +17,7 @@ function abortError() {
 export async function decodeWifiQrPayloadsFromImage(blob, {
   signal,
   timeoutMs = QR_STAGE_TIMEOUT_MS,
-  workerFactory = () => new Worker(new URL('./wifi-qr-worker.js?v=3wl1', import.meta.url), { type: 'module' }),
+  workerFactory = () => new Worker(new URL('./wifi-qr-worker.js?v=3wl2', import.meta.url), { type: 'module' }),
   // Dependency injection keeps deterministic parser/pixel tests on the same
   // decoder implementation without requiring browser workers in Node.
   barcodeDetector,

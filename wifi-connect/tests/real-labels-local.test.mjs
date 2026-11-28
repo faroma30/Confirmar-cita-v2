@@ -14,7 +14,8 @@ const available=files.length>0&&files.every(file=>existsSync(file));
 test('fotos reales locales: nombre de red y clave coinciden con lo esperado',{skip:available?false:'sin carpeta local de fotos de prueba'},()=>{
   const [expected,result]=files.map(file=>JSON.parse(readFileSync(file,'utf8')));
   const wrong=[];
-  for(const [photo,values] of Object.entries(expected))for(const field of ['ssid_2_4','ssid_5','clave_wifi']){
+  for(const [photo,values] of Object.entries(expected))for(const field of ['ssid','ssid_2_4','ssid_5','clave_wifi']){
+    if(!values[field])continue;
     const ok=result[photo]?.[field]===values[field];
     console.log(`${photo} · ${field}: ${ok?'OK':'MAL'}`);if(!ok)wrong.push(`${photo} · ${field}`);
   }

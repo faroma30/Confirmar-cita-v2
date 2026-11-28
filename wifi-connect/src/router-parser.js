@@ -1,7 +1,7 @@
 import {detectOperator} from './operator-detector.js';
 import {getOperatorProfile} from './operator-profiles/index.js';
-import {canonicalLabel,EXTRA_SSID_LABELS,EXTRA_PASSWORD_LABELS,isRouterAccessLabel,isLabelText,isNoiseValue,withoutTrailingNoise,firstTokenBeforeNoise,weakValueReason,labelBand} from './label-rules.js?v=3wl1';
-import {applyPasswordFormat} from './password-check.js?v=3wl1';
+import {canonicalLabel,EXTRA_SSID_LABELS,EXTRA_PASSWORD_LABELS,isRouterAccessLabel,isLabelText,isNoiseValue,withoutTrailingNoise,firstTokenBeforeNoise,weakValueReason,labelBand} from './label-rules.js?v=3wl2';
+import {applyPasswordFormat} from './password-check.js?v=3wl2';
 
 const SSID_LABELS = [
   [/^(?:ssid|ss[i1l]d)(?:\s*(?:[12]|[il])|\s+(?:2[.,]?4\s*(?:ghz|g)?|5\s*(?:ghz|g)?))?$/, 100, 'Etiqueta SSID'],
@@ -62,6 +62,12 @@ function splitLabel(line) {
   if(protectedValue)return {label:protectedValue[1].trim(),value:protectedValue[2].trim()};
   const match = line.match(/^\s*(.{1,64}?)\s*[:=：＝]\s*(.*?)\s*$/);
   if (!match) {
+    // «SSID2- valor»: los dos puntos leídos como guion; solo tras SSID1/SSID2 y con espacio detrás.
+    const dashed=String(line||'').match(/^\s*(ss[i1l]d\s*[12])\s*[-–—]\s+(\S.*?)\s*$/i);
+    if(dashed)return {label:dashed[1],value:dashed[2]};
+    // El OCR lee a veces «;» por «:»; solo si lo anterior es una etiqueta conocida.
+    const semicolon=String(line||'').match(/^\s*(.{1,40}?)\s*;\s*(.+?)\s*$/);
+    if(semicolon&&(findLabel(semicolon[1],SSID_LABELS)||findLabel(semicolon[1],PASSWORD_LABELS)))return {label:semicolon[1].trim(),value:semicolon[2].trim()};
     const text=String(line||'').trim();
     const protectedLabel=label=>isAdminContext(label,[],0)||isWpsFieldLabel(label)||isIdentifierContext(label);
     if(findLabel(text,SSID_LABELS)||findLabel(text,PASSWORD_LABELS)||protectedLabel(text))return {label:text,value:''};
@@ -199,6 +205,9 @@ function addCandidate(list, value, score, reason, sourceLine, kind, sourceLabel 
   const trimmed=besideCode?firstTokenBeforeNoise(candidateValue)||withoutTrailingNoise(candidateValue):'';
   if(besideCode&&!trimmed&&/\s/.test(candidateValue)){candidate.score=Math.min(candidate.score,55);candidate.confidence=candidate.score/100;candidate.needsReview=true;}
   if(trimmed&&!isLabelText(trimmed))Object.assign(candidate,{proposedValue:trimmed,proposedFrom:candidateValue,corrected:true,correctionType:'trailing-noise',needsReview:true});
+  // Sin etiqueta propia, un signo suelto delante («-MiRed») suele ser un borde de la pegatina: propuesta a confirmar.
+  const unframed=!fromQr&&kind==='ssid'&&/^Proximidad/.test(sourceLabel)?candidateValue.replace(/^[^\p{L}\p{N}]+/u,''):candidateValue;
+  if(unframed&&unframed!==candidateValue)Object.assign(candidate,{proposedValue:unframed,proposedFrom:candidateValue,corrected:true,correctionType:'leading-noise',needsReview:true});
   if(!fromQr&&kind==='ssid'){const band=labelBand(sourceLabel);if(band&&!bandToken(candidateValue))candidate.band=band;}
   if (old) {
     if (candidate.score > old.score) Object.assign(old, candidate);
@@ -274,7 +283,8 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     const split=splitLabel(line);
     const { label, value } = embeddedKey||split;
     const normalizedLabel = normalizeLabel(label);
-    const ssidLabel = findLabel(label, SSID_LABELS);
+    let ssidLabel = findLabel(label, SSID_LABELS);
+    if(normalizedLabel==='network'&&!(hasWifiContext&&/^\s*net\s*w[o0]rk\s*[:;=：＝]/i.test(line)))ssidLabel=undefined;
     let passwordLabel = findLabel(label, PASSWORD_LABELS);
     // “Key” alone is ambiguous. Accept it as a credential label only when
     // the same label includes explicit Wi-Fi context; the normalized label is
@@ -318,7 +328,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     // explicit Wi-Fi password field; keep it review-only because proximity is
     // structural evidence, not confirmation. Generic plausible strings are not
     // classified as SSIDs.
-    if (!ssidLabel && !passwordLabel && !value && !passwordValueLines.has(index) && !ssidValueLines.has(index) && !ssidCandidates.some(candidate=>candidate.value===line) && /^[\p{L}\p{N}][\p{L}\p{N}_ .-]{2,63}$/u.test(line) && !stopLine(line) && !/\b(?:router|model|gateway|internet|security|encryption|wifi|wi-fi|wlan|ssid|password|serial|mac|pin|contrasenya|clave|contraseña|clau)\b/i.test(line)) {
+    if (!ssidLabel && !passwordLabel && !value && !passwordValueLines.has(index) && !ssidValueLines.has(index) && !ssidCandidates.some(candidate=>candidate.value===line) && /^[-–—.'"|~]?[\p{L}\p{N}][\p{L}\p{N}_ .-]{2,63}$/u.test(line) && !stopLine(line) && !/\b(?:router|model|gateway|internet|security|encryption|wifi|wi-fi|wlan|ssid|password|serial|mac|pin|contrasenya|clave|contraseña|clau)\b/i.test(line)) {
       const nextLine=lines[index+1];
       const nextField=nextLine?splitLabel(nextLine):{label:'',value:''};
       const adjacentWifiPassword=Boolean(nextLine&&findLabel(nextField.label,PASSWORD_LABELS)&&/Wi-Fi|catalana|WPA/i.test(findLabel(nextField.label,PASSWORD_LABELS)?.[2]||''));

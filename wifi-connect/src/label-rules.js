@@ -38,7 +38,11 @@ export const EXTRA_SSID_LABELS=[
   [new RegExp(`^(?:${WIFI}|wireless)\\s+(?:network(?:\\s+(?:name|ssid))?|name|ssid)$`),92,'Etiqueta de nombre de red'],
   [/^network\s+(?:name|ssid)(?:\s+ssid)?$/,90,'Etiqueta de nombre de red'],
   [/^(?:ssid\s+name|nombre\s+(?:del?\s+)?ssid)$/,96,'Etiqueta SSID'],
-  [new RegExp(`^(?:${WIFI}|wireless)\\s*(?:network\\s*)?name$`),90,'Etiqueta de nombre de red']
+  [new RegExp(`^(?:${WIFI}|wireless)\\s*(?:network\\s*)?name$`),90,'Etiqueta de nombre de red'],
+  // «Network:» a secas (Genexis y otros): el lector solo la admite con dos puntos y junto a una etiqueta Wi-Fi.
+  [/^network$/,90,'Etiqueta de nombre de red'],
+  // «2.4G SSID» / «5G SSID» (TP-Link y otros); el OCR suele leer la «G» como «6».
+  [/^(?:2\s*[.,]?\s*4|5)\s*(?:ghz|g|6)?\s*ss[i1l]d$/,100,'Etiqueta SSID con banda']
 ];
 export const EXTRA_PASSWORD_LABELS=[
   [new RegExp(`^(?:contrasena|clave)${THE}\\s+(?:red|redes)\\s+(?:de\\s+)?(?:${WIFI}|inalambrica)$`),100,'Etiqueta de contraseña Wi-Fi'],
@@ -53,7 +57,9 @@ export const EXTRA_PASSWORD_LABELS=[
 
 const ADMIN_LABEL=/^(?:(?:contrasena|clave|password|contrasenya|clau)(?:\s+(?:de|del|d'|para|per))?(?:\s+(?:la|el|l'))?\s*(?:(?:acceso|acces)(?:\s+(?:al|a|a la|a el|del|de la|de))?\s+)?(?:router|modem|equipo|web|administracion|administracio|administrador|admin|gestion|configuracion|login)(?:\s+(?:del?\s+)?(?:router|equipo|web|modem))?|(?:admin|administrator|router|web|login|device|access)(?:\s+(?:access|login|admin))?\s+(?:password|pass|key|passphrase))$/;
 /** «Contraseña acceso router», «Admin password»… son del panel del router: nunca son la clave Wi-Fi. */
-export const isRouterAccessLabel=label=>ADMIN_LABEL.test(canonicalLabel(label));
+// «user/pwd», «Username / Password» (el OCR suele leer la barra como «i» o «l»): acceso al panel, no la Wi-Fi.
+const ACCOUNT_LABEL=/^(?:user(?:name)?|usuario)\s*(?:[\/|\\]|i|l|y|and)\s*(?:pwd|pass(?:word)?|contrasena|clave)$/;
+export const isRouterAccessLabel=label=>ADMIN_LABEL.test(canonicalLabel(label))||ACCOUNT_LABEL.test(plain(label).replace(/\s*[:=;]\s*$/,'').trim());
 
 const LABEL_WORDS=new Set(['wifi','wlan','red','redes','de','del','la','las','el','nombre','contrasena','clave','seguridad','password','passphrase','passkey','key','ssid','network','name','wireless','pin','xarxa','nom','clau','contrasenya','seguretat','acceso','router','inalambrica','ghz']);
 const FILLER=/^(?:2|4|5|24|[25]g|g|hz|y)$/;
@@ -78,6 +84,7 @@ export function weakValueReason(value,kind){
 export function labelBand(label){
   let text=plain(label);
   for(const [pattern,word] of OCR_WORDS)text=text.replace(pattern,word);
+  text=text.replace(/(?<![a-z0-9])(2\s*[.,]?\s*4|5)\s*6(?=\s*ss[i1l]d)/g,'$1g');
   const two=/(?<![a-z0-9])2\s*[.,]?\s*4\s*g(?:hz)?(?![a-z0-9])/.test(text),five=/(?<![a-z0-9])5\s*g(?:hz)?(?![a-z0-9])/.test(text);
   return two===five?'':two?'2.4 GHz':'5 GHz';
 }

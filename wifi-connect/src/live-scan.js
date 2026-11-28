@@ -4,11 +4,11 @@
  * memoria: aquí no se guarda ni se envía nada. El disparador manual no depende de este módulo.
  */
 import jsQR from '../vendor/jsQR.js';
-import {parseWifiQrPayload} from './wifi-qr-core.js?v=3wl1';
-import {findQrPresence} from './qr-presence.js?v=3wl1';
-import {parseRouterLabel} from './router-parser.js?v=3wl1';
-import {isSafeSsidCandidate,isSafePasswordCandidate} from './scan-flow.js?v=3wl1';
-import {isLabelText} from './label-rules.js?v=3wl1';
+import {parseWifiQrPayload} from './wifi-qr-core.js?v=3wl2';
+import {findQrPresence} from './qr-presence.js?v=3wl2';
+import {parseRouterLabel} from './router-parser.js?v=3wl2';
+import {isSafeSsidCandidate,isSafePasswordCandidate} from './scan-flow.js?v=3wl2';
+import {isLabelText} from './label-rules.js?v=3wl2';
 
 export const LIVE_TIMING=Object.freeze({qrIntervalMs:220,slowQrIntervalMs:500,firstTextDelayMs:2500,textIntervalMs:1500,helpAfterMs:20000,textLimitMs:60000});
 export const LIVE_MESSAGES=Object.freeze({

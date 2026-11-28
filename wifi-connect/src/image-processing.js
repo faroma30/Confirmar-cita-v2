@@ -39,6 +39,25 @@ export async function rotateImageBlob(blob,degrees,{signal,maxDimension=MAX_OCR_
   const rotated=await canvasToBlob(canvas,'image/jpeg',0.95);throwIfAborted(signal);return rotated;
  }finally{if(decoded?.close)try{decoded.image.close();}catch{}if(canvas){canvas.width=0;canvas.height=0;}}
 }
+/** Recorte ampliado (región en fracciones de la foto ya orientada), en memoria; para etiquetas pequeñas. */
+export const ZOOM_TARGET_DIMENSION=2000;
+export async function zoomImageBlob(blob,region,{signal,targetDimension=ZOOM_TARGET_DIMENSION,maxScale=4,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas')}={}){
+ if(!region||![region.x,region.y,region.width,region.height].every(Number.isFinite)||region.width<=0||region.height<=0)throw new RangeError('Región no válida.');
+ let decoded,canvas;
+ try{
+  decoded=await decodeBlob(blob,urlApi,signal);
+  const sourceWidth=decoded.image.width||decoded.image.naturalWidth,sourceHeight=decoded.image.height||decoded.image.naturalHeight;
+  if(!sourceWidth||!sourceHeight)throw new Error('No se pudieron leer las dimensiones de la fotografía.');
+  const left=Math.max(0,Math.floor(region.x*sourceWidth)),top=Math.max(0,Math.floor(region.y*sourceHeight));
+  const cropWidth=Math.max(1,Math.min(sourceWidth-left,Math.round(region.width*sourceWidth))),cropHeight=Math.max(1,Math.min(sourceHeight-top,Math.round(region.height*sourceHeight)));
+  const scale=Math.min(maxScale,targetDimension/Math.max(cropWidth,cropHeight));
+  canvas=canvasFactory();canvas.width=Math.max(1,Math.round(cropWidth*scale));canvas.height=Math.max(1,Math.round(cropHeight*scale));
+  const context=canvas.getContext('2d',{alpha:false});if(!context)throw new Error('No se pudo ampliar la fotografía en este dispositivo.');
+  context.imageSmoothingEnabled=true;context.imageSmoothingQuality='high';
+  context.drawImage(decoded.image,left,top,cropWidth,cropHeight,0,0,canvas.width,canvas.height);
+  const enlarged=await canvasToBlob(canvas,'image/jpeg',0.95);throwIfAborted(signal);return enlarged;
+ }finally{if(decoded?.close)try{decoded.image.close();}catch{}if(canvas){canvas.width=0;canvas.height=0;}}
+}
 export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMENSION,previewMaxDimension=PREVIEW_MAX_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas'),onStage=()=>{},onDiagnostic=()=>{},variant='color',region=null,includePreview=variant==='color'}={}){
  if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/'))throw new TypeError('Se necesita una fotografía válida para analizar.');
  if(!blob.size)throw new TypeError('La fotografía está vacía.');
