@@ -169,7 +169,7 @@ test("C2: «Desplazamiento Alianzas» sale «Sin desplazamiento», no cuenta y l
   assert.doesNotMatch(shown, /Falta el destino|sin destino|Completar dirección|jornada no empieza/);
   assert.match(shown, /Sal de casa a las 08:40/);
   assert.match(shown, /4 de 6 desplazamientos calculados/);
-  assert.match(phone.travel("Regreso a casa"), /min · 12 km desde Tourline Alianzas \(16:30\)/);
+  assert.match(phone.travel("Regreso a casa"), /10 min · 12 km · Llegas a casa hacia las 18:10$/);
   assert.match(phone.travel("16:30 · Tourline Alianzas"), /10 min · 12 km/);
 });
 

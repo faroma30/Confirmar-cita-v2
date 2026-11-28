@@ -165,6 +165,17 @@ export function arrivalAfter(time, durationSeconds) {
   return formatClock(Math.ceil(start + durationSeconds / 60));
 }
 
+// CONFIRMAR_CITAS-035: hora de vuelta a casa = fin de la última actividad del día (aunque no tenga dirección
+// ni desplazamiento) más los minutos del regreso. Si la última actividad no tiene fin conocido, o el regreso
+// no está calculado, no hay hora (no se inventa). Con solapes cuenta el fin más tardío.
+export function homeArrival(activities, estimate) {
+  const last = activities?.at(-1);
+  if (!last?.endTime || !Number.isFinite(estimate?.durationSeconds)) return null;
+  const end = activities.reduce((latest, item) =>
+    (clockMinutes(item.endTime ?? "") ?? -1) > clockMinutes(latest) ? item.endTime : latest, last.endTime);
+  return arrivalAfter(end, estimate.durationSeconds);
+}
+
 // Tiempo entre actividades (CONFIRMAR_CITAS-006). Solo usa las horas de la agenda; funciona sin Geoapify.
 export function freeTimeBetween(previous, next) {
   const start = clockMinutes(next?.time ?? "");

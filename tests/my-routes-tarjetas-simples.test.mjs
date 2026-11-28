@@ -82,7 +82,7 @@ test("cada tarjeta: hora y actividad, dirección y desplazamiento, en ese orden;
   assert.deepEqual(b.slice(0, 3), ["11:00 · Instalación", "Calle Inventada 99, Vilafictícia", "No encuentro la calle"]);
   assert.deepEqual(c.slice(0, 3), ["13:00 · Instalación", "Calle Tres 3, Vilafictícia", "No encuentro la otra dirección"]);
   assert.deepEqual(comidaCard.slice(0, 2), ["14:00 · Comida", "Sin desplazamiento"]);
-  assert.deepEqual(d.slice(0, 3), ["15:00 · Instalación", "Calle Cuatro 4, Vilafictícia", "🚗 8 min · 5,3 km desde Instalación (13:00)"]);
+  assert.deepEqual(d.slice(0, 3), ["15:00 · Instalación", "Calle Cuatro 4, Vilafictícia", "🚗 8 min · 5,3 km desde la cita anterior"]);
   assert.deepEqual(e.slice(0, 3), ["17:00 · Instalación", "Sin dirección", "Falta la dirección"]);
   assert.deepEqual(back.slice(0, 2), ["Regreso a casa", "Falta la dirección de la otra actividad"]);
   const shown = visible(get("List")).join("\n");

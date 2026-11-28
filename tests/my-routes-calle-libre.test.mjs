@@ -341,7 +341,7 @@ test("la calle que no existe no bloquea el resto de la ruta", async () => {
   await p.submit(form);
   const shown = texts(p.get("List")).join("\n");
   assert.match(shown, /No encuentro esa calle en este pueblo/);
-  assert.match(shown, /🚗 30 min · 12 km desde Instalación/, "el tramo entre las otras dos se calcula");
+  assert.match(shown, /🚗 30 min · 12 km desde la cita anterior/, "el tramo entre las otras dos se calcula");
 });
 
 test("campos vacíos o no válidos: aviso y no se envía nada", async () => {

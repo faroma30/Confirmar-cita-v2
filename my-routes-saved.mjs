@@ -94,6 +94,31 @@ export function pendingRecord(record) {
   return record.dt ? record.dt === "pilot_limit" : !KEPT_REASONS.has(record.r);
 }
 
+// CONFIRMAR_CITAS-035: un intento automático por día (de calendario), fecha de ruta y versión de la agenda,
+// recordado en este dispositivo. Solo se guarda una huella SHA-256: ninguna dirección.
+export const agendaVersion = signatures => digest(signatures.map(signature => signature.a));
+export function createAutoAttempts(storage = null) {
+  const memory = new Map();
+  const name = actorId => "myRoutes.auto." + actorId;
+  function read(actorId, today) {
+    let saved = memory.get(actorId);
+    if (!saved) {
+      try { saved = JSON.parse(storage?.getItem(name(actorId)) ?? "null"); } catch { saved = null; }
+    }
+    return saved?.day === today && Array.isArray(saved.tried) ? saved.tried : [];
+  }
+  function write(actorId, today, tried) {
+    const value = { day: today, tried: tried.slice(-40) };
+    memory.set(actorId, value);
+    try { storage?.setItem(name(actorId), JSON.stringify(value)); } catch { /* Sin almacenamiento: solo en memoria. */ }
+  }
+  return {
+    has: (actorId, today, key) => read(actorId, today).includes(key),
+    add(actorId, today, key) { write(actorId, today, [...read(actorId, today).filter(item => item !== key), key]); },
+    remove(actorId, today, key) { write(actorId, today, read(actorId, today).filter(item => item !== key)); },
+  };
+}
+
 // Solo los campos que admite la base, con su formato; null si el registro no es válido.
 export function persistableRecord(record) {
   if (!record || !HEX.test(record.a) || !HEX.test(record.s) || !Number.isFinite(Date.parse(record.t))) return null;
