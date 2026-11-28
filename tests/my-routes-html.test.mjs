@@ -21,7 +21,7 @@ test("los controles del piloto tienen el motivo junto a «Calcular desplazamient
 test("la marca de build es la misma en APP_BUILD, la meta, los ?v= y los módulos de rutas", async () => {
   const [html, app, ui] = await Promise.all([read("index.html"), read("app.js"), read("my-routes-ui.mjs")]);
   const build = /const APP_BUILD = "([a-z0-9]+)";/.exec(app)[1];
-  assert.equal(build, "3routes28");
+  assert.equal(build, "3routes29");
   assert.equal(/<meta name="app-build" content="([^"]+)">/.exec(html)[1], build);
   for (const source of [html, app, ui]) {
     // wifi-connect tiene su propia marca (p. ej. 3co2) y no se cambia con el build de la PWA.
@@ -29,7 +29,7 @@ test("la marca de build es la misma en APP_BUILD, la meta, los ?v= y los módulo
     assert.ok(marks.length > 0);
     assert.deepEqual([...new Set(marks)], [build]);
   }
-  assert.match(html, /<script type="module" src="\.\/app\.js\?v=3routes28"><\/script>/);
-  assert.match(ui, /from "\.\/my-routes-pilot\.mjs\?v=3routes28"/);
+  assert.match(html, /<script type="module" src="\.\/app\.js\?v=3routes29"><\/script>/);
+  assert.match(ui, /from "\.\/my-routes-pilot\.mjs\?v=3routes29"/);
   assert.match(app, /confirmAction: message => window\.confirm\(message\)/);
 });

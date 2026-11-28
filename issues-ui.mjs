@@ -15,6 +15,12 @@ const STATUSES = Object.freeze({
   pending: "Pendiente", reviewing: "En revisión", resolved: "Resuelto",
 });
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// Contador del Administrador: sondeo con la app visible y avisos fijos, sin ningún dato del reporte.
+const PENDING_POLL_MS = 90_000;
+const NEW_REPORT_NOTICES = Object.freeze([
+  ["wifi", "Nuevo reporte de Wifi Connect"], ["cc", "Nuevo reporte de Confirmar Citas"],
+]);
+const nothingSeen = () => ({ wifi: 0, cc: 0 });
 const MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export function canUseIssueCenter(profile) {
@@ -58,7 +64,10 @@ function fileAsBase64(file) {
   });
 }
 
-export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify, appVersion }) {
+export function createIssuesUI({
+  $, getSupabase, getProfile, navigation, notify, appVersion,
+  window: view = globalThis.window, document: page = globalThis.document,
+}) {
   let mineOffset = 0;
   let adminOffset = 0;
   let mode = "mine";
@@ -68,6 +77,13 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
   let wifiDiagnostics = null;
   let currentDetail = null;
   let generation = 0;
+  let pending = null;          // {all, wifi} pendientes, según la última lectura válida
+  let seen = nothingSeen();    // último valor visto en esta sesión, por categoría
+  let pendingEpoch = 0;        // cambia cuando una lectura en curso deja de valer
+  let pendingRequest = null;
+  let pendingAgain = false;
+  let pollTimer = null;
+  let reportToast = null;
   const PAGE = 20;
   const active = () => canUseIssueCenter(getProfile());
   const admin = () => active() && getProfile().role === "admin";
@@ -78,10 +94,121 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
   });
   const adminWifiOcrSource = createAdminWifiOcrSource({ rpc, getProfile });
 
-  const badge = (id, count) => {
+  const badge = (id, count, max = Infinity) => {
     const node = $(id);
-    node.textContent = count > 0 ? String(count) : "";
+    node.textContent = count > max ? `${max}+` : count > 0 ? String(count) : "";
     show(id, count > 0);
+  };
+  const labelHeader = (inbox) => {
+    $("reportError").setAttribute("aria-label", inbox ? "Abrir el buzón de reportes" : "Reportar error");
+    $("reportError").setAttribute("title", inbox ? "Buzón de reportes" : "Reportar error");
+    $("reportUnreadBadge").setAttribute("aria-label", inbox ? "Reportes pendientes" : "Respuestas nuevas");
+  };
+  // El botón ⚠ cuenta todos los pendientes; la pestaña, solo Wifi Connect si ese es el filtro.
+  const renderPending = () => {
+    if (!pending) return;
+    badge("reportUnreadBadge", pending.all, 99);
+    badge("adminPendingBadge", $("issueCategoryFilter").value === "wifi_ocr" ? pending.wifi : pending.all);
+  };
+  const closeReportToast = () => { reportToast?.node.remove(); reportToast = null; };
+  const showReportToast = (keys) => {
+    const shown = new Set(keys);
+    closeReportToast();
+    if (!shown.size) return;
+    const node = page.createElement("div");
+    node.id = "reportToast"; node.className = "undo-toast";
+    node.setAttribute("role", "status");
+    const text = page.createElement("div");
+    for (const [key, message] of NEW_REPORT_NOTICES) {
+      if (!shown.has(key)) continue;
+      const line = page.createElement("div");
+      line.textContent = message;
+      text.append(line);
+    }
+    const close = page.createElement("button");
+    close.type = "button"; close.className = "button"; close.textContent = "Cerrar";
+    close.addEventListener("click", closeReportToast);
+    node.append(text, close);
+    page.body.append(node);
+    reportToast = { node, keys: shown };
+  };
+
+  // Las dos consultas del buzón, de una sola fila: de la respuesta solo se usa el contador.
+  async function readPending() {
+    const filters = { p_status: null, p_search: null, p_limit: 1, p_offset: 0 };
+    try {
+      const results = await Promise.all([
+        rpc("cc_admin_issue_reports", { ...filters, p_category: null }),
+        rpc("cc_admin_wifi_ocr_reports", filters),
+      ]);
+      const [all, wifi] = results.map(({ data, error }) => (error ? NaN : Number(data?.pending_count ?? NaN)));
+      return Number.isFinite(all) && Number.isFinite(wifi) ? { all, wifi } : null;
+    } catch { return null; }
+  }
+  async function updatePending() {
+    const token = generation;
+    const epoch = pendingEpoch;
+    const current = () => token === generation && epoch === pendingEpoch && admin();
+    const split = (counts) => ({ wifi: counts.wifi, cc: Math.max(0, counts.all - counts.wifi) });
+    let counts = await readPending();
+    if (!counts || !current()) return;
+    const first = split(counts);
+    if (first.wifi !== seen.wifi || first.cc !== seen.cc) {
+      // Un reporte puede entrar entre las dos consultas: un cambio se confirma con una segunda lectura.
+      counts = await readPending();
+      if (!counts || !current()) return;
+    }
+    const next = split(counts);
+    const risen = NEW_REPORT_NOTICES.map(([key]) => key).filter((key) => next[key] > seen[key]);
+    pending = counts;
+    seen = next;
+    renderPending();
+    // El aviso abierto solo se vuelve a pintar si entra algo o si una categoría se queda sin pendientes.
+    const open = [...(reportToast?.keys ?? [])];
+    const kept = open.filter((key) => next[key] > 0);
+    if (risen.length || kept.length !== open.length) showReportToast([...kept, ...risen]);
+  }
+  // Una sola lectura a la vez; `force` pide otra al terminar si ya había una en curso.
+  function refreshPending({ force = false } = {}) {
+    if (!admin()) return Promise.resolve();
+    if (pendingRequest) {
+      if (force) pendingAgain = true;
+      return pendingRequest;
+    }
+    let request = null;
+    request = (async () => {
+      do { pendingAgain = false; await updatePending(); } while (pendingAgain && pendingRequest === request);
+    })().finally(() => { if (pendingRequest === request) pendingRequest = null; });
+    pendingRequest = request;
+    return request;
+  }
+  const stopPolling = () => {
+    if (pollTimer !== null) view.clearInterval(pollTimer);
+    pollTimer = null;
+  };
+  const clearPending = () => {
+    stopPolling();
+    closeReportToast();
+    pending = null; seen = nothingSeen(); pendingEpoch += 1; pendingRequest = null; pendingAgain = false;
+    labelHeader(false);
+  };
+  // Solo con la app visible y una sesión de Administrador activa.
+  async function watchPending() {
+    if (!admin()) {
+      if (pollTimer !== null || pending || reportToast) {
+        clearPending();
+        badge("reportUnreadBadge", 0); badge("adminPendingBadge", 0);
+      }
+      return;
+    }
+    labelHeader(true);
+    if (page.visibilityState !== "visible") { stopPolling(); return; }
+    pollTimer ??= view.setInterval(() => { void watchPending(); }, PENDING_POLL_MS);
+    await refreshPending();
+  }
+  const openAdminInbox = () => {
+    closeReportToast();
+    setMode("admin"); navigation.open(); void loadAdmin(); void refreshPending({ force: true });
   };
   const resetPreview = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -172,7 +299,6 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
     setText($("issueAdminPage"), `${total ? adminOffset + 1 : 0}–${Math.min(adminOffset + data.items.length, total)} de ${total}`);
     $("issueAdminPrev").disabled = adminOffset === 0;
     $("issueAdminNext").disabled = adminOffset + data.items.length >= total;
-    badge("adminPendingBadge", Number(data.pending_count) || 0);
   }
   async function loadDetail(id) {
     if (!active()) return;
@@ -226,12 +352,12 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
     }
   }
   async function refreshIndicator() {
-    if (!active()) return;
-    if (admin()) await loadAdmin();
-    else await loadMine();
+    await watchPending();
+    if (active() && !admin()) await loadMine();
   }
   function reset() {
     generation += 1;
+    clearPending();
     requestId = null; currentDetail = null; mineOffset = 0; adminOffset = 0;
     prefilledPhoto = null; wifiDiagnostics = null;
     resetPreview();
@@ -244,8 +370,16 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
     navigation.abandon();
   }
   function bind() {
-    $("reportError").addEventListener("click", () => { if (active()) { setMode("mine"); navigation.open(); void loadMine(); } });
-    $("adminIssuesTab").addEventListener("click", () => { if (admin()) { setMode("admin"); navigation.open(); void loadAdmin(); } });
+    $("reportError").addEventListener("click", () => {
+      if (admin()) openAdminInbox();
+      else if (active()) { setMode("mine"); navigation.open(); void loadMine(); }
+    });
+    $("adminIssuesTab").addEventListener("click", () => { if (admin()) openAdminInbox(); });
+    page.addEventListener("visibilitychange", () => {
+      if (page.visibilityState === "visible") void watchPending();
+      else stopPolling();
+    });
+    view.addEventListener("focus", () => { void watchPending(); });
     $("issuesClose").addEventListener("click", navigation.close);
     $("issueDetailClose").addEventListener("click", () => {
       show("issueDetail", false); setMode(mode); void (mode === "admin" ? loadAdmin() : loadMine());
@@ -336,6 +470,7 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
       event.preventDefault();
       if (!admin() || !currentDetail) return;
       const status = $("issueNewStatus").value;
+      const { status: previous, category } = currentDetail;
       const reply = $("issueReply").value.trim();
       if (status === currentDetail.status && !reply) return;
       const button = $("issueAdminAction").querySelector("button[type=submit]");
@@ -347,12 +482,21 @@ export function createIssuesUI({ $, getSupabase, getProfile, navigation, notify,
       if (error) { notify("No se pudo guardar la respuesta o el estado.", "error"); return; }
       $("issueReply").value = "";
       notify("Reporte actualizado.", "success");
+      if (status !== previous) {
+        // El cambio hecho aquí no es un reporte nuevo: se ajusta lo visto antes de volver a contar.
+        const key = category === "wifi_ocr" ? "wifi" : "cc";
+        if (previous === "pending") seen[key] = Math.max(0, seen[key] - 1);
+        if (status === "pending") seen[key] += 1;
+        pendingEpoch += 1;
+      }
+      void refreshPending({ force: true });
       await loadDetail(currentDetail.id);
       void loadAdmin();
     });
     for (const id of ["issueStatusFilter", "issueCategoryFilter", "issueSearch"]) {
       $(id).addEventListener(id === "issueSearch" ? "input" : "change", () => {
         adminOffset = 0; void loadAdmin();
+        if (id === "issueCategoryFilter") { renderPending(); void refreshPending({ force: true }); }
       });
     }
     for (const [id, delta, isAdmin] of [
