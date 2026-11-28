@@ -1,4 +1,5 @@
 import jsQR from '../vendor/jsQR.js';
+import {findQrPresence} from './qr-presence.js?v=3wl1';
 
 const escapeField = value => String(value || '').replace(/\\(.)/gs, '$1');
 
@@ -219,7 +220,19 @@ export async function decodeWifiQrPayloadsFromImageCore(blob, {
       const primary = uniqueNetworks[0];
       return { status: 'wifi', source: nativeUsed && fallbackUsed ? 'BarcodeDetector+jsQR' : nativeUsed ? 'BarcodeDetector' : 'jsQR', networks: uniqueNetworks, ...primary, attempts };
     }
-    return { status: attempts.some(item => item.found) || detectorCodeCount ? 'ignored' : 'not-found', reason: detectorCodeCount || attempts.some(item => item.found) ? 'no-valid-wifi-qr' : undefined, source: nativeUsed && fallbackUsed ? 'BarcodeDetector+jsQR' : nativeUsed ? 'BarcodeDetector' : fallbackUsed ? 'jsQR' : undefined, networks: [], attempts };
+    const decodedOther = attempts.some(item => item.found) || detectorCodeCount > 0;
+    // Hay un código en la foto pero ningún motor lo lee: la app pide acercarse en vez de callar.
+    let unreadableQr = false;
+    if (!decodedOther && !signal?.aborted) {
+      try {
+        const scale = Math.min(1, 1600 / Math.max(width, height));
+        canvas = canvasFactory(); canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        unreadableQr = Boolean(findQrPresence(context.getImageData(0, 0, canvas.width, canvas.height)));
+      } catch { unreadableQr = false; }
+    }
+    return { status: decodedOther ? 'ignored' : 'not-found', reason: decodedOther ? 'no-valid-wifi-qr' : undefined, source: nativeUsed && fallbackUsed ? 'BarcodeDetector+jsQR' : nativeUsed ? 'BarcodeDetector' : fallbackUsed ? 'jsQR' : undefined, networks: [], attempts, ...(unreadableQr ? { unreadableQr } : {}) };
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
     const partialNetworks = dedupeNetworks(networks);

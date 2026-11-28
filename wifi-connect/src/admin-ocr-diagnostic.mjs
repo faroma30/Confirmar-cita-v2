@@ -1,4 +1,4 @@
-import { buildSafeSsidReport, compareSsidPasses, explicitCandidatesFromPass } from "./ssid-diagnostic-report.js?v=3ce1";
+import { buildSafeSsidReport, compareSsidPasses, explicitCandidatesFromPass } from "./ssid-diagnostic-report.js?v=3wl1";
 const PASS_IDS = new Set(["color", "grayscale-contrast", "ssid-focus-1", "ssid-focus-2"]);
 const STAGES = new Set(["file", "decode", "qr", "ocr_prepare", "worker", "ocr", "parser", "review"]);
 const PREPARATION_OPERATIONS = new Set(["not_started", "decode_image", "read_dimensions", "create_ocr_canvas", "get_ocr_context", "draw_ocr_image", "read_image_data", "write_image_data", "encode_ocr_image", "create_preview_canvas", "get_preview_context", "draw_preview_image", "encode_preview_image", "complete"]);

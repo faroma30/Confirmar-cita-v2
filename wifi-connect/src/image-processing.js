@@ -24,6 +24,21 @@ async function decodeBlob(blob,urlApi,signal){
   throwIfAborted(signal);return {image,close:false};
  }finally{urlApi.revokeObjectURL(url);}
 }
+/** Copia girada (90, 180 o 270 grados) de la fotografía, en memoria; para etiquetas fotografiadas de lado. */
+export async function rotateImageBlob(blob,degrees,{signal,maxDimension=MAX_OCR_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas')}={}){
+ if(![90,180,270].includes(degrees))throw new RangeError('Giro no admitido.');
+ let decoded,canvas;
+ try{
+  decoded=await decodeBlob(blob,urlApi,signal);
+  const sourceWidth=decoded.image.width||decoded.image.naturalWidth,sourceHeight=decoded.image.height||decoded.image.naturalHeight;
+  if(!sourceWidth||!sourceHeight)throw new Error('No se pudieron leer las dimensiones de la fotografía.');
+  const scale=Math.min(1,maxDimension/Math.max(sourceWidth,sourceHeight)),width=Math.max(1,Math.round(sourceWidth*scale)),height=Math.max(1,Math.round(sourceHeight*scale));
+  canvas=canvasFactory();canvas.width=degrees===180?width:height;canvas.height=degrees===180?height:width;
+  const context=canvas.getContext('2d',{alpha:false});if(!context)throw new Error('No se pudo girar la fotografía en este dispositivo.');
+  context.translate(canvas.width/2,canvas.height/2);context.rotate(degrees*Math.PI/180);context.drawImage(decoded.image,-width/2,-height/2,width,height);
+  const rotated=await canvasToBlob(canvas,'image/jpeg',0.95);throwIfAborted(signal);return rotated;
+ }finally{if(decoded?.close)try{decoded.image.close();}catch{}if(canvas){canvas.width=0;canvas.height=0;}}
+}
 export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMENSION,previewMaxDimension=PREVIEW_MAX_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas'),onStage=()=>{},onDiagnostic=()=>{},variant='color',region=null,includePreview=variant==='color'}={}){
  if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/'))throw new TypeError('Se necesita una fotografía válida para analizar.');
  if(!blob.size)throw new TypeError('La fotografía está vacía.');

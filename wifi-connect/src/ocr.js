@@ -1,6 +1,6 @@
-import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3cl1';
-import {parseRouterLabel} from './router-parser.js?v=3cj1';
-import {findSsidFocusRegions} from './ssid-focus.js?v=3bn2';
+import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3wl1';
+import {parseRouterLabel} from './router-parser.js?v=3wl1';
+import {findSsidFocusRegions} from './ssid-focus.js?v=3wl1';
 
 export const OCR_LANGUAGES='spa+eng';
 export const OCR_ENGINE_VERSION='tesseract.js 7.0.0 / tesseract.js-core 7.0.0';
@@ -34,7 +34,7 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
   try{return await waitFor(instance.recognize(image,{}, {text:true,blocks:true}),signal,recognitionTimeoutMs,()=>{void terminateWorker();});}
   catch(error){if(error?.name==='TimeoutError'||signal?.aborted)await terminateWorker();throw error;}
  }
- async function recognizeOne(blob,{signal,onProgress=()=>{},onStage=()=>{},onImagePreparation=()=>{},qrResult=null}={}){
+ async function recognizeOne(blob,{signal,onProgress=()=>{},onStage=()=>{},onImagePreparation=()=>{},qrResult=null,singlePass=false}={}){
   if(!blob||typeof blob.arrayBuffer!=='function'||!String(blob.type||'').startsWith('image/')||!blob.size)throw new TypeError('Selecciona una fotografía válida para analizar.');
   const started=performance.now();let prepared=null,alternatePrepared=null,focusedPrepared=null;const timing={imagePreparationMs:0,engineLoadMs:0,workerInitializationMs:0,recognitionMs:0,alternatePreparationMs:0,focusedPreparationMs:0};
   try{
@@ -63,7 +63,10 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
    // OCR page confidence cannot verify exact credential characters. If OCR (rather than a valid
    // Wi-Fi QR) is the source of any usable credential, always run the independent grayscale pass.
    const needsCredentialCorroboration=!qrCoversWifi&&(Boolean(initialParse.ssidCandidates.some(candidate=>candidate.score>=40))||hasPasswordCandidate);
-   const weak=!qrCanSkipAlternate&&(firstConfidence===null||firstConfidence<72||!initialParse.ssidCandidates.some(candidate=>candidate.score>=60)||!hasPasswordCandidate||missingExpectedBand||qrPasswordDisagrees||needsCredentialCorroboration);
+   // Con un QR Wi-Fi completo el texto solo comprueba: se repite únicamente si la primera lectura discrepa.
+   const qrNetworks=qrCoversWifi?(Array.isArray(qrResult.networks)&&qrResult.networks.length?qrResult.networks:[qrResult]):[];
+   const qrTextDisagrees=qrCoversWifi&&[['ssid',initialParse.ssidCandidates],['password',initialParse.passwordCandidates]].some(([field,list])=>list.some(candidate=>candidate.score>=70&&!qrNetworks.some(network=>{const value=String(network[field]||'');return value&&(candidate.value===value||candidate.value.toLowerCase().startsWith(`${value.toLowerCase()} `));})));
+   const weak=!singlePass&&!(qrCoversWifi&&!qrTextDisagrees&&!qrPasswordDisagrees)&&!qrCanSkipAlternate&&(firstConfidence===null||firstConfidence<72||!initialParse.ssidCandidates.some(candidate=>candidate.score>=60)||!hasPasswordCandidate||missingExpectedBand||qrPasswordDisagrees||needsCredentialCorroboration);
    if(weak){
     throwIfAborted(signal);onStage('Mejorando lectura');const alternateStarted=performance.now();
     try{
@@ -79,7 +82,7 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
    const namedSsidDisagreement=[...new Map(beforeFocus.ssidCandidates.filter(candidate=>candidate.score>=40&&candidate.sourceLabel&&!candidate.sourceLabel.startsWith('Proximidad')).map(candidate=>[candidate.sourceLabel,beforeFocus.ssidCandidates.filter(other=>other.score>=40&&other.sourceLabel===candidate.sourceLabel).map(other=>other.value)])).values()].some(values=>new Set(values).size>1);
    const uncertainBands=new Set(beforeFocus.ssidCandidates.filter(candidate=>candidate.score>=40&&(candidate.needsReview||candidate.bandPeerConflict||candidate.bandConfidence==='low')).map(candidate=>candidate.band==='2.4 GHz'?'1':candidate.band==='5 GHz'?'2':String(candidate.sourceLine||'').match(/SSID\s*([12il])/i)?.[1]?.toLowerCase().replace(/[il]/,'1')).filter(Boolean));
    const prioritized=focusTargets.filter(item=>!item.band||uncertainBands.has(String(item.band))||namedSsidDisagreement).filter((item,index,list)=>!list.slice(0,index).some(previous=>previous.band===item.band&&Math.abs(previous.region.top-item.region.top)<Math.max(24,item.region.height)));
-   if(prioritized.length){
+   if(prioritized.length&&!singlePass&&!(qrCoversWifi&&!qrTextDisagrees)){
     for(const [index,target] of prioritized.slice(0,2).entries()){
      throwIfAborted(signal);focusAttemptCount++;const focusStarted=performance.now();onStage('Verificando nombre Wi-Fi');
      try{

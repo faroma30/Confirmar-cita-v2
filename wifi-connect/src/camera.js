@@ -52,7 +52,7 @@ export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDev
   opening=(async()=>{
    let acquired;
    try{
-    const preferred={audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30,max:30}}};
+    const preferred={audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:2560},height:{ideal:1440},frameRate:{ideal:30,max:30}}};
     try{acquired=await mediaDevices.getUserMedia(preferred);}catch(error){
      if(['NotAllowedError','PermissionDeniedError','SecurityError','NotReadableError'].includes(error?.name))throw error;
      // Older Safari/devices may reject a facingMode or resolution constraint. Retry with browser defaults.
@@ -61,11 +61,17 @@ export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDev
     if(mySequence!==sequence||state===CAMERA_STATES.DISPOSED){stopTracks(acquired);return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};}
     stream=acquired;const attached=await attachStream(video,stream);if(!attached.ok)throw Object.assign(new Error(attached.message),{name:attached.kind==='permission'?'NotAllowedError':'NotReadableError'});
     if(mySequence!==sequence){stopTracks(acquired);return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};}
+    await enableContinuousFocus(stream);
+    if(mySequence!==sequence){stopTracks(acquired);return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};}
     emit(CAMERA_STATES.LIVE);return {ok:true};
    }catch(error){if(acquired)stopTracks(acquired);if(stream===acquired)stream=null;if(mySequence!==sequence)return {ok:false,kind:'cancelled',message:'La cámara se ha cerrado.'};const result=classifyCameraError(error,{secureContext});if(videoTarget){try{videoTarget.srcObject=null;}catch{}}videoTarget=null;emit(CAMERA_STATES.ERROR,result);return {ok:false,...result};}
    finally{if(mySequence===sequence)opening=null;}
   })();
   return opening;
+ }
+ /** Enfoque continuo solo si la cámara lo ofrece; si falla se sigue como siempre. */
+ async function enableContinuousFocus(active){
+  try{const track=active?.getVideoTracks?.()[0];if(!track?.getCapabilities?.().focusMode?.includes('continuous')||typeof track.applyConstraints!=='function')return;await track.applyConstraints({advanced:[{focusMode:'continuous'}]});}catch{}
  }
  async function capture(video=videoTarget){
   if(!stream||!video||state!==CAMERA_STATES.LIVE)throw new Error('La cámara no está activa.');
@@ -83,6 +89,13 @@ export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDev
   if(typeof globalThis.Image==='function')try{const img=new Image();if(typeof img.decode==='function'){img.src=url;await img.decode();}else await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=url;});candidate.width=img.naturalWidth||null;candidate.height=img.naturalHeight||null;}catch{}
   emit(CAMERA_STATES.REVIEW);return publicImage(candidate);
  }
+ /** Adopta el fotograma leído automáticamente como fotografía (en memoria) y cierra la cámara. */
+ function adoptFrame(blob,{width=null,height=null}={}){
+  if(!blob?.size)throw new TypeError('No hay fotograma que usar.');
+  clearReview();if(confirmed){clearConfirmedImage();}
+  stop();const url=urlApi.createObjectURL(blob);candidate={blob,url,mimeType:blob.type||'image/jpeg',width,height,source:'camera',createdAt:new Date().toISOString()};
+  emit(CAMERA_STATES.REVIEW);return publicImage(candidate);
+ }
  function publicImage(image){return image?{blob:image.blob,url:image.url,mimeType:image.mimeType,width:image.width,height:image.height,source:image.source,createdAt:image.createdAt}:null;}
  function confirmImage(){if(!candidate)throw new Error('No hay ninguna fotografía para confirmar.');confirmed=candidate;candidate=null;emit(CAMERA_STATES.CONFIRMED);return publicImage(confirmed);}
  function discardReview(){clearReview();if(state!==CAMERA_STATES.DISPOSED)emit(CAMERA_STATES.IDLE);}
@@ -92,6 +105,6 @@ export function createCameraSession({mediaDevices=globalThis.navigator?.mediaDev
  async function toggleTorch(){if(!supportsTorch())return false;const track=stream.getVideoTracks()[0];torchEnabled=!torchEnabled;try{await track.applyConstraints({advanced:[{torch:torchEnabled}]});return torchEnabled;}catch{torchEnabled=!torchEnabled;return false;}}
  function subscribe(listener){listeners.add(listener);return()=>listeners.delete(listener);}
  function dispose(){stop();clearConfirmedImage();emit(CAMERA_STATES.DISPOSED);listeners.clear();}
- return {open,stop,capture,selectImage,confirmImage,discardReview,clearConfirmedImage,getConfirmedImage,getPreviewImage,supportsTorch,toggleTorch,subscribe,dispose,getPermissionState:async()=>{permissionState=await queryCameraPermissionState(permissions);return permissionState;},getState:()=>state,getStream:()=>stream};
+ return {open,stop,capture,adoptFrame,selectImage,confirmImage,discardReview,clearConfirmedImage,getConfirmedImage,getPreviewImage,supportsTorch,toggleTorch,subscribe,dispose,getPermissionState:async()=>{permissionState=await queryCameraPermissionState(permissions);return permissionState;},getState:()=>state,getStream:()=>stream};
 }
 

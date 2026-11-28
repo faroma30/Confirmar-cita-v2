@@ -1,3 +1,7 @@
+import {isSsidFieldLabel} from './router-parser.js?v=3wl1';
+import {isRouterAccessLabel,isLabelText} from './label-rules.js?v=3wl1';
+import {needsCharacterConfirmation} from './password-check.js?v=3wl1';
+
 /** Select the smallest safe next step for the production scan UX. */
 const passwordOrigin=/\b(?:password|passvvord|contrase[nñ]a|contrasenya|clau|clave|wlan\s*k(?:ey|ev|cy)?|wi[\s-]?fi\s*(?:key|password)|wireless\s*(?:key|password)|network\s*(?:key|password)|admin|administrator|router|login|access|wps|serial|s\/?n|mac|bssid|imei|model|gateway|barcode|bar\s+code|pin)\b/iu;
 const explicitSsidOrigin=/^(?:ssid(?:\s*(?:[12]|[il])|\s+(?:2\s*[.,]?\s*4\s*(?:ghz|g)?|5\s*(?:ghz|g)?))?|(?:red\s+)?wi[ -]?f[i1l](?:\s+red)?|nombre\s+(?:de\s+)?wi[ -]?f[i1l]|(?:nom\s+(?:de\s+)?(?:xarxa|wi[ -]?f[i1l])|xarxa\s+wi[ -]?f[i1l])|(?:wi[ -]?fi|wlan)\s*(?:name|nombre)|(?:wireless|network)\s+name|nombre\s+(?:de\s+)?(?:wi[ -]?fi|red)|red\s+(?:wi[ -]?fi|wlan))$/iu;
@@ -7,11 +11,13 @@ export function isSafeSsidCandidate(candidate){
  const label=String(candidate.sourceLabel||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
  if(label===proximityOrigin)return candidate.needsReview===true&&/contraseña wi-fi/i.test(candidate.reason||'');
  if(candidate.source?.startsWith('qr'))return label==='QR Wi-Fi'&&Boolean(candidate.value);
+ if(isLabelText(candidate.value))return false;
  if(passwordOrigin.test(label))return false;
- return explicitSsidOrigin.test(label);
+ return explicitSsidOrigin.test(label)||isSsidFieldLabel(label);
 }
 export function isSafePasswordCandidate(candidate){
  if(candidate?.fieldType!=='password'||candidate?.source==='ssid'||typeof candidate.value!=='string'||!candidate.value.trim())return false;
+ if(!candidate.source?.startsWith('qr')&&(isLabelText(candidate.value)||isRouterAccessLabel(candidate.sourceLabel||'')))return false;
  return !/^(?:admin|administrator|router|login|access)(?:\s+login)?\s+(?:password|pass|key|credential|contrase[nñ]a|clave|pin)$/iu.test(String(candidate.sourceLabel||'').trim());
 }
 const isFieldCandidate=(candidate,field)=>field==='ssid'?isSafeSsidCandidate(candidate):field==='password'?isSafePasswordCandidate(candidate):candidate?.fieldType===field;
@@ -53,7 +59,9 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  const crossFieldContamination=detectCrossFieldContamination(parsed,primary);
  const ssidNeedsReview=Boolean(primary.score<60||crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||ocrConfidenceNeedsReview(primary)||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary));
  const passwordNeedsReview=activeSecurity!=='Sin contraseña'&&(!activePassword||passwordConflict||passwordUnverified||passwordOcrConfidenceNeedsReview(activePassword)||activePassword.needsReview&&!activePassword.qrAgreement&&!qrTrusted(activePassword)&&!highConfidencePassword);
- const fields=[...(ssidNeedsReview?['ssid']:[]),...(passwordNeedsReview?['password']:[])];
+ // O/0 e I/l/1 en una clave leída por OCR: la confirma el técnico, salvo que el perfil fije el alfabeto.
+ const doubtfulPassword=Boolean(activeSecurity!=='Sin contraseña'&&activePassword&&!qrTrusted(activePassword)&&!activePassword.formatDecided&&needsCharacterConfirmation(activePassword.value));
+ const fields=[...(ssidNeedsReview?['ssid']:[]),...(passwordNeedsReview||doubtfulPassword?['password']:[])];
  if(fields.length)return {state:'review',choices:[selected],candidate:selected,fields};
  return {state:'ready',choices:[selected],candidate:selected,fields:[]};
 }

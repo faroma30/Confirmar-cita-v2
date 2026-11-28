@@ -1,4 +1,4 @@
-import { decodeWifiQrPayloadsFromImageCore } from './wifi-qr-core.js?v=3bv1';
+import { decodeWifiQrPayloadsFromImageCore } from './wifi-qr-core.js?v=3wl1';
 
 function transferableResult(result) {
   const attempts = (result?.attempts ?? []).slice(0, 40).map(item => ({
@@ -20,6 +20,7 @@ function transferableResult(result) {
     ...(typeof result?.reason === 'string' ? { reason: result.reason } : {}),
     ...(typeof result?.source === 'string' ? { source: result.source } : {}),
     networks, attempts,
+    ...(result?.unreadableQr === true ? { unreadableQr: true } : {}),
     ...(primary ? { ...primary } : {}),
   };
 }

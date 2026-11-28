@@ -1,5 +1,7 @@
 import {detectOperator} from './operator-detector.js';
 import {getOperatorProfile} from './operator-profiles/index.js';
+import {canonicalLabel,EXTRA_SSID_LABELS,EXTRA_PASSWORD_LABELS,isRouterAccessLabel,isLabelText,isNoiseValue,withoutTrailingNoise,firstTokenBeforeNoise,weakValueReason,labelBand} from './label-rules.js?v=3wl1';
+import {applyPasswordFormat} from './password-check.js?v=3wl1';
 
 const SSID_LABELS = [
   [/^(?:ssid|ss[i1l]d)(?:\s*(?:[12]|[il])|\s+(?:2[.,]?4\s*(?:ghz|g)?|5\s*(?:ghz|g)?))?$/, 100, 'Etiqueta SSID'],
@@ -34,6 +36,7 @@ const isSerialContext = label => /^(?:s\/?n|sn|serial(?:\s+number)?|serial numbe
 const isIdentifierContext = label => /^(?:mac(?:\s+address)?|bssid|imei|model|product\s+(?:id|name)|device\s+(?:id|name)|serial(?:\s+(?:number|no\.?))?|s\/?n|sn|ip(?:\s+address)?|gateway|barcode|bar\s+code|pin)$/i.test(label);
 const isSerialLikeValue = value => /^[A-Z]{2,8}\d{8,}$/i.test(String(value||'').replace(/[\s-]/g,''));
 const isAdminContext = (label, lines, index) => {
+ if (isRouterAccessLabel(label)) return true;
  if (/^(?:admin|administrator|web|router|login|access)(?:\s+login)?\s+(?:password|pass|key|credential|contrase[nñ]a|clave|pin)$/i.test(label) || /^(?:admin|administrator|web|login)$/i.test(label)) return true;
  if (!/^(?:password|passvvord|passw[o0]rd|contrase[nñ]a|contrasenya|clave)$/i.test(label)) return false;
  const context=lines.slice(Math.max(0,index-4),index).join(' ');
@@ -46,9 +49,14 @@ const isWpsFieldLabel = label => /^(?:wps|wps\s+pin)$/i.test(label);
 const plausible = (value, allowNumericPin = false) => value.length > 0 && value.length <= 2048 && !isMac(value) && (!isIpOrNumericPin(value) || (allowNumericPin && /^\d{4,10}$/.test(value))) && !/^https?:\/\//i.test(value);
 
 function findLabel(label, table) {
-  const key = normalizeLabel(label);
-  return table.find(([pattern]) => pattern.test(key));
+  if(isRouterAccessLabel(label))return undefined;
+  const key = normalizeLabel(label),canonical=canonicalLabel(label);
+  const extra=table===SSID_LABELS?EXTRA_SSID_LABELS:EXTRA_PASSWORD_LABELS;
+  return table.find(([pattern]) => pattern.test(key))
+    || extra.find(([pattern]) => pattern.test(canonical))
+    || table.find(([pattern]) => pattern.test(canonical));
 }
+export const isSsidFieldLabel=label=>Boolean(findLabel(label,SSID_LABELS));
 function splitLabel(line) {
   const protectedValue=String(line||'').match(/^\s*(mac(?:\s+address)?|bssid|imei|model|product\s+(?:id|name)|device\s+(?:id|name)|serial(?:\s+(?:number|no\.?))?|s\/?n|sn|ip(?:\s+address)?|gateway|barcode|bar\s+code|pin|wps(?:\s+pin)?)\s*(?::|=)?\s+(.+?)\s*$/i);
   if(protectedValue)return {label:protectedValue[1].trim(),value:protectedValue[2].trim()};
@@ -178,9 +186,20 @@ function addCandidate(list, value, score, reason, sourceLine, kind, sourceLabel 
   const candidateValue = cleanCandidate(value,kind);
   const explicitPassword = kind === 'password' && /Etiqueta|contexto Wi-Fi|QR Wi-Fi/.test(reason);
   if (!plausible(candidateValue, explicitPassword)) return;
+  const fromQr=/QR Wi-Fi/.test(reason);
+  // El texto de una etiqueta («WiFi (2,4 GHz)», «WiFi») nunca es un valor.
+  if(!fromQr&&(isLabelText(candidateValue)||isNoiseValue(candidateValue)))return;
   const old = list.find(item => item.value === candidateValue);
   const candidateScore=scoreValue(candidateValue,score,kind);
   const candidate = { value: candidateValue, fieldType: kind, sourceLabel, sourceLine, sourcePasses:[], ocrPasses:[], ocrConfidence:null, score:candidateScore, confidence:Math.min(1,candidateScore/100), reason };
+  const weak=fromQr?'':weakValueReason(candidateValue,kind);
+  if(weak){candidate.weakValue=weak;candidate.score=Math.min(candidate.score,55);candidate.confidence=candidate.score/100;candidate.needsReview=true;candidate.reason+=`; ${weak.toLowerCase()}`;}
+  // Solo en etiquetas con la banda entre paréntesis (suelen tener el QR al lado); los SSID1/SSID2 no se tocan.
+  const besideCode=!fromQr&&kind==='ssid'&&!/ssid/i.test(sourceLabel)&&Boolean(labelBand(sourceLabel));
+  const trimmed=besideCode?firstTokenBeforeNoise(candidateValue)||withoutTrailingNoise(candidateValue):'';
+  if(besideCode&&!trimmed&&/\s/.test(candidateValue)){candidate.score=Math.min(candidate.score,55);candidate.confidence=candidate.score/100;candidate.needsReview=true;}
+  if(trimmed&&!isLabelText(trimmed))Object.assign(candidate,{proposedValue:trimmed,proposedFrom:candidateValue,corrected:true,correctionType:'trailing-noise',needsReview:true});
+  if(!fromQr&&kind==='ssid'){const band=labelBand(sourceLabel);if(band&&!bandToken(candidateValue))candidate.band=band;}
   if (old) {
     if (candidate.score > old.score) Object.assign(old, candidate);
     return;
@@ -220,10 +239,10 @@ const stopLine = (line, lines=[], index=0) => {
   const normalized=normalizeLabel(label);
   return Boolean(findLabel(label, SSID_LABELS) || findLabel(label, PASSWORD_LABELS)
     || isAdminContext(normalized,lines,index) || isWpsContext(normalized) || isIdentifierContext(normalized)
-    || /^(?:security|encryption|wpa[23]?|wep|mac(?: address)?|bssid|imei|model|product\s+(?:id|name)|device\s+(?:id|name)|wps(?: pin)?|s\/?n|sn|serial(?:\s+(?:number|no\.?))?|pin|ip(?:\s+address)?|gateway|username|barcode|bar\s+code)$/i.test(normalized));
+    || /^(?:security|encryption|wpa[23]?|wep|mac(?: address)?|bssid|imei|model|product\s+(?:id|name)|device\s+(?:id|name)|wps(?: pin)?|s\/?n|sn|serial(?:\s+(?:number|no\.?))?|pin|ip(?:\s+address)?|gateway|username|usuario|url|barcode|bar\s+code)$/i.test(normalized));
 };
 
-export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled = true} = {}) {
+export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled = true, resolveProfile = getOperatorProfile} = {}) {
   const rawText = input?.rawText ?? '';
   const text = String(input?.normalizedText !== undefined ? input.normalizedText : rawText);
   const lines=[];const inlineBoundaryLines=new Set();
@@ -269,19 +288,24 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
       return;
     }
 
+    // «Nombre de red: [ruido de la etiqueta]» no es un valor: se busca en la línea siguiente.
+    const inline=value&&!isLabelText(value)&&!isNoiseValue(value)?value:'';
+    // Salta como mucho dos líneas de ruido hasta el valor.
+    let nextIndex=index+1;
+    while(nextIndex<index+3&&lines[nextIndex+1]&&isNoiseValue(lines[nextIndex])&&!stopLine(lines[nextIndex],lines,nextIndex))nextIndex++;
     if (ssidLabel) {
-      if (value) {addCandidate(ssidCandidates, value, ssidLabel[1], `${ssidLabel[2]}: valor en la misma línea`, line, 'ssid',label);if(inlineBoundaryLines.has(line)){const candidate=ssidCandidates.find(item=>item.value===cleanCandidate(value,'ssid'));if(candidate)candidate.needsReview=true;}}
+      if (inline) {addCandidate(ssidCandidates, value, ssidLabel[1], `${ssidLabel[2]}: valor en la misma línea`, line, 'ssid',label);if(inlineBoundaryLines.has(line)){const candidate=ssidCandidates.find(item=>item.value===cleanCandidate(value,'ssid'));if(candidate)candidate.needsReview=true;}}
       else {
-        const next = lines[index + 1];
-        if (next && !stopLine(next,lines,index+1)) addCandidate(ssidCandidates, next, Math.max(68, ssidLabel[1] - 28), `${ssidLabel[2]}: valor en la línea siguiente`, line, 'ssid',label);
+        const next = lines[nextIndex];
+        if (next && !stopLine(next,lines,nextIndex)) addCandidate(ssidCandidates, next, Math.max(68, ssidLabel[1] - 28), `${ssidLabel[2]}: valor en la línea siguiente`, line, 'ssid',label);
       }
     }
 
     if (passwordLabel) {
-      if (value) {addCandidate(passwordCandidates, value, passwordLabel[1], `${passwordLabel[2]}: valor en la misma línea`, line, 'password',label);if(inlineBoundaryLines.has(line)){const candidate=passwordCandidates.find(item=>item.value===cleanCandidate(value,'password'));if(candidate)candidate.needsReview=true;}}
+      if (inline) {addCandidate(passwordCandidates, value, passwordLabel[1], `${passwordLabel[2]}: valor en la misma línea`, line, 'password',label);if(inlineBoundaryLines.has(line)){const candidate=passwordCandidates.find(item=>item.value===cleanCandidate(value,'password'));if(candidate)candidate.needsReview=true;}}
       else {
-        const next = lines[index + 1];
-        if (next && !stopLine(next,lines,index+1)) addCandidate(passwordCandidates, next, Math.max(62, passwordLabel[1] - 28), `${passwordLabel[2]}: valor en la línea siguiente`, line, 'password',label);
+        const next = lines[nextIndex];
+        if (next && !stopLine(next,lines,nextIndex)) addCandidate(passwordCandidates, next, Math.max(62, passwordLabel[1] - 28), `${passwordLabel[2]}: valor en la línea siguiente`, line, 'password',label);
       }
     }
 
@@ -321,6 +345,15 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
       item.value===candidate.value&&normalizeLabel(String(item.sourceLabel||''))===normalizeLabel(String(candidate.sourceLabel||''))));
     for(const [list,listName] of [[ssidCandidates,'ssidCandidates'],[passwordCandidates,'passwordCandidates']]){
       for(let index=list.length-1;index>=0;index--)if(!existsInOnePass(list[index],listName))list.splice(index,1);
+      // Al unir las pasadas se pierde qué línea sigue a cada etiqueta: se recupera lo que una pasada completa sí
+      // leyó junto a su etiqueta. Queda siempre para revisar.
+      parsedPasses.forEach((parsed,passIndex)=>{
+        if(String(uniquePasses[passIndex].id||'').startsWith('ssid-focus-'))return;
+        for(const item of parsed[listName]){
+          if(!item.sourceLabel||item.sourceLabel.startsWith('Proximidad')||list.some(other=>other.value===item.value))continue;
+          list.push({...item,needsReview:true});
+        }
+      });
     }
   }
 
@@ -370,7 +403,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
   const appliedProfiles = [];
   const profileDiagnostics = [];
   const selectedOperator = operator?.detected;
-  const profile = selectedOperator && operator.confidence !== 'low' ? getOperatorProfile(selectedOperator.id) : null;
+  const profile = selectedOperator && operator.confidence !== 'low' ? resolveProfile(selectedOperator.id) : null;
   if (profile) {
     appliedProfiles.push(profile.id);
     for (const [field, list] of [['ssid',ssidCandidates],['password',passwordCandidates]]) {
@@ -407,7 +440,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
     return values.filter(Boolean);
   }));
   ssidCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrSsidConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrSsidConflict))||(b.ocrVerification?.exactPassCount||0)-(a.ocrVerification?.exactPassCount||0)||Number(focusedValues.has(b.value))-Number(focusedValues.has(a.value))||b.score-a.score||Number(Boolean(b.qrAgreement))-Number(Boolean(a.qrAgreement)));
-  passwordCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrPasswordConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrPasswordConflict))||b.score-a.score);
+  passwordCandidates.sort((a, b) => Number(Boolean(b.source?.startsWith('qr')&&!qrPasswordConflict))-Number(Boolean(a.source?.startsWith('qr')&&!qrPasswordConflict))||b.score-a.score||(b.ocrConfidence||0)-(a.ocrConfidence||0));
   const leadingPassCount=Math.max(0,...ssidCandidates.map(candidate=>candidate.ocrVerification?.exactPassCount||0));
   ssidCandidates.forEach((candidate,index)=>{
     const supported=candidate.ocrVerification?.exactPassCount||0;
@@ -416,6 +449,14 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
       : index===0?'Candidato mejor puntuado del campo SSID':'Alternativa de menor puntuación del campo SSID';
   });
   passwordCandidates.forEach((candidate,index)=>{candidate.selectionReason=index===0?'Candidato mejor puntuado del campo contraseña':'Alternativa de menor puntuación del campo contraseña';});
+  // Solo si el perfil fija el alfabeto de la clave; una clave de QR no se toca.
+  if(profile?.passwordFormat)for(const candidate of passwordCandidates){
+    if(candidate.source?.startsWith('qr'))continue;
+    const fixed=applyPasswordFormat(candidate.value,profile.passwordFormat);
+    if(!fixed.decided)continue;
+    candidate.formatDecided=true;
+    if(fixed.corrections.length){candidate.originalValue=candidate.value;candidate.value=fixed.value;candidate.characterCorrections=fixed.corrections;candidate.needsReview=true;}
+  }
   let security = detectSecurity(lines);
   if(qrSecurityConflict)security.needsReview=true;
   if(qr?.security&&security.inferred)security={value:qr.security,detected:qr.security,inferred:false,confidence:qrAgreement?0.98:0.9,source:'qr',fieldType:'security',sourceLabel:'QR Wi-Fi',sourceLine:'QR Wi-Fi: seguridad',reason:'Seguridad explícita en QR Wi-Fi'};
