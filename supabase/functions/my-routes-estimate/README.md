@@ -141,3 +141,10 @@ responde como antes en esos casos. No cambian topes, esperas ni el tratamiento d
 - **`only`** (opcional): índices de los tramos pedidos; los demás no se buscan ni se cobran. La v18 lo rechaza con 400 (sin reservar) y la web repite sin él.
 - **Resultado guardado:** migración `20261128090000_route_saved_days.sql` (tabla con RLS y `cc_my_route_day` / `cc_save_my_route_day` para `authenticated`). Solo hoy y mañana (Europe/Madrid); lo anterior a hoy se borra al leer (lo propio) y al guardar (lo de todos). Solo huellas, números, horas y códigos. La función Edge no la usa; sin la migración, la web funciona sin guardar.
 - Sin cambios en topes, espera, 401/403/429 ni renovación.
+
+## «¿Querías decir…?» solo con calles localizables (CONFIRMAR_CITAS-034, web 3routes25)
+- **Causa:** el callejero de CartoCiudad (sin coordenadas) y sus portales pueden escribir distinto la misma vía. Se ofrecía el nombre del callejero y, al elegirlo, el cálculo no lo localizaba.
+- **Candidatas:** las calles de siempre y, además, las de los portales con el mismo número en el mismo municipio o CP que ya venían en las respuestas.
+- **Comprobación:** antes de ofrecer una calle se busca la misma dirección que enviará la app al elegirla, con los mismos pasos de CartoCiudad. Solo se ofrece si da posición sin cambiar de calle. Si ninguna la da, no hay sugerencia.
+- **Topes:** como máximo 5 candidatas por dirección (hasta 3 llamadas cada una), al final del cálculo y con 8 s en total. Gratis: nunca Geoapify ni créditos del piloto. Lo que no se puede comprobar no se ofrece.
+- **Compatibilidad:** mismos campos; la app no cambia salvo el número de versión.

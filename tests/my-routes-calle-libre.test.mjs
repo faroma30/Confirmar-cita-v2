@@ -105,7 +105,8 @@ const portalFila = (tipo, nombre, numero, lat) => fila({ type: "portal", tip_via
 const plano = value => value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
 // `calles`: callejero oficial que devuelve la lista; `portales`: respuestas de `findJsonp` por palabra.
-function servidor({ calles = [], geo = () => [] } = {}) {
+// `conPortal`: la búsqueda con número devuelve el portal de la calle de ese nombre (CONFIRMAR_CITAS-034).
+function servidor({ calles = [], geo = () => [], conPortal = false } = {}) {
   const log = [], sent = [];
   const carto = async url => {
     assert.equal(url.hostname, "www.cartociudad.es");
@@ -118,6 +119,11 @@ function servidor({ calles = [], geo = () => [] } = {}) {
     if (word.startsWith("ficticia")) data = [portalFila("CALLE", "FICTICIA", 1, 42.1)];
     else if (word.startsWith("pins")) data = [portalFila("CARRER", "PINS", 9, 42.12)];
     else if (!/\d/u.test(params.q)) data = calles.filter(row => word.split(",")[0].split(" ").some(part => plano(row.address).includes(part.slice(0, 4))));
+    else if (conPortal) {
+      const name = word.split(",")[0].replace(/ \d+$/u, "");
+      data = calles.map(row => [row.tip_via, row.address.split(",")[0].slice(row.tip_via.length + 1)])
+        .filter(([, bare]) => plano(bare) === name).map(([tipo, bare], index) => portalFila(tipo, bare, 1, 42.2 + index / 100));
+    }
     return new Response(find ? "callback(" + JSON.stringify(data) + ")" : JSON.stringify(data), { status: 200 });
   };
   const geoapify = async url => {
@@ -162,7 +168,7 @@ test("«PTGE <nombre>» sin Passatge oficial: hasta 5 sugerencias de cualquier t
   assert.equal(choice.suggestions.length, 5);
   assert.deepEqual(choice.suggestions.slice(0, 3), ["Avinguda Roureda", "Plaça Roureda", "Passeig Roureda"]);
   assert.ok(choice.suggestions.some(name => name.startsWith("Carrer ")), "cualquier tipo de vía");
-  const r = await jornada([casa, oracle("PTGE ROUREDA 1"), casa], servidor({ calles: SEIS }));
+  const r = await jornada([casa, oracle("PTGE ROUREDA 1"), casa], servidor({ calles: SEIS, conPortal: true }));
   assert.equal(r.suggestions[1].length, 5);
   for (const location of r.suggestions[1]) assert.doesNotThrow(() => parseActivityEdits([["clave", { travel: "travel", location }]]));
   const client = officialAddressData({ suggestions: [r.suggestions[1]] }, 1);
@@ -173,7 +179,9 @@ test("topes y secuencia de una vía «PTGE» sin coincidencia: ≤ 3 CartoCiudad
   const server = servidor({ calles: SEIS });
   await jornada([casa, oracle("PTGE ROUREDA 1"), casa], server);
   const own = server.log.filter(line => /roureda/iu.test(line));
-  assert.deepEqual(own, [
+  // Después van solo las comprobaciones de las sugerencias (CONFIRMAR_CITAS-034), todas a CartoCiudad.
+  assert.ok(own.slice(5).every(line => line.startsWith("carto ")));
+  assert.deepEqual(own.slice(0, 5), [
     'carto findJsonp {"q":"Roureda 1, Vilaficticia"}',
     'carto candidates {"q":"Roureda","limit":"10","cod_postal_filter":"17599"}',
     'carto candidates {"q":"Roureda 1","limit":"5","cod_postal_filter":"17599"}',
@@ -251,7 +259,7 @@ async function idle(get) {
   await settle(30);
 }
 
-async function pantalla(citas, { server = servidor({ calles: SEIS }), wait = null, preferences = prefs } = {}) {
+async function pantalla(citas, { server = servidor({ calles: SEIS, conPortal: true }), wait = null, preferences = prefs } = {}) {
   const { panel, get } = fakePanel();
   const actor = { id: "tecnico-ficticio", role: "technician" };
   const bodies = [];

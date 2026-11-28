@@ -1,8 +1,8 @@
-import { editableAddress } from "./my-routes-address.mjs?v=3routes24";
-import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes24";
-import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, shortAddress, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes24";
-import { canOfferPilotStop, countdownClock, describePilot, madridClock, stopConfirmation, waitMessage } from "./my-routes-pilot.mjs?v=3routes24";
-import { absorbRecord, keepRecord, legSignatures, lookupRecord, madridDay, memorySignatures, pendingRecord, recordFrom, savableDate } from "./my-routes-saved.mjs?v=3routes24";
+import { editableAddress } from "./my-routes-address.mjs?v=3routes25";
+import { bindAddressAssistant } from "./my-routes-autocomplete.mjs?v=3routes25";
+import { arrivalAfter, buildLegs, combineActivities, dayFreeTime, estimateLeg, formatMinutes, formatRouteLocation, freeTimeBetween, legSlack, mapsLink, mayArriveLate, recommendedDeparture, routeLocationFields, routeLocationKinds, sendableRouteLocation, shortAddress, validateRouteLocation, validateRouteLocations } from "./my-routes.mjs?v=3routes25";
+import { canOfferPilotStop, countdownClock, describePilot, madridClock, stopConfirmation, waitMessage } from "./my-routes-pilot.mjs?v=3routes25";
+import { absorbRecord, keepRecord, legSignatures, lookupRecord, madridDay, memorySignatures, pendingRecord, recordFrom, savableDate } from "./my-routes-saved.mjs?v=3routes25";
 
 // CONFIRMAR_CITAS-027: ubicación de una corrección (calle tal como se escribe, con su tipo de vía), o null si
 // tiene caracteres que no se pueden enviar. Mismas reglas que «Editar» y que el servidor.

@@ -609,16 +609,30 @@ function similarStreets(data, fields) {
     .filter(item => offered(item, wanted)).sort((a, b) => b.score - a.score).map(item => item.name);
 }
 
+// CONFIRMAR_CITAS-034: streets that do have the requested portal, with coordinates, in the area. The street map
+// and the portals of CartoCiudad may write the same street differently: these names are also suggestion candidates.
+function portalStreets(data, fields) {
+  const wanted = streetKey(fields.street);
+  const number = Number(basePortal(fields.housenumber));
+  return (Array.isArray(data) ? data : cartoRows(data)).slice(0, 10)
+    .filter(row => row && row.type === "portal" && Number(row.portalNumber) === number && cartoPoint(row) && inArea(row, fields))
+    .map(officialStreetName).filter(Boolean)
+    .map(name => ({ name, words: streetKey(name).split(" "), score: similarity(wanted, streetKey(name)), contains: false }))
+    .filter(item => offered(item, wanted)).sort((a, b) => b.score - a.score).map(item => item.name);
+}
+
 async function geocodeCarto(fields, context) {
   const queries = cartoQueries(fields);
   if (!queries || !context.carto) return null;
   let approx = null;
   let suggestions = [];
+  const withPortal = [];
   // CONFIRMAR_CITAS-027: true when the official street map answered and does not have this street.
   let unknown = false;
   const attempt = async (path, params, target = fields) => {
     const data = await readCarto(path, params, context);
     if (data === null) return null;
+    withPortal.push(...portalStreets(data, fields));
     const choice = chooseCarto(data, target);
     if (!approx && choice.approx) approx = { point: choice.approx, official: target === fields ? null : target.street };
     return { data, point: choice.point };
@@ -660,7 +674,10 @@ async function geocodeCarto(fields, context) {
   }
   if (last?.point) return { point: last.point, approx: false };
   if (approx) return { point: approx.point, approx: true, ...(approx.official ? { official: approx.official } : {}) };
-  return { point: null, suggestions, unknown };
+  // Candidates only: `locatableSuggestions` decides which of them are offered. The requested street is not one.
+  // One per street (same type and bare name): the street map spelling wins over the portal one.
+  const candidates = new Map([...withPortal, ...suggestions].map(name => [(streetParts(name).type ?? "") + "|" + streetKey(name), name]));
+  return { point: null, suggestions: [...candidates.values()].filter(name => !sameStreet(name, fields.street)), unknown };
 }
 
 async function geocode(fields, context) {
@@ -681,6 +698,22 @@ function suggestionLocation(street, fields) {
   location.postalCode = /^\d{5}$/u.test(field(fields.postcode)) ? field(fields.postcode) : "";
   if (fields.province && LOCALITY.test(fields.province)) location.province = fields.province;
   return location;
+}
+
+// CONFIRMAR_CITAS-034: a street is offered in «¿Querías decir…?» only if choosing it can be calculated: the same
+// address that the app sends back as `edits` is searched with the same CartoCiudad steps and must give a position
+// without changing the street. CartoCiudad only (free): never Geoapify, never the pilot. What cannot be checked
+// (failure, no time left) is not offered. At most 5 candidates per address.
+export const SUGGEST_CHECK_MS = 8000;
+async function locatableSuggestions(streets, fields, context) {
+  const found = [];
+  for (const street of streets.slice(0, SUGGESTIONS_MAX)) {
+    const location = suggestionLocation(street, fields);
+    const target = streetFields(formatRouteLocation(location));
+    const result = target ? await geocodeCarto(target, context) : null;
+    if (result?.point && !result.official) found.push(location);
+  }
+  return found;
 }
 
 // ---- CONFIRMAR_CITAS-022: address assistant (`suggest`): CartoCiudad `candidates`, free, never Geoapify.
@@ -969,12 +1002,19 @@ export async function calculateJourney(addresses, options) {
   // up to 5 official streets of the same municipality to apply with one tap (never coordinates).
   const officials = options.officials ?? [];
   const suggestions = options.suggestions ?? [];
+  // CONFIRMAR_CITAS-034: checked at the end, with their own short time limit, so they never delay or change the route.
+  const checks = context.carto && { ...context, carto: { ...context.carto, off: false },
+    deadline: Math.min(context.deadline, Date.now() + CARTOCIUDAD_RESERVE_MS + SUGGEST_CHECK_MS) };
+  const checked = new Map();
   for (let index = 0; index < addresses.length; index++) {
-    const outcome = points.get(addresses[index]);
-    const fields = outcome && streetFields(addresses[index]);
+    const address = addresses[index];
+    const outcome = points.get(address);
+    const fields = outcome && streetFields(address);
     officials[index] = outcome?.point && outcome.official ? outcome.official : null;
-    suggestions[index] = !outcome?.point && fields && outcome?.suggestions?.length
-      ? outcome.suggestions.slice(0, SUGGESTIONS_MAX).map(street => suggestionLocation(street, fields)) : null;
+    suggestions[index] = null;
+    if (outcome?.point || !fields || !outcome?.suggestions?.length) continue;
+    if (!checked.has(address)) checked.set(address, await locatableSuggestions(outcome.suggestions, fields, checks));
+    if (checked.get(address).length) suggestions[index] = checked.get(address);
   }
   officials.length = addresses.length;
   suggestions.length = addresses.length;

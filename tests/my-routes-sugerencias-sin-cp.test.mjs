@@ -95,6 +95,10 @@ const CALLEJERO = {
   "ficticia#find": [fila({ type: "portal", address: "FICTICIA", tip_via: "CALLE", portalNumber: 1, lat: 42.1, lng: 2.2 })],
   "roure#find": [fila({ type: "portal", address: "ROURE", tip_via: "CARRER", portalNumber: 9, lat: 42.12, lng: 2.2 })],
   "brollador#lista": TRES,
+  // CONFIRMAR_CITAS-034: solo se sugieren calles con portal localizable.
+  "brollador#candidates": [["AVENIDA", 42.13], ["PLAÇA", 42.14], ["PASEO", 42.15]].map(([tipo, lat]) =>
+    fila({ type: "portal", address: "BROLLADOR", tip_via: tipo, portalNumber: 5, lat, lng: 2.2 })),
+  "estel#find": [fila({ type: "portal", address: "ESTEL", tip_via: "CARRER", portalNumber: 3, lat: 42.16, lng: 2.2 })],
   "estels#municipio": [fila({ address: "CARRER ESTEL (DE L'), Vilafictícia", tip_via: "CARRER" })],
 };
 const primera = q => q.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().split(/[ ,]/u)[0];
@@ -128,8 +132,10 @@ async function jornada(addresses) {
   });
   return { estimates, log, suggestions, details, officials };
 }
+// Llamadas de la búsqueda (las de comprobar las sugerencias, CONFIRMAR_CITAS-034, van después de Geoapify).
 const porDireccion = (log, palabra) => ({
-  carto: log.filter(item => item.startsWith("carto-") && item.includes(":" + palabra)).length,
+  carto: log.slice(0, log.findLastIndex(item => item.startsWith("geo:") && item.includes(palabra)))
+    .filter(item => item.startsWith("carto-") && item.includes(":" + palabra)).length,
   geo: log.filter(item => item.startsWith("geo:") && item.includes(palabra)).length,
 });
 

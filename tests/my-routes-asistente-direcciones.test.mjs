@@ -81,6 +81,9 @@ const CALLEJERO = {
   "fonteta": [],
   // Dos calles igual de parecidas (0,875): no se decide.
   "fonteta#lista": [fila({ address: "CARRER FONTETAS, Vilafictícia", tip_via: "CARRER" }), fila({ address: "CARRER FONTETAT, Vilafictícia", tip_via: "CARRER" })],
+  // CONFIRMAR_CITAS-034: solo se sugieren calles con portal localizable.
+  "fontetas": fila({ type: "portal", address: "FONTETAS", tip_via: "CARRER", portalNumber: 3, lat: 42.13, lng: 2.2 }),
+  "fontetat": fila({ type: "portal", address: "FONTETAT", tip_via: "CARRER", portalNumber: 3, lat: 42.14, lng: 2.2 }),
   "roure": fila({ type: "portal", address: "ROURE", tip_via: "CARRER", portalNumber: 9, lat: 42.12, lng: 2.2 }),
   "ficticia": fila({ type: "portal", address: "FICTICIA", tip_via: "CALLE", portalNumber: 1, lat: 42.1, lng: 2.2 }),
 };
