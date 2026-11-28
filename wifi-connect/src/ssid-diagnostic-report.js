@@ -1,5 +1,5 @@
-import {parseRouterLabel} from './router-parser.js?v=3wl2';
-import {buildScanPlan, detectCrossFieldContamination} from './scan-flow.js?v=3wl2';
+import {parseRouterLabel} from './router-parser.js?v=3wl3';
+import {buildScanPlan, detectCrossFieldContamination} from './scan-flow.js?v=3wl3';
 
 const LABELS = new Map([
   ['ssid', 'SSID'], ['ssid 1', 'SSID1'], ['ssid1', 'SSID1'], ['ssid 2', 'SSID2'], ['ssid2', 'SSID2'],

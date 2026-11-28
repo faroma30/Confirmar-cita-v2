@@ -1,13 +1,24 @@
-import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3wl2';
-import {parseRouterLabel} from './router-parser.js?v=3wl2';
-import {findSsidFocusRegions} from './ssid-focus.js?v=3wl2';
-import {findLabelRegion} from './zoom-read.js?v=3wl2';
+import {prepareImageForOcr,throwIfAborted,MAX_OCR_DIMENSION} from './image-processing.js?v=3wl3';
+import {parseRouterLabel} from './router-parser.js?v=3wl3';
+import {findSsidFocusRegions} from './ssid-focus.js?v=3wl3';
+import {findLabelRegion} from './zoom-read.js?v=3wl3';
 
 export const OCR_LANGUAGES='spa+eng';
 export const OCR_ENGINE_VERSION='tesseract.js 7.0.0 / tesseract.js-core 7.0.0';
 function sourceRegion(target,prepared){
  const x=prepared.sourceWidth/prepared.width,y=prepared.sourceHeight/prepared.height;
  return {...target,region:{left:Math.floor(target.region.left*x),top:Math.floor(target.region.top*y),width:Math.ceil(target.region.width*x),height:Math.ceil(target.region.height*y)}};
+}
+/** Líneas con sus cajas en fracciones de la imagen e inclinación; solo viven en memoria. */
+export function lineGeometry(blocks,width,height){
+ const found=[];if(!Array.isArray(blocks)||!(width>0)||!(height>0))return found;
+ const box=value=>value&&[value.x0,value.y0,value.x1,value.y1].every(Number.isFinite)&&value.x1>value.x0&&value.y1>value.y0?{x0:value.x0/width,y0:value.y0/height,x1:value.x1/width,y1:value.y1/height}:null;
+ for(const block of blocks)for(const paragraph of block?.paragraphs||[])for(const line of paragraph?.lines||[]){
+  const area=box(line?.bbox);if(!area)continue;
+  const base=line.baseline,angle=base&&base.x1-base.x0>8?Math.atan2(base.y1-base.y0,base.x1-base.x0)*180/Math.PI:0;
+  found.push({text:String(line.text||'').trim(),box:area,aspect:width/height,angle:Number.isFinite(angle)?angle:0,words:(line.words||[]).map(word=>({text:String(word.text||''),box:box(word.bbox)})).filter(word=>word.box)});
+ }
+ return found;
 }
 export function normalizeOcrText(text=''){
  return String(text).normalize('NFC').replace(/\r\n?/g,'\n').split('\n').map(line=>line.replace(/[\t\u00a0 ]{2,}/g,' ').trim()).join('\n').trim();
@@ -22,7 +33,22 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
  const dispose=()=>terminateWorker();
  const recognizeRouterLabel=(blob,options={})=>{const task=queue.then(()=>recognizeOne(blob,options));queue=task.catch(()=>{});return task;};
  recognizeRouterLabel.dispose=dispose;
+ /** Una sola línea ya recortada: el motor la trata como una línea de texto y vuelve después a página completa. */
+ recognizeRouterLabel.line=(blob,options={})=>{const task=queue.then(()=>recognizeSingleLine(blob,options));queue=task.catch(()=>{});return task;};
  return recognizeRouterLabel;
+ async function recognizeSingleLine(blob,{signal}={}){
+  throwIfAborted(signal);
+  if(!enginePromise)enginePromise=Promise.resolve().then(loadEngine).then(loaded=>{const resolved=loaded?.createWorker?loaded:loaded?.default;if(!resolved?.createWorker)throw new TypeError('OCR engine unavailable.');engine=resolved;return resolved;}).catch(error=>{enginePromise=null;throw error;});
+  const loadedEngine=await waitFor(enginePromise,signal,15000),{instance}=await getWorker(loadedEngine,signal,()=>{},()=>{});
+  try{
+   await instance.setParameters?.({tessedit_pageseg_mode:'7'});
+   const result=await recognizeWithTimeout(instance,blob,signal);
+   return String(result?.data?.text??'');
+  }finally{
+   if(worker===instance){try{await instance.setParameters?.({tessedit_pageseg_mode:loadedEngine.PSM?.AUTO??'3'});}catch{await terminateWorker();}}
+   if(worker&&!signal?.aborted){clearIdle();idleTimer=setTimeout(()=>{void terminateWorker();},idleTimeoutMs);idleTimer.unref?.();}
+  }
+ }
  async function getWorker(loadedEngine,signal,onProgress,onStage){
   activeProgress=onProgress;activeStage=onStage;clearIdle();if(worker)return {instance:worker,reused:true};
   if(!workerPromise){const generation=++workerGeneration,p=paths(),engine=loadedEngine;const creation=engine.createWorker(OCR_LANGUAGES,engine.OEM?.LSTM_ONLY??1,{...p,workerBlobURL:false,gzip:true,cacheMethod:'write',logger:message=>{if(message?.status)activeStage(mapStatus(message.status));if(Number.isFinite(message?.progress)&&message.progress>=0&&message.progress<=1)activeProgress({status:mapStatus(message.status||'Procesando'),progress:message.progress});},errorHandler:error=>console.error('[WiFi Connect OCR] Error del worker:',error?.name||'WorkerError')},{tessedit_pageseg_mode:engine.PSM?.AUTO??'3'});
@@ -43,12 +69,13 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
    onStage('Cargando reconocimiento');prepStarted=performance.now();if(!enginePromise)enginePromise=Promise.resolve().then(loadEngine).then(loaded=>{const resolved=loaded?.createWorker?loaded:loaded?.default;if(!resolved?.createWorker)throw new TypeError('OCR engine unavailable.');engine=resolved;return resolved;}).catch(error=>{enginePromise=null;throw error;});
    const loadedEngine=await waitFor(enginePromise,signal,15000);timing.engineLoadMs=Math.round(performance.now()-prepStarted);throwIfAborted(signal);
    onStage('Cargando idiomas');prepStarted=performance.now();const lease=await getWorker(loadedEngine,signal,onProgress,onStage);worker=lease.instance;timing.workerInitializationMs=lease.reused?0:Math.round(performance.now()-prepStarted);throwIfAborted(signal);
-   const passes=[],labelRegions=[];let alternatePassError=null;const focusTargets=[],focusErrors=[],focusLengths=[];let focusAttemptCount=0;
+   const passes=[],labelRegions=[],lines=[];let alternatePassError=null;const focusTargets=[],focusErrors=[],focusLengths=[];let focusAttemptCount=0;
    onStage('Detectando texto');let recognizeStarted=performance.now();const first=await recognizeWithTimeout(worker,prepared.blob,signal);timing.recognitionMs+=Math.round(performance.now()-recognizeStarted);throwIfAborted(signal);
    const firstRaw=String(first?.data?.text??''),firstNormalized=normalizeOcrText(firstRaw),firstConfidence=Number.isFinite(first?.data?.confidence)?first.data.confidence:null;
    passes.push({id:'color',rawText:firstRaw,normalizedText:firstNormalized,confidence:firstConfidence,blockCount:first?.data?.blocks?.length||0,durationMs:Math.round(performance.now()-recognizeStarted),image:{width:prepared.width,height:prepared.height,bytes:prepared.blob.size}});
    const initialParse=parseRouterLabel({rawText:firstRaw,normalizedText:firstNormalized});
    labelRegions.push(findLabelRegion(first?.data?.blocks,prepared.width,prepared.height));
+   lines.push(...lineGeometry(first?.data?.blocks,prepared.width,prepared.height));
    for(const target of findSsidFocusRegions(first?.data?.blocks,prepared.width,prepared.height,initialParse.ssidCandidates))focusTargets.push({...sourceRegion(target,prepared),blob});
    const expectedBands=new Set([...firstNormalized.matchAll(/(?:^|[^\p{L}\p{N}])SS[i1l]D\s*([12]|[il])\b/giu)].map(match=>String(match[1]).toLowerCase().replace(/[il]/,'1')));
    const parsedBands=new Set(initialParse.ssidCandidates.map(candidate=>String(candidate.sourceLine).match(/(?:^|[^\p{L}\p{N}])SS[i1l]D\s*([12]|[il])\b/i)?.[1]?.toLowerCase().replace(/[il]/,'1')).filter(Boolean));
@@ -78,6 +105,7 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
      passes.push({id:'grayscale-contrast',rawText:alternateRaw,normalizedText:alternateNormalized,confidence:alternateConfidence,blockCount:alternate?.data?.blocks?.length||0,durationMs:Math.round(performance.now()-alternateStarted),image:{width:alternatePrepared.width,height:alternatePrepared.height,bytes:alternatePrepared.blob.size}});
      const alternateParse=parseRouterLabel({rawText:alternateRaw,normalizedText:alternateNormalized});
      labelRegions.push(findLabelRegion(alternate?.data?.blocks,alternatePrepared.width,alternatePrepared.height));
+     lines.push(...lineGeometry(alternate?.data?.blocks,alternatePrepared.width,alternatePrepared.height));
      for(const target of findSsidFocusRegions(alternate?.data?.blocks,alternatePrepared.width,alternatePrepared.height,alternateParse.ssidCandidates))if(!focusTargets.some(item=>item.band===target.band))focusTargets.push({...sourceRegion(target,alternatePrepared),blob});
     }catch(error){if(error?.name==='AbortError'||error?.name==='TimeoutError')throw error;alternatePassError=error?.name||'OCR_ERROR';}
    }
@@ -113,7 +141,7 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
    const rawText=passes.length===1?passes[0].rawText:passes.map(pass=>`[OCR ${pass.id}]\n${pass.rawText}`).join('\n\n');const normalizedText=mergedLines.join('\n');
    const pagePasses=passes.filter(pass=>!pass.id.startsWith('ssid-focus-'));
    const confidence=pagePasses.length===1?pagePasses[0].confidence:Math.round(pagePasses.reduce((total,pass)=>total+(pass.confidence??0),0)/pagePasses.length*10)/10;
-   const result={rawText,normalizedText,confidence,durationMs:Math.round(performance.now()-started),timing,workerReused:lease.reused,languages:OCR_LANGUAGES,engine:OCR_ENGINE_VERSION,passes,alternatePassError,focusRegionCount:focusTargets.length,focusAttemptCount,focusErrors,focusLengths,focusRegions:focusTargets.map(item=>({band:item.band,region:item.region})),labelRegions:labelRegions.filter(Boolean),image:{originalBytes:blob.size,sourceWidth:prepared.sourceWidth,sourceHeight:prepared.sourceHeight,processedWidth:prepared.width,processedHeight:prepared.height,processedBytes:prepared.blob.size,wasResized:prepared.wasResized,maxDimension:MAX_OCR_DIMENSION},processedPreviewBlob:prepared.previewBlob};
+   const result={rawText,normalizedText,confidence,durationMs:Math.round(performance.now()-started),timing,workerReused:lease.reused,languages:OCR_LANGUAGES,engine:OCR_ENGINE_VERSION,passes,alternatePassError,focusRegionCount:focusTargets.length,focusAttemptCount,focusErrors,focusLengths,focusRegions:focusTargets.map(item=>({band:item.band,region:item.region})),labelRegions:labelRegions.filter(Boolean),lines,image:{originalBytes:blob.size,sourceWidth:prepared.sourceWidth,sourceHeight:prepared.sourceHeight,processedWidth:prepared.width,processedHeight:prepared.height,processedBytes:prepared.blob.size,wasResized:prepared.wasResized,maxDimension:MAX_OCR_DIMENSION},processedPreviewBlob:prepared.previewBlob};
    return result;
   }catch(error){if(error?.name!=='AbortError')console.error('[WiFi Connect OCR] No se pudo reconocer la etiqueta:',error?.name||'Error');throw error;}
   finally{
@@ -125,6 +153,7 @@ export function createOcrService({loadEngine=()=>import('../vendor/tesseract/tes
  }
 }
 export const recognizeRouterLabel=createOcrService();
+export const recognizeRouterLine=(blob,options)=>recognizeRouterLabel.line(blob,options);
 export function disposeRecognizeRouterLabel(){recognizeRouterLabel.dispose?.();}
 function mapStatus(status){const value=String(status).toLowerCase();if(value.includes('core')||value.includes('worker'))return 'Cargando reconocimiento';if(value.includes('language')||value.includes('traineddata')||value.includes('initializ'))return 'Cargando idiomas';if(value.includes('recogniz'))return 'Detectando texto';if(value.includes('load'))return 'Cargando reconocimiento';return 'Procesando resultado';}
 const ssidFocusLabel=/^\s*(?:SS[i1l]D(?:(?:\s+(?:2\s*[.,]?\s*4|5)\s*(?:GHz|G)?\b)|(?:\s*[12il]))?(?=$|[\s:=\-])|(?:WI[ -]?FI|WLAN|NETWORK|WIRELESS)\s+NAME\b|NOMBRE\s+(?:DE\s+)?(?:WI[ -]?FI|RED)\b|RED\s+WI[ -]?FI\b)/i;

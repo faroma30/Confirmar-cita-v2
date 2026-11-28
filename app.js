@@ -1,23 +1,23 @@
-import { setupReleaseUpdate } from "./release-update.mjs?v=3routes29";
-import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes29";
+import { setupReleaseUpdate } from "./release-update.mjs?v=3routes30";
+import { saveCancellationDraft, readCancellationDraft, clearCancellationDraft } from "./cancellation-draft.mjs?v=3routes30";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/+esm";
-import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes29";
-import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes29";
-import { createCloudAddressSuggest, createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes29";
-import { createRpcRouteDays } from "./my-routes-saved.mjs?v=3routes29";
-import { captureSubmittedForm } from "./form-events.mjs?v=3routes29";
-import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes29";
-import { createIssuesUI } from "./issues-ui.mjs?v=3routes29";
-import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes29";
-import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes29";
-import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes29";
-import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes29";
-import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes29";
-import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes29";
-import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes29";
-import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes29";
-import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes29";
-import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes29";
+import { mountMyRoutes } from "./my-routes-ui.mjs?v=3routes30";
+import { createRpcRouteLocations } from "./my-routes.mjs?v=3routes30";
+import { createCloudAddressSuggest, createCloudRoutes } from "./my-routes-cloud.mjs?v=3routes30";
+import { createRpcRouteDays } from "./my-routes-saved.mjs?v=3routes30";
+import { captureSubmittedForm } from "./form-events.mjs?v=3routes30";
+import { createSettingsNavigation } from "./settings-navigation.mjs?v=3routes30";
+import { createIssuesUI } from "./issues-ui.mjs?v=3routes30";
+import { isActiveAdminProfile } from "./admin-wifi-ocr-source.mjs?v=3routes30";
+import { createAdminRoutesUI } from "./admin-routes-ui.mjs?v=3routes30";
+import { createMasterNavigationStorage } from "./master-navigation.mjs?v=3routes30";
+import { appendCancellationReason } from "./cancellation-reason.mjs?v=3routes30";
+import { buildCancellationMailto, CANCELLATION_RECIPIENT_LIMITS, createCancellationRecipientEditor } from "./cancellation-recipients.mjs?v=3routes30";
+import { adminCounts, filterAdminAccounts, masterTeamSummary } from "./dashboard-insights.mjs?v=3routes30";
+import { cleanMapAddress, normalizePhoneForCall, normalizePhoneForWhatsApp, parseOracleInstallations, stableSourceKey } from "./agenda-parser.mjs?v=3routes30";
+import { derivePresentationName, fillAppointmentTemplate } from "./message-template.mjs?v=3routes30";
+import { appointmentDateLabels, buildMapsUrl, buildWhatsAppUrl, compareImportedAppointment, dateOffset, madridDate } from "./agenda-parity.mjs?v=3routes30";
+import { createIgnoredWorkCard } from "./ignored-work.mjs?v=3routes30";
 
 const $ = (id) => document.getElementById(id);
 // Keep the existing V2 workspace DOM intact while switching the two top-level tools.
@@ -65,7 +65,7 @@ let masterTeamTechnicians = new Map();
 let selectedMasterView = "appointments";
 let activeLoginAttempt = null;
 const masterNavigation = createMasterNavigationStorage(window.localStorage);
-const APP_BUILD = "3routes29";
+const APP_BUILD = "3routes30";
 let selectedTool = "confirmar";
 let wifiInstance = null;
 let wifiLoadPromise = null;
@@ -98,7 +98,7 @@ async function selectTool(tool, { push = true } = {}) {
         let wifiLoadStage = "import";
         const mount = wifiMountQueue.then(async () => {
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
-          const module = await import("./wifi-connect/entry.mjs?v=3wl2");
+          const module = await import("./wifi-connect/entry.mjs?v=3wl3");
           if (generation !== wifiMountGeneration || activeUser?.id !== userId) throw new Error("La sesión ha cambiado.");
           wifiLoadStage = "mount";
           const instance = await module.mountWifiConnect($("wifiConnectPanel"), userId, {

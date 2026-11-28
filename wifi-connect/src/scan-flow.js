@@ -1,6 +1,6 @@
-import {isSsidFieldLabel} from './router-parser.js?v=3wl2';
-import {isRouterAccessLabel,isLabelText} from './label-rules.js?v=3wl2';
-import {needsCharacterConfirmation} from './password-check.js?v=3wl2';
+import {isSsidFieldLabel} from './router-parser.js?v=3wl3';
+import {isRouterAccessLabel,isLabelText} from './label-rules.js?v=3wl3';
+import {needsCharacterConfirmation} from './password-check.js?v=3wl3';
 
 /** Select the smallest safe next step for the production scan UX. */
 const passwordOrigin=/\b(?:password|passvvord|contrase[nñ]a|contrasenya|clau|clave|wlan\s*k(?:ey|ev|cy)?|wi[\s-]?fi\s*(?:key|password)|wireless\s*(?:key|password)|network\s*(?:key|password)|admin|administrator|router|login|access|wps|serial|s\/?n|mac|bssid|imei|model|gateway|barcode|bar\s+code|pin)\b/iu;
@@ -57,8 +57,8 @@ export function buildScanPlan(parsed,{selectedCandidate=null}={}){
  const ssidUnverified=Boolean(primary.ocrVerification&&passStatus(primary)==='disagreement'&&!qrTrusted(primary));
  const passwordUnverified=Boolean(activePassword?.ocrVerification&&passStatus(activePassword)==='disagreement'&&!qrTrusted(activePassword));
  const crossFieldContamination=detectCrossFieldContamination(parsed,primary);
- const ssidNeedsReview=Boolean(primary.score<60||crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||ocrConfidenceNeedsReview(primary)||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary));
- const passwordNeedsReview=activeSecurity!=='Sin contraseña'&&(!activePassword||passwordConflict||passwordUnverified||passwordOcrConfidenceNeedsReview(activePassword)||activePassword.needsReview&&!activePassword.qrAgreement&&!qrTrusted(activePassword)&&!highConfidencePassword);
+ const ssidNeedsReview=Boolean(primary.score<60||crossFieldContamination||ssidConflict||ssidUnverified||primary.bandPeerConflict||!qrTrusted(primary)&&(primary.doubts?.length||parsed?.lowQuality)||ocrConfidenceNeedsReview(primary)||primary.needsReview&&!primary.qrAgreement&&!qrTrusted(primary));
+ const passwordNeedsReview=activeSecurity!=='Sin contraseña'&&(!activePassword||passwordConflict||passwordUnverified||!qrTrusted(activePassword)&&(parsed?.lowQuality||activePassword.doubts?.length||activePassword.lengthMismatch)||passwordOcrConfidenceNeedsReview(activePassword)||activePassword.needsReview&&!activePassword.qrAgreement&&!qrTrusted(activePassword)&&!highConfidencePassword);
  // O/0 e I/l/1 en una clave leída por OCR: la confirma el técnico, salvo que el perfil fije el alfabeto.
  const doubtfulPassword=Boolean(activeSecurity!=='Sin contraseña'&&activePassword&&!qrTrusted(activePassword)&&!activePassword.formatDecided&&needsCharacterConfirmation(activePassword.value));
  const fields=[...(ssidNeedsReview?['ssid']:[]),...(passwordNeedsReview||doubtfulPassword?['password']:[])];
@@ -101,8 +101,11 @@ export function buildRecoverableScanReview(parsed){
  const network=createScannedNetwork(parsed,candidate);
  const fields=['ssid'];
  const password=parsed?.password;
+ // Foto de poca calidad o caracteres dudosos: la clave se confirma siempre.
+ const doubtful=password?.source!=='qr'&&Boolean(parsed?.lowQuality||password?.doubts?.length||password?.lengthMismatch);
  const passwordNeedsReview=parsed?.security?.value!=='Sin contraseña'&&(
-  !isFieldCandidate(password,'password')
+  doubtful
+  ||!isFieldCandidate(password,'password')
   ||password.source!=='qr'&&(
     Number(password.score)<60
     || (!Number.isFinite(password.ocrConfidence)||password.ocrConfidence<90)

@@ -1,4 +1,4 @@
-import {validateSafeSsidReport} from './ssid-diagnostic-report.js?v=3wl2';
+import {validateSafeSsidReport} from './ssid-diagnostic-report.js?v=3wl3';
 
 const REASONS={
   no_explicit_ssid_candidate:'No se encontró un valor asociado a una etiqueta SSID.',

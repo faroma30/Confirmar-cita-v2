@@ -1,5 +1,5 @@
 import jsQR from '../vendor/jsQR.js';
-import {findQrPresence} from './qr-presence.js?v=3wl2';
+import {findQrPresence} from './qr-presence.js?v=3wl3';
 
 const escapeField = value => String(value || '').replace(/\\(.)/gs, '$1');
 

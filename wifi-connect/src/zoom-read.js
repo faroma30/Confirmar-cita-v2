@@ -37,23 +37,29 @@ export const isZoomValue=candidate=>{
 const usable=list=>(list||[]).filter(candidate=>candidate.score>=60&&isZoomValue(candidate));
 
 /** Lecturas ampliadas; se detiene en cuanto una misma lectura trae nombre y contraseña. */
-export async function readZoomedLabel(blob,{regions=[],signal,recognize,parse,zoom,budgetMs=ZOOM_BUDGET_MS,maxAttempts=ZOOM_MAX_ATTEMPTS,onStage=()=>{},now=()=>performance.now()}){
- const started=now();let best=null,attempts=0;
+export async function readZoomedLabel(blob,{regions=[],signal,recognize,parse,zoom,budgetMs=ZOOM_BUDGET_MS,maxAttempts=ZOOM_MAX_ATTEMPTS,rectify=null,onStage=()=>{},now=()=>performance.now()}){
+ const started=now();let best=null,attempts=0;const lines=[];
  const queue=[...regions.filter(Boolean).slice(0,1),...ZOOM_FALLBACK_REGIONS];
  for(const region of queue){
   if(signal?.aborted){const error=new Error('Análisis cancelado.');error.name='AbortError';throw error;}
   if(attempts>=maxAttempts||now()-started>=budgetMs)break;
   try{
    onStage('Ampliando la etiqueta');
-   const enlarged=await zoom(blob,region,{signal});
+   const straight=Boolean(rectify&&attempts===0&&region===regions[0]);
+   const enlarged=straight?await rectify(blob,region,{signal}):await zoom(blob,region,{signal});
    const ocr=await recognize(enlarged,{signal,singlePass:true,onStage});attempts++;
+   // Las cajas de un recorte recto vuelven a la foto; las de una etiqueta enderezada no tienen vuelta directa.
+   if(!straight)for(const line of ocr.lines||[]){
+    const back=box=>({x0:region.x+box.x0*region.width,y0:region.y+box.y0*region.height,x1:region.x+box.x1*region.width,y1:region.y+box.y1*region.height});
+    lines.push({...line,box:back(line.box),aspect:(line.aspect||1)*region.height/region.width,words:(line.words||[]).map(word=>({...word,box:back(word.box)}))});
+   }
    const parsed=parse({...ocr,qr:null,passes:[]});
    const ssid=usable(parsed.ssidCandidates),password=usable(parsed.passwordCandidates),weight=Number(ssid.length>0)+Number(password.length>0);
    if(weight&&(!best||weight>best.weight))best={region,ssid,password,weight};
    if(weight===2)break;
   }catch(error){if(error?.name==='AbortError')throw error;break;}
  }
- return {best,attempts,durationMs:Math.max(0,Math.round(now()-started))};
+ return {best,attempts,lines,durationMs:Math.max(0,Math.round(now()-started))};
 }
 
 /**

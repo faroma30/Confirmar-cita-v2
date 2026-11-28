@@ -4,17 +4,21 @@
  * memoria: aquí no se guarda ni se envía nada. El disparador manual no depende de este módulo.
  */
 import jsQR from '../vendor/jsQR.js';
-import {parseWifiQrPayload} from './wifi-qr-core.js?v=3wl2';
-import {findQrPresence} from './qr-presence.js?v=3wl2';
-import {parseRouterLabel} from './router-parser.js?v=3wl2';
-import {isSafeSsidCandidate,isSafePasswordCandidate} from './scan-flow.js?v=3wl2';
-import {isLabelText} from './label-rules.js?v=3wl2';
+import {parseWifiQrPayload} from './wifi-qr-core.js?v=3wl3';
+import {findQrPresence} from './qr-presence.js?v=3wl3';
+import {parseRouterLabel} from './router-parser.js?v=3wl3';
+import {isSafeSsidCandidate,isSafePasswordCandidate} from './scan-flow.js?v=3wl3';
+import {isLabelText} from './label-rules.js?v=3wl3';
+import {QUALITY,imageStats,frameMotion,textMetrics,qualityVerdict} from './capture-quality.js?v=3wl3';
 
 export const LIVE_TIMING=Object.freeze({qrIntervalMs:220,slowQrIntervalMs:500,firstTextDelayMs:2500,textIntervalMs:1500,helpAfterMs:20000,textLimitMs:60000});
 export const LIVE_MESSAGES=Object.freeze({
   searching:'Buscando etiqueta…',
   found:'Etiqueta leída',
   closer:'Acércate un poco más',
+  still:'Mantén quieto el móvil',
+  glare:'Mejor sin reflejos',
+  rotate:'Gira la etiqueta',
   help:'Acércate, ponla de frente, sin reflejos y espera a que enfoque. También puedes pulsar el disparador.',
   manual:'Pulsa el disparador para hacer la foto.'
 });
@@ -30,7 +34,7 @@ export function readingFromOcr(ocr,{parse=parseRouterLabel,minConfidence=55}={})
   const ssids=[...new Set(parsed.ssidCandidates.filter(item=>isSafeSsidCandidate(item)&&good(item)).map(item=>item.value))].sort();
   const password=isSafePasswordCandidate(parsed.password)&&good(parsed.password)?parsed.password.value:'';
   if(!ssids.length||!password)return null;
-  return {key:JSON.stringify([ssids,password]),pass:{id:'color',rawText:ocr.rawText||'',normalizedText:ocr.normalizedText||'',confidence:ocr.confidence??null}};
+  return {key:JSON.stringify([ssids,password]),doubtful:Boolean(parsed.password?.lengthMismatch),pass:{id:'color',rawText:ocr.rawText||'',normalizedText:ocr.normalizedText||'',confidence:ocr.confidence??null}};
 }
 
 /**
@@ -78,7 +82,7 @@ export function guideRegion({videoWidth,videoHeight,videoRect,guideRect,margin=0
  */
 export function createLiveScanner({readQr,readText=null,onQr,onText,onStatus=()=>{},timing=LIVE_TIMING,setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id),now=()=>Date.now()}){
   const options={...LIVE_TIMING,...timing},timers=new Set();
-  let running=false,delivered=false,started=0,previous=null,failures=0,closerStreak=0,helpShown=false,status='';
+  let running=false,delivered=false,started=0,previous=null,failures=0,closerStreak=0,helpShown=false,status='',advice='';
   const say=message=>{if(message!==status){status=message;onStatus(message);}};
   const later=(fn,ms)=>{const id=setTimer(()=>{timers.delete(id);if(running)fn();},ms);timers.add(id);};
   function stop(){running=false;previous=null;for(const id of timers)clearTimer(id);timers.clear();}
@@ -94,7 +98,7 @@ export function createLiveScanner({readQr,readText=null,onQr,onText,onStatus=()=
       const networks=(result?.networks||[]).filter(usableQrNetwork);
       if(networks.length){await deliver(onQr,{networks,passes:previous?[previous.pass]:[]});return;}
       closerStreak=result?.small?closerStreak+1:0;
-      if(!helpShown)say(closerStreak>=3?LIVE_MESSAGES.closer:LIVE_MESSAGES.searching);
+      if(!helpShown)say(closerStreak>=3?LIVE_MESSAGES.closer:advice||LIVE_MESSAGES.searching);
     }catch{}
     later(qrTick,now()-started>options.textLimitMs?options.slowQrIntervalMs:options.qrIntervalMs);
   }
@@ -104,8 +108,13 @@ export function createLiveScanner({readQr,readText=null,onQr,onText,onStatus=()=
       const reading=await readText();
       if(!running)return;
       failures=0;
-      if(reading&&previous&&reading.key===previous.key){await deliver(onText,{blob:reading.blob,passes:[previous.pass,reading.pass]});return;}
-      previous=reading||null;
+      // Sin calidad mínima no se captura: se dice qué mejorar y la coincidencia vuelve a empezar.
+      advice=reading?.advice||'';
+      if(advice){previous=null;say(advice);}
+      else{
+        if(reading&&previous&&reading.key===previous.key){await deliver(onText,{blob:reading.blob,passes:[previous.pass,reading.pass]});return;}
+        previous=reading||null;
+      }
     }catch{previous=null;if(++failures>=2)return;}
     if(running)later(textTick,options.textIntervalMs);
   }
@@ -120,8 +129,8 @@ export function createLiveScanner({readQr,readText=null,onQr,onText,onStatus=()=
 }
 
 /** Une el bucle con el vídeo real: lienzos en memoria que se vacían al terminar. */
-export function createVideoFrameSource(video,{guide=null,recognize,canvasFactory=()=>document.createElement('canvas'),barcodeDetector=globalThis.BarcodeDetector,signal}={}){
-  let canvas=canvasFactory(),textCanvas=canvasFactory(),tick=0,detector=null;
+export function createVideoFrameSource(video,{guide=null,recognize,qualityLimits=QUALITY,canvasFactory=()=>document.createElement('canvas'),barcodeDetector=globalThis.BarcodeDetector,signal}={}){
+  let canvas=canvasFactory(),textCanvas=canvasFactory(),tick=0,detector=null,thumb=null,sample=null;
   if(typeof barcodeDetector==='function'){try{detector=new barcodeDetector({formats:['qr_code']});}catch{}}
   const region=()=>guideRegion({videoWidth:video.videoWidth,videoHeight:video.videoHeight,videoRect:video.getBoundingClientRect?.(),guideRect:guide?.getBoundingClientRect?.()});
   async function readQr(){
@@ -140,11 +149,28 @@ export function createVideoFrameSource(video,{guide=null,recognize,canvasFactory
     const area=region();textCanvas.width=area.width;textCanvas.height=area.height;
     const context=textCanvas.getContext('2d',{alpha:false});if(!context)return null;
     context.drawImage(video,area.x,area.y,area.width,area.height,0,0,area.width,area.height);
+    // Antes de gastar una lectura: movimiento, reflejos y nitidez sobre una copia reducida.
+    const measured=measureFrame(area);
+    if(measured&&measured.contrast>=qualityLimits.minContrast){const before=qualityVerdict(measured,qualityLimits);if(!before.ok)return {advice:before.advice};}
     const blob=await new Promise((resolve,reject)=>textCanvas.toBlob(value=>value?resolve(value):reject(new Error('frame')),'image/jpeg',0.94));
     const size={width:area.width,height:area.height};
-    const reading=readingFromOcr(await recognize(blob,{signal,singlePass:true}));
+    const ocr=await recognize(blob,{signal,singlePass:true});
+    // Letra demasiado pequeña o inclinada: tampoco se captura.
+    const after=qualityVerdict(textMetrics(ocr?.lines,area.height),qualityLimits);
+    if(!after.ok)return {advice:after.advice};
+    const reading=readingFromOcr(ocr);
+    if(reading?.doubtful)return {advice:LIVE_MESSAGES.closer};
     return reading?{...reading,blob,...size}:null;
   }
-  function release(){for(const item of [canvas,textCanvas])if(item){item.width=0;item.height=0;}canvas=null;textCanvas=null;}
+  function measureFrame(area){
+    const scale=Math.min(1,QUALITY.sampleWidth/Math.max(area.width,area.height));
+    sample??=canvasFactory();sample.width=Math.max(3,Math.round(area.width*scale));sample.height=Math.max(3,Math.round(area.height*scale));
+    const context=sample.getContext('2d',{willReadFrequently:true});if(!context?.getImageData)return null;
+    context.drawImage(video,area.x,area.y,area.width,area.height,0,0,sample.width,sample.height);
+    const pixels=context.getImageData(0,0,sample.width,sample.height);if(!pixels?.data?.length)return null;
+    const motion=frameMotion(thumb,pixels.data);thumb=pixels.data;
+    return {...imageStats(pixels),motion};
+  }
+  function release(){for(const item of [canvas,textCanvas,sample])if(item){item.width=0;item.height=0;}canvas=null;textCanvas=null;sample=null;thumb=null;}
   return {readQr,readText,release};
 }

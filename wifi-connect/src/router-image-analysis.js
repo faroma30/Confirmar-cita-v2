@@ -1,12 +1,21 @@
-import {recognizeRouterLabel,disposeRecognizeRouterLabel} from './ocr.js?v=3wl2';
-import {decodeWifiQrPayloadsFromImage} from './wifi-qr.js?v=3wl2';
-import {parseRouterLabel} from './router-parser.js?v=3wl2';
-import {detectCrossFieldContamination,fieldSource,isSafeSsidCandidate} from './scan-flow.js?v=3wl2';
-import {rotateImageBlob,zoomImageBlob} from './image-processing.js?v=3wl2';
-import {readZoomedLabel,mergeZoomedCandidates,isZoomValue} from './zoom-read.js?v=3wl2';
+import {recognizeRouterLabel,recognizeRouterLine,disposeRecognizeRouterLabel} from './ocr.js?v=3wl3';
+import {cropLineBlob,rectifyLabelBlob} from './image-processing.js?v=3wl3';
+import {lineTargets,readValueLines,applyLineReads,LINE_BUDGET_MS} from './line-read.js?v=3wl3';
+import {applyLabelPatterns} from './label-patterns.js?v=3wl3';
+import {textAngle} from './geometry.js?v=3wl3';
+import {measurePhoto,textMetrics,qualityVerdict} from './capture-quality.js?v=3wl3';
+import {decodeWifiQrPayloadsFromImage} from './wifi-qr.js?v=3wl3';
+import {parseRouterLabel} from './router-parser.js?v=3wl3';
+import {detectCrossFieldContamination,fieldSource,isSafeSsidCandidate} from './scan-flow.js?v=3wl3';
+import {rotateImageBlob,zoomImageBlob} from './image-processing.js?v=3wl3';
+import {readZoomedLabel,mergeZoomedCandidates,isZoomValue,ZOOM_BUDGET_MS} from './zoom-read.js?v=3wl3';
 
 export const ROTATION_ANGLES=Object.freeze([90,270,180]);
 export const ROTATION_BUDGET_MS=20000;
+/** Tope de la lectura completa; la relectura por líneas tiene una parte reservada. */
+export const TOTAL_BUDGET_MS=19000;
+const LINE_RESERVE_MS=5000;
+const LABEL_SEED=/(?:ssid|net\s*w[o0]rk|wi[\s-]?fi|wlan|pass\s*w[o0]rd|contrase|clave|nombre)/i;
 const labelEvidence=parsed=>({ssid:(parsed?.ssidCandidates||[]).some(item=>item.score>=40),password:(parsed?.passwordCandidates||[]).some(item=>item.score>=40)});
 const isSolid=list=>(list||[]).some(candidate=>candidate.score>=60&&isZoomValue(candidate));
 /**
@@ -106,7 +115,9 @@ export async function analyzeRouterImage(blob,options={}){
  if(signal?.aborted){const error=new Error('Análisis cancelado.');error.name='AbortError';throw error;}
  emit('ocr-complete',{ocrPassCount:ocr.passes?.length||0,ocrSsidDetected:Boolean(passDiagnostics(ocr).some(pass=>pass.ssidDetected)),ocrPasswordDetected:Boolean(passDiagnostics(ocr).some(pass=>pass.passwordDetected)),ocrDurationMs:ocr.durationMs??null});
  const qrNetworks=qr.status==='wifi'?(Array.isArray(qr.networks)&&qr.networks.length?qr.networks:[qr]):[];
- const parserStarted=performance.now();let parsed=parse({...ocr,qr:qrNetworks.length===1?qrNetworks[0]:null}),rotation=null,zoom=null;
+ const parserStarted=performance.now();let parsed=parse({...ocr,qr:qrNetworks.length===1?qrNetworks[0]:null}),rotation=null,zoom=null,lineRead=null,quality=null;
+ const remaining=()=>Math.max(0,(options.totalBudgetMs??TOTAL_BUDGET_MS)-(performance.now()-started));
+ const recognizeLine=options.recognizeLine||(options.recognize?null:recognizeRouterLine);
  const evidence=labelEvidence(parsed);
  if(!qrNetworks.length&&!ocrError&&!evidence.ssid&&!evidence.password){
   rotation=await readRotatedLabel(blob,{signal,recognize,parse,rotate:options.rotate,budgetMs:options.rotationBudgetMs,onStage});
@@ -115,8 +126,28 @@ export async function analyzeRouterImage(blob,options={}){
  // Falta el nombre o la clave: se relee ampliada la zona de la etiqueta (sobre la foto ya girada si hizo falta).
  // Solo rellena lo que faltaba; nunca sustituye una lectura que ya servía.
  if(!qrNetworks.length&&!ocrError&&!(isSolid(parsed.ssidCandidates)&&isSolid(parsed.passwordCandidates))){
-  zoom=await readZoomedLabel(rotation?.best?.blob||blob,{regions:ocr.labelRegions||[],signal,recognize,parse,zoom:options.zoom||zoomImageBlob,budgetMs:options.zoomBudgetMs,onStage});
+  // Con la etiqueta inclinada, la primera lectura ampliada va enderezada.
+  const lines=ocr.lines||[],angle=textAngle(lines),seeds=lines.filter(line=>LABEL_SEED.test(line.text)).slice(0,6).map(line=>[(line.box.x0+line.box.x1)/2,(line.box.y0+line.box.y1)/2]);
+  const rectify=options.rectify||(!options.zoom&&seeds.length&&Math.abs(angle)>=2?(source,region,more)=>rectifyLabelBlob(source,region,{...more,angle,seeds}):null);
+  zoom=await readZoomedLabel(rotation?.best?.blob||blob,{regions:ocr.labelRegions||[],signal,recognize,parse,zoom:options.zoom||zoomImageBlob,rectify,budgetMs:options.zoomBudgetMs??Math.min(ZOOM_BUDGET_MS,Math.max(0,remaining()-LINE_RESERVE_MS)),onStage});
   zoom.used=mergeZoomedCandidates(parsed,zoom.best);
+  if(zoom.used)applyLabelPatterns(parsed);
+ }
+ // Cada línea de nombre y clave se relee varias veces y se vota carácter a carácter.
+ if(!qrNetworks.length&&!ocrError&&recognizeLine){
+  const targets=lineTargets(parsed,[...(ocr.lines||[]),...(zoom?.lines||[])]);
+  if(targets.length){
+   lineRead=await readValueLines(rotation?.best?.blob||blob,{targets,signal,recognizeLine,crop:options.cropLine||cropLineBlob,budgetMs:options.lineBudgetMs??Math.min(LINE_BUDGET_MS,remaining()),onStage});
+   lineRead.applied=applyLineReads(parsed,targets);
+   applyLabelPatterns(parsed);
+  }
+ }
+ // Foto de poca calidad: se acepta, pero todo queda dudoso.
+ if(!qrNetworks.length&&!ocrError){
+  const metrics=textMetrics(ocr.lines,ocr.image?.sourceHeight||0),measured=await (options.measure||measurePhoto)(rotation?.best?.blob||blob,{region:(ocr.labelRegions||[])[0]||null});
+  const verdict=qualityVerdict({textPx:metrics.textPx,sharpness:measured?.sharpness,contrast:measured?.contrast});
+  quality={...verdict,textPx:metrics.textPx,sharpness:measured?.sharpness??null};
+  if(!verdict.ok){parsed.lowQuality=true;for(const candidate of [...parsed.ssidCandidates,...parsed.passwordCandidates,parsed.ssid,parsed.password].filter(Boolean))candidate.needsReview=true;}
  }
  parserDurationMs=Math.max(0,Math.round(performance.now()-parserStarted));
  if(qrNetworks.length)attachQrNetworkCandidates(parsed,qrNetworks);
@@ -127,7 +158,7 @@ export async function analyzeRouterImage(blob,options={}){
  const ssidCandidates=parsed.ssidCandidates||[],ssidCandidateCounts={detected:ssidCandidates.length,accepted:ssidCandidates.filter(candidate=>isSafeSsidCandidate(candidate)&&candidate.score>=40).length,review:ssidCandidates.filter(candidate=>candidate.needsReview).length,lowScore:ssidCandidates.filter(candidate=>candidate.score<40).length};
  const diagnostics={stage:'analysis-complete',durationMs:Math.round(performance.now()-started),qrFound:qr.status==='wifi',qrWifiValid:qr.status==='wifi',qrHasSsid:Boolean(qr.ssid),qrHasPassword:Boolean(qr.password),ocrSsidDetected,ocrPasswordDetected,finalPasswordAvailable:Boolean(password),passwordSource,ssidSource:fieldSource(parsed,'ssid'),passwordSource:fieldSource(parsed,'password'),crossFieldContaminationDetected:detectCrossFieldContamination(parsed),blob:{type:blob.type,size:blob.size},bandReconstructionApplied:(parsed.ssidCandidates||[]).some(candidate=>candidate.corrected&&candidate.correctionType==='wifi-band-context'),qr:{found:qr.status==='wifi',wifiPayloadValid:qr.status==='wifi',outcome:qrOutcome(),hasSsid:Boolean(qr.ssid),hasPassword:Boolean(qr.password),source:qr.source||null,durationMs:qrDurationMs,attempts:(qr.attempts||[]).map(({width,height,durationMs,found,region,engine})=>({width,height,durationMs,found,...(typeof region==='string'?{region}:{}),...(typeof engine==='string'?{engine}:{})}))},ocrPasses:ocrPassDiagnostics,ocrDurationMs:Number.isFinite(ocr.durationMs)?Math.max(0,Math.round(ocr.durationMs)):null,ocrTiming:ocr.timing?{...ocr.timing,workerReused:Boolean(ocr.workerReused)}:null,ssidCandidateCounts,parser:parserDiagnostics,parserDurationMs,fusion:{passwordCandidateCount:parsed.passwordCandidates?.length||0,passwordDetected:Boolean(password),passwordSource,passwordLength:password?.value?.length||0,qrOcrConflict,ssidCandidateCount:ssidCandidates.length},review:{requested:null,reason:'Pendiente de evaluar',fields:[]},image:ocr.image?{sourceWidth:ocr.image.sourceWidth??null,sourceHeight:ocr.image.sourceHeight??null,processedWidth:ocr.image.processedWidth??null,processedHeight:ocr.image.processedHeight??null,orientationNormalized:ocr.image.orientationNormalized??null}:null};
  emit('analysis-complete',{ocrPassCount:ocr.passes?.length||0,ocrSsidDetected:diagnostics.ocrPasses.some(pass=>pass.ssidDetected),ocrPasswordDetected:diagnostics.ocrPasses.some(pass=>pass.passwordDetected),ocrTiming:diagnostics.ocrTiming,ssidCandidateCounts,parserDurationMs,finalPasswordAvailable:Boolean(password),ssidSource:diagnostics.ssidSource,passwordSource:diagnostics.passwordSource,crossFieldContaminationDetected:diagnostics.crossFieldContaminationDetected,qrOcrConflict:diagnostics.fusion.qrOcrConflict,parser:parserDiagnostics});
- return {qr,qrDurationMs,ocr,ocrError,parsed,diagnostics,rotation:rotation?{degrees:rotation.best?.degrees??null,attempts:rotation.attempts,durationMs:rotation.durationMs}:null,zoom:zoom?{used:zoom.used,attempts:zoom.attempts,durationMs:zoom.durationMs}:null,durationMs:Math.round(performance.now()-started),source:qr.status==='wifi'?(parsed.qrAgreement?'qr+ocr':'qr'):'ocr'};
+ return {qr,qrDurationMs,ocr,ocrError,parsed,diagnostics,rotation:rotation?{degrees:rotation.best?.degrees??null,attempts:rotation.attempts,durationMs:rotation.durationMs}:null,zoom:zoom?{used:zoom.used,attempts:zoom.attempts,durationMs:zoom.durationMs}:null,lineRead,quality,durationMs:Math.round(performance.now()-started),source:qr.status==='wifi'?(parsed.qrAgreement?'qr+ocr':'qr'):'ocr'};
 }
 
 const PREPARATION_OPERATIONS=new Set(['decode_image','read_dimensions','create_ocr_canvas','get_ocr_context','draw_ocr_image','read_image_data','write_image_data','encode_ocr_image','create_preview_canvas','get_preview_context','draw_preview_image','encode_preview_image','complete']);

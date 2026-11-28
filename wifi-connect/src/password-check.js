@@ -5,7 +5,7 @@
  */
 const GROUPS=[['0','O'],['0','o'],['O','Q'],['1','I','l'],['5','S'],['8','B'],['6','G'],['6','B'],['2','Z']];
 export const PASSWORD_ALPHABETS=Object.freeze({
-  digits:/^[0-9]$/,hex:/^[0-9A-Fa-f]$/,'hex-upper':/^[0-9A-F]$/,'upper-digits':/^[0-9A-Z]$/,'lower-digits':/^[0-9a-z]$/
+  digits:/^[0-9]$/,hex:/^[0-9A-Fa-f]$/,'hex-upper':/^[0-9A-F]$/,'hex-lower':/^[0-9a-f]$/,'upper-digits':/^[0-9A-Z]$/,'lower-digits':/^[0-9a-z]$/
 });
 const alternativesOf=char=>[...new Set(GROUPS.filter(group=>group.includes(char)).flat())].filter(other=>other!==char);
 
@@ -30,8 +30,22 @@ export function applyPasswordFormat(password,format){
   return {value:chars.join(''),corrections,decided:true};
 }
 
+const listDoubts=doubts=>doubts.slice(0,8).map(item=>`el ${item.position}.º «${item.char}»${item.alternatives?.length?` (¿${item.alternatives.join(' o ')}?)`:''}`).join(', ')+(doubts.length>8?'…':'');
+/** Aviso equivalente para el nombre de red. */
+export function nameHintText({ssid='',doubts=[]}={}){
+  const listed=(doubts||[]).filter(item=>ssid[item.position-1]===item.char);
+  return listed.length?`Las lecturas no coinciden en ${listDoubts(listed)}.`:'';
+}
+
 /** Texto para la pantalla de revisión (se muestra solo en el dispositivo). */
-export function passwordHintText({password='',corrections=[],decided=false}={}){
+export function passwordHintText({password='',corrections=[],decided=false,doubts:readingDoubts=[],lengthMismatch=null}={}){
+  const listed=(readingDoubts||[]).filter(item=>password[item.position-1]===item.char);
+  if(listed.length||lengthMismatch){
+    const base=passwordHintText({password,corrections,decided});
+    return [lengthMismatch?`En este router la clave suele tener ${lengthMismatch} caracteres y se han leído ${password.length}.`:'',
+      listed.length?`Las lecturas no coinciden en ${listDoubts(listed)}.`:'',
+      listed.length&&!corrections.length?'':base].filter(Boolean).join(' ');
+  }
   if(corrections.length)return `Corregido según el formato del operador: ${corrections.map(item=>`carácter ${item.position} «${item.from}» → «${item.to}»`).join(', ')}. Confírmalo en la etiqueta.`;
   if(decided)return '';
   const doubts=doubtfulCharacters(password);

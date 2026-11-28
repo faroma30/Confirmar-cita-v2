@@ -1,4 +1,5 @@
 /** Browser-side, orientation-aware preprocessing for OCR. No filters are applied by default. */
+import {findLabelQuad,warpQuad} from './geometry.js?v=3wl3';
 export const MAX_OCR_DIMENSION=2800;
 export const PREVIEW_MAX_DIMENSION=1200;
 export function throwIfAborted(signal){if(signal?.aborted){const error=new Error('OCR cancelado.');error.name='AbortError';throw error;}}
@@ -103,4 +104,91 @@ export async function prepareImageForOcr(blob,{signal,maxDimension=MAX_OCR_DIMEN
   if(decoded?.close)try{decoded.image.close();}catch{}
   for(const temporary of [canvas,previewCanvas])if(temporary){temporary.width=0;temporary.height=0;}
  }
+}
+
+/** Realza bordes y estira el contraste de una imagen RGBA (en el propio búfer), en gris. */
+export function enhanceGray(image,{sharpen=false,radius=2}={}){
+ const {data,width,height}=image,gray=new Float32Array(width*height),histogram=new Uint32Array(256);
+ for(let i=0;i<gray.length;i++){gray[i]=.299*data[i*4]+.587*data[i*4+1]+.114*data[i*4+2];histogram[Math.min(255,gray[i]|0)]++;}
+ const percentile=share=>{let sum=0;for(let i=0;i<256;i++){sum+=histogram[i];if(sum>=gray.length*share)return i;}return 255;};
+ const low=percentile(.02),range=Math.max(1,percentile(.95)-low);
+ for(let i=0;i<gray.length;i++)gray[i]=Math.max(0,Math.min(255,(gray[i]-low)*255/range));
+ let output=gray;
+ if(sharpen){
+  const sums=new Float64Array((width+1)*(height+1));
+  for(let y=0;y<height;y++){let row=0;for(let x=0;x<width;x++){row+=gray[y*width+x];sums[(y+1)*(width+1)+x+1]=sums[y*(width+1)+x+1]+row;}}
+  output=new Float32Array(gray.length);
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+   const x0=Math.max(0,x-radius),x1=Math.min(width,x+radius+1),y0=Math.max(0,y-radius),y1=Math.min(height,y+radius+1);
+   const mean=(sums[y1*(width+1)+x1]-sums[y0*(width+1)+x1]-sums[y1*(width+1)+x0]+sums[y0*(width+1)+x0])/((x1-x0)*(y1-y0));
+   output[y*width+x]=gray[y*width+x]+1.5*(gray[y*width+x]-mean);
+  }
+ }
+ for(let i=0;i<output.length;i++){data[i*4]=data[i*4+1]=data[i*4+2]=Math.max(0,Math.min(255,output[i]));data[i*4+3]=255;}
+ return image;
+}
+
+/** Medidas en píxeles del recorte de una línea: caja en fracciones, inclinación y variante de lectura. */
+export function lineCropPlan({box,angle=0},variant,sourceWidth,sourceHeight){
+ const width=(box.x1-box.x0)*sourceWidth,height=(box.y1-box.y0)*sourceHeight,slope=Math.abs(Math.tan(angle*Math.PI/180));
+ // La caja del OCR rodea la línea inclinada: el alto real de la letra es menor.
+ const letter=Math.max(height*.4,height-width*slope),cropWidth=width+letter*1.4,cropHeight=letter*1.6;
+ const scale=Math.min(6,variant.height/cropHeight,2400/(cropWidth*variant.stretch)),margin=20;
+ return {centerX:(box.x0+box.x1)/2*sourceWidth,centerY:(box.y0+box.y1)/2*sourceHeight,cropWidth,cropHeight,scale,margin,
+  outputWidth:Math.max(1,Math.round(cropWidth*scale*variant.stretch))+margin*2,outputHeight:Math.max(1,Math.round(cropHeight*scale))+margin*2};
+}
+/** Recorte de una línea, enderezado y ampliado, en memoria. */
+export async function cropLineBlob(blob,place,variant,{signal,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas')}={}){
+ let decoded,canvas;
+ try{
+  decoded=await decodeBlob(blob,urlApi,signal);
+  const sourceWidth=decoded.image.width||decoded.image.naturalWidth,sourceHeight=decoded.image.height||decoded.image.naturalHeight;
+  if(!sourceWidth||!sourceHeight)throw new Error('No se pudieron leer las dimensiones de la fotografía.');
+  const plan=lineCropPlan(place,variant,sourceWidth,sourceHeight);
+  canvas=canvasFactory();canvas.width=plan.outputWidth;canvas.height=plan.outputHeight;
+  const context=canvas.getContext('2d',{alpha:false,willReadFrequently:true});if(!context)throw new Error('No se pudo recortar la fotografía en este dispositivo.');
+  context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);
+  context.save();context.beginPath();context.rect(plan.margin,plan.margin,canvas.width-plan.margin*2,canvas.height-plan.margin*2);context.clip();
+  context.translate(canvas.width/2,canvas.height/2);context.scale(variant.stretch,1);context.rotate(-(place.angle||0)*Math.PI/180);context.scale(plan.scale,plan.scale);
+  context.imageSmoothingEnabled=true;context.imageSmoothingQuality='high';context.translate(-plan.centerX,-plan.centerY);context.drawImage(decoded.image,0,0);context.restore();
+  if(variant.mode!=='color'){
+   const width=canvas.width-plan.margin*2,height=canvas.height-plan.margin*2;
+   context.putImageData(enhanceGray(context.getImageData(plan.margin,plan.margin,width,height),{sharpen:variant.mode==='sharp',radius:Math.max(1,Math.round(variant.height/30))}),plan.margin,plan.margin);
+  }
+  const cropped=await canvasToBlob(canvas,'image/png');throwIfAborted(signal);return cropped;
+ }finally{if(decoded?.close)try{decoded.image.close();}catch{}if(canvas){canvas.width=0;canvas.height=0;}}
+}
+/** Etiqueta recortada, enderezada (perspectiva si se ven sus esquinas; solo giro si no) y ampliada. */
+export async function rectifyLabelBlob(blob,region,{angle=0,seeds=[],signal,targetDimension=ZOOM_TARGET_DIMENSION,urlApi=globalThis.URL,canvasFactory=()=>document.createElement('canvas')}={}){
+ let decoded,canvas,work;
+ try{
+  decoded=await decodeBlob(blob,urlApi,signal);
+  const sourceWidth=decoded.image.width||decoded.image.naturalWidth,sourceHeight=decoded.image.height||decoded.image.naturalHeight;
+  if(!sourceWidth||!sourceHeight)throw new Error('No se pudieron leer las dimensiones de la fotografía.');
+  const scale=Math.min(1,900/Math.max(sourceWidth,sourceHeight));
+  work=canvasFactory();work.width=Math.max(1,Math.round(sourceWidth*scale));work.height=Math.max(1,Math.round(sourceHeight*scale));
+  const context=work.getContext('2d',{alpha:false,willReadFrequently:true});context.drawImage(decoded.image,0,0,work.width,work.height);
+  const points=seeds.map(([x,y])=>[x*work.width,y*work.height]),quad=findLabelQuad(context.getImageData(0,0,work.width,work.height),points);
+  // Solo vale si la mancha encontrada abarca todas las líneas de etiqueta.
+  const inside=Boolean(quad)&&[0,1].every(axis=>{const values=quad.map(p=>p[axis]);return points.every(p=>p[axis]>=Math.min(...values)&&p[axis]<=Math.max(...values));});
+  canvas=canvasFactory();let straight=false;
+  if(inside){
+   const corners=quad.map(([x,y])=>[x/scale,y/scale]),length=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+   const width=(length(corners[0],corners[1])+length(corners[3],corners[2]))/2,height=(length(corners[0],corners[3])+length(corners[1],corners[2]))/2;
+   const grow=Math.min(4,targetDimension/Math.max(width,height,1));
+   const left=Math.max(0,Math.floor(Math.min(...corners.map(p=>p[0])))),top=Math.max(0,Math.floor(Math.min(...corners.map(p=>p[1]))));
+   work.width=Math.max(1,Math.min(sourceWidth,Math.ceil(Math.max(...corners.map(p=>p[0]))))-left);work.height=Math.max(1,Math.min(sourceHeight,Math.ceil(Math.max(...corners.map(p=>p[1]))))-top);
+   context.drawImage(decoded.image,left,top,work.width,work.height,0,0,work.width,work.height);
+   const warped=warpQuad(context.getImageData(0,0,work.width,work.height),corners.map(([x,y])=>[x-left,y-top]),Math.max(1,Math.round(width*grow)),Math.max(1,Math.round(height*grow)));
+   if(warped){canvas.width=warped.width;canvas.height=warped.height;const output=canvas.getContext('2d',{alpha:false}),pixels=output.createImageData(warped.width,warped.height);pixels.data.set(warped.data);output.putImageData(pixels,0,0);straight=true;}
+  }
+  if(!straight){
+   const width=region.width*sourceWidth,height=region.height*sourceHeight,grow=Math.min(4,targetDimension/Math.max(width,height,1));
+   canvas.width=Math.max(1,Math.round(width*grow));canvas.height=Math.max(1,Math.round(height*grow));
+   const output=canvas.getContext('2d',{alpha:false});output.fillStyle='#fff';output.fillRect(0,0,canvas.width,canvas.height);
+   output.translate(canvas.width/2,canvas.height/2);output.rotate(-angle*Math.PI/180);output.scale(grow,grow);output.imageSmoothingEnabled=true;output.imageSmoothingQuality='high';
+   output.translate(-(region.x*sourceWidth+width/2),-(region.y*sourceHeight+height/2));output.drawImage(decoded.image,0,0);
+  }
+  const result=await canvasToBlob(canvas,'image/jpeg',0.95);throwIfAborted(signal);return result;
+ }finally{if(decoded?.close)try{decoded.image.close();}catch{}for(const item of [canvas,work])if(item){item.width=0;item.height=0;}}
 }

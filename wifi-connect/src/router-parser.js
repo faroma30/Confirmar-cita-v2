@@ -1,7 +1,8 @@
 import {detectOperator} from './operator-detector.js';
 import {getOperatorProfile} from './operator-profiles/index.js';
-import {canonicalLabel,EXTRA_SSID_LABELS,EXTRA_PASSWORD_LABELS,isRouterAccessLabel,isLabelText,isNoiseValue,withoutTrailingNoise,firstTokenBeforeNoise,weakValueReason,labelBand} from './label-rules.js?v=3wl2';
-import {applyPasswordFormat} from './password-check.js?v=3wl2';
+import {canonicalLabel,EXTRA_SSID_LABELS,EXTRA_PASSWORD_LABELS,isRouterAccessLabel,isLabelText,isNoiseValue,withoutTrailingNoise,firstTokenBeforeNoise,weakValueReason,labelBand} from './label-rules.js?v=3wl3';
+import {applyPasswordFormat} from './password-check.js?v=3wl3';
+import {applyLabelPatterns} from './label-patterns.js?v=3wl3';
 
 const SSID_LABELS = [
   [/^(?:ssid|ss[i1l]d)(?:\s*(?:[12]|[il])|\s+(?:2[.,]?4\s*(?:ghz|g)?|5\s*(?:ghz|g)?))?$/, 100, 'Etiqueta SSID'],
@@ -489,7 +490,7 @@ export function parseRouterLabel(input = {}, {operatorProfiles: profilesEnabled 
   if(qrAgreement)warnings.push('Los datos del QR Wi-Fi coinciden con el texto de la etiqueta.');
   if(qr&&!qrAgreement&&!qrConflict)warnings.push('Se detectó un QR Wi-Fi; revisa los datos antes de guardarlos.');
   if(qrConflict)warnings.push('El QR Wi-Fi y el texto OCR no coinciden; revisa ambos candidatos antes de continuar.');
-  return { ssid, password, security, ssidCandidates, passwordCandidates, securityCandidates:[security], excludedCandidates: excluded, warnings, qrConflicts:{ssid:qrSsidConflict,password:qrPasswordConflict,security:qrSecurityConflict}, operator, appliedProfiles, profileDiagnostics, parserVersion: '2.1-generic+profiles' };
+  return applyLabelPatterns({ ssid, password, security, ssidCandidates, passwordCandidates, securityCandidates:[security], excludedCandidates: excluded, warnings, qrConflicts:{ssid:qrSsidConflict,password:qrPasswordConflict,security:qrSecurityConflict}, operator, appliedProfiles, profileDiagnostics, parserVersion: '2.1-generic+profiles' });
 }
 
 function detectSecurity(lines) {
